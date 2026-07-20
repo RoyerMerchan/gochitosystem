@@ -677,26 +677,48 @@ async function restarVueltasCaja(
   }
 }
 
-/** Historial de ventas paginado. */
+export interface FiltrosVentas {
+  desde?: string;
+  hasta?: string;
+  metodoPagoId?: number;
+  estado?: string;
+  desplazamiento: number;
+  limite: number;
+}
+
+/** Historial de ventas paginado, con los metodos de pago usados y filtros. */
 export async function listarVentas(
   sucursalId: number,
-  desplazamiento: number,
-  limite: number,
+  filtros: FiltrosVentas,
 ): Promise<{ datos: unknown[]; total: number }> {
+  const cond = ['v.sucursal_id = ?'];
+  const params: (string | number)[] = [sucursalId];
+  if (filtros.desde) { cond.push('v.fecha >= ?'); params.push(`${filtros.desde} 00:00:00`); }
+  if (filtros.hasta) { cond.push('v.fecha <= ?'); params.push(`${filtros.hasta} 23:59:59`); }
+  if (filtros.estado) { cond.push('v.estado = ?'); params.push(filtros.estado); }
+  if (filtros.metodoPagoId) {
+    cond.push('EXISTS (SELECT 1 FROM pagos pg WHERE pg.venta_id = v.id AND pg.metodo_pago_id = ?)');
+    params.push(filtros.metodoPagoId);
+  }
+  const where = `WHERE ${cond.join(' AND ')}`;
+
   const datos = await query(
     `SELECT v.id, CONCAT(v.prefijo, v.numero) AS numero, v.fecha, v.total_usd, v.total_bs,
             v.tasa_cambio, v.utilidad_total, v.estado, v.es_credito,
-            COALESCE(c.nombre, 'CONSUMIDOR FINAL') AS cliente, u.nombre_completo AS cajero
+            COALESCE(c.nombre, 'CONSUMIDOR FINAL') AS cliente, u.nombre_completo AS cajero,
+            (SELECT GROUP_CONCAT(DISTINCT mp.nombre SEPARATOR ', ')
+               FROM pagos pg JOIN metodos_pago mp ON mp.id = pg.metodo_pago_id
+              WHERE pg.venta_id = v.id) AS metodos_pago
        FROM ventas v
        LEFT JOIN clientes c ON c.id = v.cliente_id
        JOIN usuarios u ON u.id = v.usuario_id
-      WHERE v.sucursal_id = ?
+      ${where}
       ORDER BY v.id DESC LIMIT ? OFFSET ?`,
-    [sucursalId, limite, desplazamiento],
+    [...params, filtros.limite, filtros.desplazamiento],
   );
   const total = await queryOne<{ n: number }>(
-    `SELECT COUNT(*) AS n FROM ventas WHERE sucursal_id = ?`,
-    [sucursalId],
+    `SELECT COUNT(*) AS n FROM ventas v ${where}`,
+    params,
   );
   return { datos, total: total?.n ?? 0 };
 }

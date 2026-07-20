@@ -25,7 +25,12 @@ export default function ComprasPage() {
   const [termino, setTermino] = useState('');
   const q = useDebounce(termino, 250);
 
-  const entradas = useQuery({ queryKey: ['compras'], queryFn: () => obtenerPaginado<EntradaFila>('/compras?limite=50') });
+  const [desde, setDesde] = useState('');
+  const [hasta, setHasta] = useState('');
+  const paramsE = new URLSearchParams({ limite: '100' });
+  if (desde) paramsE.set('desde', desde);
+  if (hasta) paramsE.set('hasta', hasta);
+  const entradas = useQuery({ queryKey: ['compras', desde, hasta], queryFn: () => obtenerPaginado<EntradaFila>(`/compras?${paramsE.toString()}`) });
   const busq = useQuery({ queryKey: ['prodBuscar', q], queryFn: () => obtener<Producto[]>(`/productos/buscar?q=${encodeURIComponent(q)}`), enabled: q.length > 0 });
 
   const registrar = useMutation({
@@ -49,7 +54,17 @@ export default function ComprasPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div><h1 className="text-2xl font-bold">Entrada de mercancía</h1><p className="text-sm text-gray-500">Ingreso manual de stock · {entradas.data?.meta.total ?? 0} entradas</p></div>
-        <button onClick={() => setModal(true)} className="flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600"><Plus className="h-4 w-4" /> Ingresar mercancía</button>
+        <div className="flex items-end gap-2">
+          <div>
+            <label className="mb-0.5 block text-[10px] uppercase text-gray-400">Desde</label>
+            <input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800" />
+          </div>
+          <div>
+            <label className="mb-0.5 block text-[10px] uppercase text-gray-400">Hasta</label>
+            <input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800" />
+          </div>
+          <button onClick={() => setModal(true)} className="flex items-center gap-2 rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600"><Plus className="h-4 w-4" /> Ingresar mercancía</button>
+        </div>
       </div>
 
       <Card padding={false}>

@@ -80,15 +80,26 @@ router.post(
 export const rutasVentas = Router();
 rutasVentas.use(autenticar);
 
+const esquemaListadoVentas = esquemaPaginacion.extend({
+  desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  hasta: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  metodoPagoId: z.coerce.number().int().positive().optional(),
+  estado: z.enum(['ABIERTA', 'CERRADA', 'ANULADA']).optional(),
+});
+
 rutasVentas.get(
   '/',
   requierePermiso('ventas.ver'),
-  validar({ query: esquemaPaginacion }),
+  validar({ query: esquemaListadoVentas }),
   async (req, res, next) => {
     try {
-      const p = normalizarPaginacion(datosQuery(req));
+      const q = datosQuery<z.infer<typeof esquemaListadoVentas>>(req);
+      const p = normalizarPaginacion(q);
       const u = usuarioActual(req);
-      const { datos, total } = await pos.listarVentas(u.sucursalId, p.desplazamiento, p.limite);
+      const { datos, total } = await pos.listarVentas(u.sucursalId, {
+        desde: q.desde, hasta: q.hasta, metodoPagoId: q.metodoPagoId, estado: q.estado,
+        desplazamiento: p.desplazamiento, limite: p.limite,
+      });
       enviarOk(res, datos, construirMeta(p, total));
     } catch (e) {
       next(e);

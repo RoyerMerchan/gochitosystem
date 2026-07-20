@@ -29,11 +29,17 @@ const esquemaCompra = z.object({
   })).min(1, 'La compra debe tener al menos un producto'),
 });
 
-router.get('/', requierePermiso('compras.ver'), validar({ query: esquemaPaginacion }), async (req, res, next) => {
+const esquemaListadoCompras = esquemaPaginacion.extend({
+  desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  hasta: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+
+router.get('/', requierePermiso('compras.ver'), validar({ query: esquemaListadoCompras }), async (req, res, next) => {
   try {
-    const p = normalizarPaginacion(datosQuery(req));
+    const q = datosQuery<z.infer<typeof esquemaListadoCompras>>(req);
+    const p = normalizarPaginacion(q);
     const u = usuarioActual(req);
-    const { datos, total } = await compras.listar(u.sucursalId, p.desplazamiento, p.limite);
+    const { datos, total } = await compras.listar(u.sucursalId, p.desplazamiento, p.limite, { desde: q.desde, hasta: q.hasta });
     enviarOk(res, datos, construirMeta(p, total));
   } catch (e) { next(e); }
 });

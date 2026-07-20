@@ -230,15 +230,22 @@ async function siguienteConsecutivo(
 
 export async function listar(
   sucursalId: number, desplazamiento: number, limite: number,
+  filtros: { desde?: string; hasta?: string } = {},
 ): Promise<{ datos: unknown[]; total: number }> {
+  const cond = ['c.sucursal_id = ?'];
+  const params: (string | number)[] = [sucursalId];
+  if (filtros.desde) { cond.push('c.fecha_recepcion >= ?'); params.push(`${filtros.desde} 00:00:00`); }
+  if (filtros.hasta) { cond.push('c.fecha_recepcion <= ?'); params.push(`${filtros.hasta} 23:59:59`); }
+  const where = `WHERE ${cond.join(' AND ')}`;
+
   const datos = await query(
     `SELECT c.id, CONCAT(c.prefijo, c.numero) AS numero, c.fecha_recepcion, c.total_usd, c.total_bs,
             c.estado, c.condicion_pago, c.saldo_pendiente, p.razon_social AS proveedor
        FROM compras c JOIN proveedores p ON p.id = c.proveedor_id
-      WHERE c.sucursal_id = ? ORDER BY c.id DESC LIMIT ? OFFSET ?`,
-    [sucursalId, limite, desplazamiento],
+      ${where} ORDER BY c.id DESC LIMIT ? OFFSET ?`,
+    [...params, limite, desplazamiento],
   );
-  const total = await queryOne<{ n: number }>(`SELECT COUNT(*) AS n FROM compras WHERE sucursal_id = ?`, [sucursalId]);
+  const total = await queryOne<{ n: number }>(`SELECT COUNT(*) AS n FROM compras c ${where}`, params);
   return { datos, total: total?.n ?? 0 };
 }
 

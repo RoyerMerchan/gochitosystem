@@ -93,6 +93,31 @@ router.get('/ventas/stock-bajo', requierePermiso('reportes.ver'), async (req, re
 });
 
 // ---------------------------------------------------------------------------
+// PAGOS: estadistica por metodo de pago
+// ---------------------------------------------------------------------------
+router.get('/ventas/metodos-pago', requierePermiso('reportes.ver'), validar({ query: esquemaRango }), async (req, res, next) => {
+  try {
+    const q = datosQuery<Rango>(req); const u = usuarioActual(req);
+    const cond = ["v.estado = 'CERRADA'", 'v.sucursal_id = ?', "pg.estado = 'APLICADO'"];
+    const params: (string | number)[] = [u.sucursalId];
+    if (q.desde) { cond.push('v.fecha >= ?'); params.push(`${q.desde} 00:00:00`); }
+    if (q.hasta) { cond.push('v.fecha <= ?'); params.push(`${q.hasta} 23:59:59`); }
+    const datos = await queryReporte(
+      `SELECT mp.nombre AS metodo, mp.moneda, COUNT(*) AS transacciones,
+              SUM(pg.monto_moneda) AS total_moneda, SUM(pg.monto_usd) AS total_usd
+         FROM pagos pg
+         JOIN metodos_pago mp ON mp.id = pg.metodo_pago_id
+         JOIN ventas v ON v.id = pg.venta_id
+        WHERE ${cond.join(' AND ')}
+        GROUP BY mp.id, mp.nombre, mp.moneda
+        ORDER BY total_usd DESC`,
+      params,
+    );
+    enviarOk(res, datos);
+  } catch (e) { next(e); }
+});
+
+// ---------------------------------------------------------------------------
 // CLIENTES
 // ---------------------------------------------------------------------------
 router.get('/clientes/mas-compradores', requierePermiso('reportes.ver'), validar({ query: esquemaRango }), async (req, res, next) => {

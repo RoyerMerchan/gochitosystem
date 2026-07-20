@@ -30,6 +30,11 @@ const REPORTES: { grupo: string; items: DefReporte[] }[] = [
       { clave: 'stockbajo', titulo: 'Stock bajo', url: '/reportes/ventas/stock-bajo', columnas: [
         { campo: 'sku', etiqueta: 'SKU' }, { campo: 'nombre', etiqueta: 'Producto' },
         { campo: 'cantidad', etiqueta: 'Stock', tipo: 'cant' }, { campo: 'stock_minimo', etiqueta: 'Mínimo', tipo: 'cant' }] },
+      { clave: 'metodospago', titulo: 'Métodos de pago', url: '/reportes/ventas/metodos-pago', columnas: [
+        { campo: 'metodo', etiqueta: 'Método' }, { campo: 'moneda', etiqueta: 'Moneda' },
+        { campo: 'transacciones', etiqueta: 'Transacciones', tipo: 'cant' },
+        { campo: 'total_moneda', etiqueta: 'Total en su moneda', tipo: 'cant' },
+        { campo: 'total_usd', etiqueta: 'Total USD', tipo: 'usd' }] },
     ],
   },
   {
@@ -50,10 +55,20 @@ const REPORTES: { grupo: string; items: DefReporte[] }[] = [
 
 export default function ReportesPage() {
   const [sel, setSel] = useState<DefReporte>(REPORTES[0]!.items[0]!);
+  const [desde, setDesde] = useState('');
+  const [hasta, setHasta] = useState('');
+
+  const urlConRango = () => {
+    const p = new URLSearchParams();
+    if (desde) p.set('desde', desde);
+    if (hasta) p.set('hasta', hasta);
+    const qs = p.toString();
+    return qs ? `${sel.url}?${qs}` : sel.url;
+  };
 
   const datos = useQuery({
-    queryKey: ['reporte', sel.clave],
-    queryFn: () => obtener<Record<string, unknown>[]>(sel.url),
+    queryKey: ['reporte', sel.clave, desde, hasta],
+    queryFn: () => obtener<Record<string, unknown>[]>(urlConRango()),
   });
 
   const formatear = (valor: unknown, tipo?: string) => {
@@ -117,9 +132,20 @@ export default function ReportesPage() {
 
       {/* Resultado */}
       <div className="space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-xl font-bold">{sel.titulo}</h1>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-end gap-2">
+            <div>
+              <label className="mb-0.5 block text-[10px] uppercase text-gray-400">Desde</label>
+              <input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-700" />
+            </div>
+            <div>
+              <label className="mb-0.5 block text-[10px] uppercase text-gray-400">Hasta</label>
+              <input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-700" />
+            </div>
+            {(desde || hasta) && (
+              <button onClick={() => { setDesde(''); setHasta(''); }} className="rounded-lg border border-gray-300 px-2 py-1.5 text-xs text-gray-500 hover:bg-gray-100 dark:border-gray-600 dark:hover:bg-gray-700">Limpiar</button>
+            )}
             <button onClick={exportarPDF} disabled={!datos.data?.length}
               className="flex items-center gap-2 rounded-lg bg-red-600 px-3 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-40">
               <FileText className="h-4 w-4" /> PDF
