@@ -1,0 +1,9 @@
+node_modules/
+dist/
+coverage/
+logs/
+uploads/
+backups/
+*.log
+.env
+.env.local

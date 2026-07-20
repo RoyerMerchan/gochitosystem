@@ -1,0 +1,154 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ------------------------------------------------------------------ */
+/* Tokens de diseno. Los colores se declaran como triples HSL sin      */
+/* funcion para que Tailwind pueda aplicar opacidad (<alpha-value>).   */
+/* ------------------------------------------------------------------ */
+@layer base {
+  :root {
+    /* Superficies */
+    --color-fondo: 210 20% 97%;
+    --color-superficie: 0 0% 100%;
+    --color-superficie-alt: 210 20% 98%;
+
+    /* Bordes */
+    --color-borde: 214 20% 89%;
+    --color-borde-fuerte: 214 16% 78%;
+
+    /* Texto */
+    --color-texto: 222 24% 14%;
+    --color-texto-suave: 220 12% 40%;
+    --color-texto-tenue: 220 10% 56%;
+
+    /* Marca */
+    --color-primario: 221 83% 53%;
+    --color-primario-suave: 221 90% 95%;
+    --color-primario-fuerte: 221 83% 43%;
+    --color-primario-texto: 0 0% 100%;
+
+    /* Estados semanticos */
+    --color-exito: 152 60% 34%;
+    --color-exito-suave: 150 60% 94%;
+    --color-alerta: 35 92% 42%;
+    --color-alerta-suave: 40 96% 93%;
+    --color-peligro: 0 72% 48%;
+    --color-peligro-suave: 0 86% 96%;
+    --color-info: 199 89% 42%;
+    --color-info-suave: 199 90% 94%;
+
+    --color-anillo: 221 83% 53%;
+
+    /* Radios */
+    --radio-sm: 0.25rem;
+    --radio-md: 0.5rem;
+    --radio-lg: 0.75rem;
+    --radio-xl: 1rem;
+    --radio-2xl: 1.5rem;
+
+    /* Sombras */
+    --sombra-sutil: 0 1px 2px 0 hsl(222 24% 14% / 0.05);
+    --sombra-media: 0 1px 3px 0 hsl(222 24% 14% / 0.1), 0 1px 2px -1px hsl(222 24% 14% / 0.1);
+    --sombra-elevada: 0 4px 12px -2px hsl(222 24% 14% / 0.12), 0 2px 4px -2px hsl(222 24% 14% / 0.08);
+    --sombra-flotante: 0 12px 32px -8px hsl(222 24% 14% / 0.24), 0 4px 8px -4px hsl(222 24% 14% / 0.12);
+  }
+
+  .dark {
+    --color-fondo: 222 30% 9%;
+    --color-superficie: 222 26% 13%;
+    --color-superficie-alt: 222 24% 17%;
+
+    --color-borde: 220 18% 24%;
+    --color-borde-fuerte: 220 14% 34%;
+
+    --color-texto: 210 24% 96%;
+    --color-texto-suave: 216 14% 72%;
+    --color-texto-tenue: 216 12% 56%;
+
+    --color-primario: 217 91% 62%;
+    --color-primario-suave: 221 45% 22%;
+    --color-primario-fuerte: 217 91% 70%;
+    --color-primario-texto: 222 40% 10%;
+
+    --color-exito: 150 58% 48%;
+    --color-exito-suave: 152 40% 18%;
+    --color-alerta: 38 92% 56%;
+    --color-alerta-suave: 36 45% 18%;
+    --color-peligro: 0 79% 63%;
+    --color-peligro-suave: 0 45% 20%;
+    --color-info: 199 89% 58%;
+    --color-info-suave: 199 45% 19%;
+
+    --color-anillo: 217 91% 62%;
+
+    --sombra-sutil: 0 1px 2px 0 hsl(0 0% 0% / 0.3);
+    --sombra-media: 0 1px 3px 0 hsl(0 0% 0% / 0.4), 0 1px 2px -1px hsl(0 0% 0% / 0.4);
+    --sombra-elevada: 0 4px 12px -2px hsl(0 0% 0% / 0.5), 0 2px 4px -2px hsl(0 0% 0% / 0.4);
+    --sombra-flotante: 0 12px 32px -8px hsl(0 0% 0% / 0.65), 0 4px 8px -4px hsl(0 0% 0% / 0.5);
+  }
+
+  * {
+    @apply border-borde;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-fondo text-texto font-sans antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+
+  /* Anillo de foco consistente en toda la interfaz. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-anillo ring-offset-2 ring-offset-fondo;
+  }
+
+  /* Oculta las flechas de los input[type=number]: se usa NumberInput. */
+  input[type='number']::-webkit-outer-spin-button,
+  input[type='number']::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type='number'] {
+    -moz-appearance: textfield;
+  }
+}
+
+@layer components {
+  /* Barra de desplazamiento discreta y coherente con el tema. */
+  .barra-fina {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--color-borde-fuerte)) transparent;
+  }
+  .barra-fina::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .barra-fina::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--color-borde-fuerte));
+    border-radius: 9999px;
+  }
+  .barra-fina::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  /* Cifras de dinero: tabulares para que las columnas queden alineadas. */
+  .cifra {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+  }
+}
+
+@layer utilities {
+  .animar-carga {
+    background-image: linear-gradient(
+      90deg,
+      transparent,
+      hsl(var(--color-superficie-alt)),
+      transparent
+    );
+  }
+}

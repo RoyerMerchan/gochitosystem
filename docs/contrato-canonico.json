@@ -1,0 +1,1458 @@
+{
+    "convenciones": {
+        "db": "MariaDB 10.6 (contenedor mariadb-10-6, sin sintaxis de versiones superiores) / InnoDB / utf8mb4 COLLATE utf8mb4_unicode_ci (excepto codigo_barras, sku y numero de documento que usan utf8mb4_bin para unicidad exacta). Tablas en plural snake_case espanol; detalle en singular compuesto (venta_detalle). PK siempre 'id' BIGINT UNSIGNED AUTO_INCREMENT (salvo tablas puente con PK compuesta). FK '<singular>_id'. Timestamps creado_en DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3), actualizado_en DATETIME(3) NULL ON UPDATE CURRENT_TIMESTAMP(3), eliminado_en DATETIME(3) NULL (borrado logico en catalogos). MODELO BIMONETARIO: la moneda base es USD y la secundaria VES (bolivares). Todo precio, costo, utilidad, total de documento y saldo de cartera se almacena en USD: totales DECIMAL(14,2), precios y costos unitarios DECIMAL(14,4). Los montos en bolivares se almacenan en DECIMAL(18,2) (montos numericamente grandes) y los montos entregados en la moneda del pago en DECIMAL(18,4). Las tasas de cambio USD->VES en DECIMAL(18,6). Las tasas de impuesto y comision siguen en DECIMAL(6,3). Cantidades DECIMAL(14,3). Sufijos de columna obligatorios: _usd para importes en dolares, _bs para importes en bolivares, monto_moneda + moneda + tasa_aplicada para importes en la moneda en que ocurrio la operacion. Booleanos TINYINT(1) con prefijo es_ o esta_. ON DELETE RESTRICT y ON UPDATE RESTRICT en el 100% de las FKs, salvo SET NULL en referencias informativas no contables. sql_mode=STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ZERO_DATE,NO_ZERO_IN_DATE,NO_ENGINE_SUBSTITUTION. FLOAT/DOUBLE prohibidos para dinero. Borrado logico + columna virtual activo_uk TINYINT UNSIGNED AS (IF(eliminado_en IS NULL,1,NULL)) VIRTUAL para que los UNIQUE solo apliquen a filas activas.",
+        "backend": "Node.js 20+, TypeScript 5.x, Express 5, mysql2/promise (dos pools: poolPrincipal y poolReportes), Zod, jsonwebtoken, bcrypt, helmet, cors, morgan (JSON), express-rate-limit, dotenv, pdfkit, exceljs, vitest, Docker. Arquitectura estricta por capas: routes -> controllers -> services -> repositories -> db. SQL crudo, SIN ORM. Los controllers no llevan logica; los services abren y cierran transacciones; los repositories contienen el SQL y reciben sucursal_id como parametro OBLIGATORIO en su firma. Archivos: kebab-case (venta.service.ts, venta.repository.ts). Clases PascalCase, funciones y variables camelCase, constantes UPPER_SNAKE. Errores de dominio con codigo estable (STOCK_INSUFICIENTE, CUPO_EXCEDIDO, TURNO_CERRADO). Migraciones en /database/migrations con nombre YYYYMMDDHHMM__descripcion.sql, solo hacia adelante, registradas con checksum.",
+        "frontend": "React 19 + Vite 7 + TypeScript + TailwindCSS 3. react-router-dom 7 para rutas; @tanstack/react-query 5 para TODO el estado de servidor; zustand solo para estado de UI (carrito POS, turno activo, preferencias). react-hook-form + @hookform/resolvers + zod para formularios (mismos esquemas de validacion que el backend). axios con interceptores para refresh token y header Idempotency-Key. recharts para graficos, lucide-react iconos, dayjs fechas, xlsx export cliente, framer-motion transiciones, vite-plugin-pwa para POS offline-tolerante. Estructura por feature: src/features/<modulo>/{pages,components,hooks,api,types}. Componentes PascalCase, hooks use<Nombre>. Textos de interfaz en espanol. Componente compartido MoneyDual que renderiza el par \"$ 2,50 / Bs 91,25\" con formato es-VE (coma decimal, punto de miles); recibe SIEMPRE la tasa por props (la congelada del documento en pantallas de historico, la vigente en pantallas en vivo) y jamas la consulta por su cuenta. La tasa vigente se muestra permanentemente en la barra superior y en el encabezado del POS; si falta, la barra se pinta en rojo y el boton de cobrar queda deshabilitado.",
+        "api": "REST versionada bajo /api/v1. Recursos en plural espanol: /api/v1/productos. Verbos HTTP: GET listar/detalle, POST crear, PUT reemplazar, PATCH parcial, DELETE = borrado logico. Acciones de dominio como sub-recurso POST: /api/v1/ventas/:id/anular, /api/v1/turnos-caja/:id/cerrar, /api/v1/abonos. Paginacion ?pagina=1&limite=25 con respuesta {datos, meta:{pagina,limite,total,totalPaginas}}. Filtros ?desde=&hasta=&sucursalId=&estado=. Respuesta de exito {ok:true, datos}. Respuesta de error {ok:false, error:{codigo, mensaje, detalles}} con codigo estable en UPPER_SNAKE. Codigos HTTP: 200, 201, 202 (export encolado), 400 validacion, 401 sin token, 403 sin permiso, 404, 409 conflicto de negocio (STOCK_INSUFICIENTE, EN_PROCESO, SIN_TASA_DEL_DIA, PAGO_NO_CUADRA, TASA_YA_REGISTRADA), 422 IDEMPOTENCY_KEY_REUSE, 429 rate limit, 500. Errores propios del modelo bimonetario: SIN_TASA_DEL_DIA (409, bloquea ventas y abonos si no hay tasa registrada para hoy), TASA_YA_REGISTRADA (409), TASA_INVALIDA (400), REFERENCIA_REQUERIDA (400), PAGO_NO_CUADRA (409), MONEDA_NO_COINCIDE (400), ARQUEO_INCOMPLETO (400). Headers: Authorization: Bearer <jwt>, Idempotency-Key en POST de ventas/compras/abonos, X-Request-Id propagado y devuelto. Reportes bajo /api/v1/reportes/<nombre> con ?formato=json|pdf|excel; formato pdf/excel responde 202 con id de trabajo consultable en /api/v1/exportaciones/:id."
+    },
+    "reglasClave": [
+        "REGLA INNEGOCIABLE A - SNAPSHOT DE COSTO: venta_detalle almacena en el INSERT, EN USD, precio_compra_unitario, precio_venta_unitario, descuento_unitario, impuesto_tasa, impuesto_monto, utilidad_unitaria y utilidad_total. Ninguna consulta de reporte, dashboard o agregado hace JOIN a productos ni a producto_stock para obtener costo. productos.costo_promedio y producto_stock.costo_promedio solo sirven para valorizar existencias HOY. Si la utilidad de un periodo cerrado cambia entre dos ejecuciones sin que se haya emitido ni anulado un documento, es un BUG CRITICO.",
+        "REGLA INNEGOCIABLE B - SNAPSHOT DE TASA: ventas.tasa_cambio guarda la tasa USD->VES usada en esa venta y ventas.total_bs guarda el monto en bolivares ya calculado y redondeado al confirmar. Los montos en Bs de un documento pasado salen SIEMPRE de esas columnas; JAMAS de la tasa de hoy. El total en Bs de un periodo es SUM(ventas.total_bs), nunca SUM(total_usd) * tasa_de_hoy. Lo mismo para pagos.tasa_aplicada, abonos.tasa_aplicada, movimientos_caja.tasa_aplicada y compras.tasa_cambio. Si el reporte de marzo cambia porque hoy subio la tasa, es un BUG CRITICO.",
+        "Moneda base USD: precios, costos, utilidades y saldos de cartera se almacenan en dolares. El usuario captura \"este producto vale $2,50\" y nunca edita el precio en bolivares; el equivalente en Bs es ayuda visual de solo lectura. Un precio guardado en Bs envejece con la devaluacion y obliga a un UPDATE masivo del catalogo en cada movimiento de la tasa.",
+        "Tasa del dia registrada a mano: la tabla tasas_cambio lleva una fila activa por fecha (UNIQUE (fecha, activo_uk)). Si no hay tasa para hoy, el sistema BLOQUEA la creacion de ventas y de abonos con el error de negocio SIN_TASA_DEL_DIA (HTTP 409) y ofrece registrarla. Una tasa pasada nunca se sobrescribe con UPDATE: se corrige insertando una fila con es_correccion=1 y corrige_tasa_id, marcando la anterior con eliminado_en, y queda en auditoria. Corregir la tasa no reescribe los documentos ya emitidos.",
+        "Pago mixto entre monedas: una misma venta se puede pagar parte en efectivo USD y parte en Pago Movil en Bs. Cada fila de pagos guarda metodo_pago_id, moneda, monto_moneda (lo entregado en ESA moneda), tasa_aplicada (copiada de ventas.tasa_cambio, jamas releida), monto_usd (equivalente) y referencia obligatoria si el metodo la exige. Se valida SUM(pagos.monto_usd) + ventas.total_credito = ventas.total_usd con tolerancia 0,01 USD, dentro de la transaccion, con error PAGO_NO_CUADRA. Las vueltas se calculan con la tasa de la venta y se pueden entregar en Bs o en USD.",
+        "Creditos en USD: creditos.saldo_usd y creditos.monto_original_usd viven en dolares. El abono se registra en la moneda que pago el cliente, con la tasa del dia del abono (abonos.moneda, monto_moneda, tasa_aplicada, monto_usd) y se convierte a USD para descontar del saldo. Guardar la deuda en bolivares la licua sola: $100 prestados a tasa 36,50 y cobrados tres meses despues a tasa 52,00 devuelven Bs 3.650 = $70,19, una perdida silenciosa del 29,81% que ningun reporte en bolivares muestra. El estado de cuenta muestra el saldo en USD y su equivalente en Bs a la tasa de HOY, porque un saldo pendiente es una obligacion viva, no un documento cerrado.",
+        "Arqueo de caja SEPARADO por moneda: turnos_caja lleva base_inicial, esperado, contado y diferencia duplicados (_usd y _bs) y el conteo por denominacion de cada moneda en JSON independiente. El efectivo en USD y el efectivo en Bs se cuentan y cuadran por separado; NUNCA se mezclan en un solo total ni se convierte uno al otro para netear. Convertir esconde la señal: un faltante real de Bs 7,50 se disfraza de ruido de conversion y un faltante de $20 se compensaria con un sobrante de Bs 730. No existe la columna diferencia_total. El turno queda CUADRADO solo si diferencia_usd = 0 y diferencia_bs = 0.",
+        "Reportes en las dos monedas lado a lado: toda cifra de dinero se muestra en columna USD y columna Bs. El USD sale de las columnas en USD del snapshot; el Bs sale de multiplicar por la tasa CONGELADA de cada venta. Ejemplo: marzo con ventas de 120,00 a 36,20 + 80,00 a 38,90 + 200,00 a 41,50 son 400,00 USD y Bs 15.756,00; recalcular 400,00 por la tasa de hoy (52,00) daria Bs 20.800,00, un 32,01% inflado, un ingreso que nunca existio y un numero que cambia cada dia.",
+        "El monto en bolivares se redondea UNA sola vez, al confirmar la venta (total_bs = ROUND(total_usd * tasa_cambio, 2), half-up), y se guarda. No se recalcula al vuelo en cada consulta. Se redondea el TOTAL del documento, nunca los renglones: venta_detalle no guarda importes en bolivares.",
+        "Metodos de pago con moneda propia: metodos_pago lleva moneda ENUM('USD','VES'), requiere_referencia y afecta_caja_efectivo. afecta_caja_efectivo es mas preciso que el antiguo es_afecta_caja: un Pago Movil SI es dinero cobrado pero NO es efectivo en el cajon, asi que no participa del conteo de billetes. Catalogo a sembrar: Efectivo Bs (VES, sin referencia, efectivo), Efectivo USD (USD, sin referencia, efectivo), Pago Movil (VES, con referencia), Transferencia (VES, con referencia), Punto de venta (VES, con referencia), Zelle (USD, con referencia), Binance/USDT (USD, con referencia) y Credito (USD, no es cobro: genera cuenta por cobrar).",
+        "La utilidad se calcula SIEMPRE sobre la base gravable (sin impuesto y despues de descuentos), nunca sobre el total con impuesto: utilidad_unitaria = (precio_venta_unitario - descuento_unitario) - precio_compra_unitario; utilidad_total = utilidad_unitaria * cantidad.",
+        "Metodo de costeo: Costo Promedio Ponderado movil (CPP). En cada entrada: nuevo_costo = (cantidad_actual * costo_promedio + cantidad_entrada * costo_entrada) / (cantidad_actual + cantidad_entrada), calculado dentro de la transaccion con SELECT ... FOR UPDATE sobre producto_stock.",
+        "inventario_movimientos es APPEND-ONLY: nunca UPDATE ni DELETE. Un error se corrige con un movimiento compensatorio. Es la fuente de verdad del stock; producto_stock.cantidad es una cache reconciliable con SUM(signo * cantidad).",
+        "Los documentos (ventas, compras, devoluciones, ajustes, abonos) son INMUTABLES una vez cerrados: no se editan ni se borran, se anulan con estado='ANULADA' + anulada_en + anulado_por + motivo_anulacion + movimientos compensatorios de inventario, caja y cartera. Trigger BEFORE UPDATE ON ventas con SIGNAL SQLSTATE '45000' si OLD.estado='CERRADA' y se toca un importe.",
+        "ON DELETE RESTRICT y ON UPDATE RESTRICT en el 100% de las FKs, incluido venta_detalle -> ventas. Solo se usa ON DELETE SET NULL en referencias informativas no contables (productos.proveedor_preferido_id, ventas.turno_caja_id no aplica porque es NOT NULL).",
+        "Todo cache (producto_stock.cantidad, ventas.total, ventas.utilidad_total, creditos.saldo_pendiente, clientes.saldo_actual) se escribe dentro de la MISMA transaccion que lo origina y tiene una consulta de reconciliacion ejecutada por un job nocturno. Una discrepancia es un bug, no un dato a corregir a mano.",
+        "Consecutivos sin huecos: la tabla consecutivos entrega el numero con SELECT ... FOR UPDATE dentro de la misma transaccion del documento y como ULTIMA operacion antes del INSERT. Nunca AUTO_INCREMENT ni MAX(numero)+1. Refuerzo con UNIQUE (sucursal_id, tipo_documento, anio, numero) en cada tabla de documento.",
+        "Pago mixto obligatorio: la tabla pagos es 1:N respecto a ventas. Se valida SUM(pagos.monto) = ventas.total dentro de la transaccion. Un pago con metodo de tipo CREDITO genera automaticamente la fila en creditos y actualiza clientes.saldo_actual bajo bloqueo.",
+        "Toda venta lleva turno_caja_id NOT NULL y sucursal_id NOT NULL desde la primera migracion, aunque la interfaz de la Fase 1 no exponga turnos ni sucursales.",
+        "Validacion de stock y de cupo de credito: siempre tras SELECT ... FOR UPDATE sobre producto_stock o clientes. Los productos del carrito se bloquean ordenados por producto_id ASC para evitar deadlocks. Aislamiento READ COMMITTED, innodb_lock_wait_timeout=5, reintento automatico (max 2) ante error 1213 o 1205.",
+        "Idempotencia del POS: header Idempotency-Key (UUID v4 del cliente) + tabla idempotencia_solicitudes + UNIQUE en ventas.clave_idempotencia. Reenviar la misma venta devuelve la respuesta original con su status, no un error.",
+        "Impuestos: la tasa se congela por renglon (venta_detalle.impuesto_tasa). Si productos.es_precio_incluye_impuesto=1 el POS desagrega base = precio / (1 + tasa/100). Exento (gravado al 0%) y excluido (fuera del impuesto) son tipos distintos en la tabla impuestos.",
+        "Redondeo: se redondea el TOTAL del documento al multiplo configurado (parametros['redondeo.multiplo'], tipicamente 50), nunca los renglones, y la diferencia se guarda en ventas.redondeo (puede ser negativa).",
+        "Descuento a nivel de documento: se prorratea a los renglones proporcionalmente a su base y se refleja en descuento_unitario, ajustando utilidad_unitaria y utilidad_total. El ultimo centavo del prorrateo se asigna al renglon mayor para que la suma cuadre exacto.",
+        "Devoluciones: devolucion_detalle copia precio_compra_unitario y precio_venta_unitario del renglon original de venta_detalle, jamas el costo actual. El reingreso al kardex entra con ese mismo costo.",
+        "Abonos: se aplican a los creditos en orden FIFO por fecha_vencimiento y luego id, con trazabilidad renglon por renglon en abono_aplicaciones. Nunca se resta directamente de creditos.saldo_pendiente sin registrar la aplicacion.",
+        "La transaccion de venta contiene SOLO SQL: sin llamadas HTTP, sin generacion de PDF, sin impresion. Objetivo de duracion menor a 50 ms.",
+        "Auditoria: se registran solo operaciones con consecuencia economica o de seguridad (anulacion, ajuste de stock, cambio de precio o costo, creditos y abonos, cambios de roles/permisos/usuarios, edicion de configuracion, login exitoso y fallido, exportacion de reportes). Nunca se serializan password_hash ni tokens.",
+        "Los reportes historicos se sirven desde resumen_ventas_diario (recalculado a las 03:00 sobre los ultimos 3 dias, derivado del snapshot de venta_detalle); el dia en curso se sirve en vivo. Las exportaciones PDF/Excel se encolan en trabajos_exportacion y responden 202."
+    ],
+    "tablas": [
+        {
+            "nombre": "sucursales",
+            "proposito": "Puntos de venta fisicos. Existe desde la migracion 001 con una unica fila (PRINCIPAL); habilita multi-sucursal sin reescribir el backend despues.",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "codigo:VARCHAR(20) NOT NULL UNIQUE",
+                "nombre:VARCHAR(120) NOT NULL",
+                "direccion:VARCHAR(200) NULL",
+                "telefono:VARCHAR(40) NULL",
+                "es_principal:TINYINT(1) NOT NULL DEFAULT 0",
+                "esta_activa:TINYINT(1) NOT NULL DEFAULT 1",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "actualizado_en:DATETIME(3) NULL ON UPDATE CURRENT_TIMESTAMP(3)",
+                "eliminado_en:DATETIME(3) NULL"
+            ],
+            "fks": []
+        },
+        {
+            "nombre": "roles",
+            "proposito": "Roles del sistema (ADMIN, SUPERVISOR, CAJERO, BODEGA). En tabla, nunca como ENUM, para no requerir ALTER TABLE por cada matiz de permiso.",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "codigo:VARCHAR(40) NOT NULL UNIQUE",
+                "nombre:VARCHAR(80) NOT NULL",
+                "descripcion:VARCHAR(200) NULL",
+                "es_sistema:TINYINT(1) NOT NULL DEFAULT 0",
+                "esta_activo:TINYINT(1) NOT NULL DEFAULT 1",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "actualizado_en:DATETIME(3) NULL ON UPDATE CURRENT_TIMESTAMP(3)",
+                "eliminado_en:DATETIME(3) NULL"
+            ],
+            "fks": []
+        },
+        {
+            "nombre": "permisos",
+            "proposito": "Catalogo de permisos granulares con convencion modulo.accion (ventas.anular, productos.editar_costo, reportes.utilidad.ver).",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "codigo:VARCHAR(60) NOT NULL UNIQUE",
+                "modulo:VARCHAR(40) NOT NULL",
+                "accion:VARCHAR(40) NOT NULL",
+                "descripcion:VARCHAR(200) NULL",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)"
+            ],
+            "fks": []
+        },
+        {
+            "nombre": "rol_permisos",
+            "proposito": "Tabla puente rol-permiso. Otorgar o revocar un permiso es un INSERT/DELETE desde la interfaz, sin desplegar codigo.",
+            "columnas": [
+                "rol_id:BIGINT UNSIGNED NOT NULL",
+                "permiso_id:BIGINT UNSIGNED NOT NULL",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "PRIMARY KEY (rol_id, permiso_id)"
+            ],
+            "fks": [
+                "rol_id -> roles.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "permiso_id -> permisos.id ON DELETE RESTRICT ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "usuarios",
+            "proposito": "Operadores del sistema. Autenticacion con bcrypt, bloqueo por intentos fallidos y borrado logico (un usuario con historial nunca se borra).",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "usuario:VARCHAR(60) NOT NULL",
+                "email:VARCHAR(160) NULL",
+                "nombre_completo:VARCHAR(140) NOT NULL",
+                "documento:VARCHAR(30) NULL",
+                "telefono:VARCHAR(40) NULL",
+                "password_hash:CHAR(60) NOT NULL",
+                "rol_id:BIGINT UNSIGNED NOT NULL",
+                "sucursal_predeterminada_id:BIGINT UNSIGNED NULL",
+                "intentos_fallidos:TINYINT UNSIGNED NOT NULL DEFAULT 0",
+                "bloqueado_hasta:DATETIME(3) NULL",
+                "ultimo_acceso_en:DATETIME(3) NULL",
+                "debe_cambiar_password:TINYINT(1) NOT NULL DEFAULT 0",
+                "esta_activo:TINYINT(1) NOT NULL DEFAULT 1",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "actualizado_en:DATETIME(3) NULL ON UPDATE CURRENT_TIMESTAMP(3)",
+                "eliminado_en:DATETIME(3) NULL",
+                "activo_uk:TINYINT UNSIGNED AS (IF(eliminado_en IS NULL,1,NULL)) VIRTUAL -- UNIQUE (usuario, activo_uk) y UNIQUE (email, activo_uk)"
+            ],
+            "fks": [
+                "rol_id -> roles.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "sucursal_predeterminada_id -> sucursales.id ON DELETE SET NULL ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "usuario_sucursales",
+            "proposito": "Asignacion de usuario a sucursal con rol especifico por sede. Permite ser CAJERO en la sucursal 1 y SUPERVISOR en la 2.",
+            "columnas": [
+                "usuario_id:BIGINT UNSIGNED NOT NULL",
+                "sucursal_id:BIGINT UNSIGNED NOT NULL",
+                "rol_id:BIGINT UNSIGNED NOT NULL",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "PRIMARY KEY (usuario_id, sucursal_id)"
+            ],
+            "fks": [
+                "usuario_id -> usuarios.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "sucursal_id -> sucursales.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "rol_id -> roles.id ON DELETE RESTRICT ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "sesiones",
+            "proposito": "Refresh tokens hasheados, rotativos, con familia para detectar reuso robado. Sin esta tabla no existe el boton de cerrar todas las sesiones ni se puede desconectar a un empleado despedido.",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "usuario_id:BIGINT UNSIGNED NOT NULL",
+                "token_hash:CHAR(64) NOT NULL UNIQUE",
+                "familia_id:CHAR(36) NOT NULL",
+                "reemplazada_por_id:BIGINT UNSIGNED NULL",
+                "ip:VARBINARY(16) NULL",
+                "user_agent:VARCHAR(255) NULL",
+                "expira_en:DATETIME(3) NOT NULL",
+                "revocada_en:DATETIME(3) NULL",
+                "motivo_revocacion:ENUM('LOGOUT','ROTACION','REUSO_DETECTADO','ADMIN','EXPIRACION') NULL",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)"
+            ],
+            "fks": [
+                "usuario_id -> usuarios.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "reemplazada_por_id -> sesiones.id ON DELETE SET NULL ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "configuracion",
+            "proposito": "Fila unica (CHECK id=1) con los datos editables del negocio: nombre, logo, direccion, telefono, parametros del modelo bimonetario (moneda base USD y secundaria VES, simbolos, decimales), impuestos por defecto y contenido del ticket. Columnas tipadas, no EAV, para no perder validacion en los campos que importan.",
+            "columnas": [
+                "id:TINYINT UNSIGNED NOT NULL DEFAULT 1 PK -- CHECK (id = 1)",
+                "nombre_negocio:VARCHAR(120) NOT NULL",
+                "razon_social:VARCHAR(160) NULL",
+                "nit:VARCHAR(32) NULL",
+                "regimen:ENUM('SIMPLIFICADO','COMUN','SIMPLE','NO_APLICA') NOT NULL DEFAULT 'NO_APLICA'",
+                "logo_ruta:VARCHAR(255) NULL",
+                "direccion:VARCHAR(200) NULL",
+                "telefono:VARCHAR(40) NULL",
+                "email:VARCHAR(160) NULL",
+                "moneda_base:CHAR(3) NOT NULL DEFAULT 'USD' -- MONEDA BASE: precios, costos, utilidades y cartera viven aqui. No editable desde la interfaz en Fase 1",
+                "moneda_secundaria:CHAR(3) NOT NULL DEFAULT 'VES' -- moneda de cobro mayoritaria (bolivares)",
+                "moneda_base_simbolo:VARCHAR(5) NOT NULL DEFAULT '$'",
+                "moneda_secundaria_simbolo:VARCHAR(5) NOT NULL DEFAULT 'Bs'",
+                "decimales_usd:TINYINT UNSIGNED NOT NULL DEFAULT 2",
+                "decimales_bs:TINYINT UNSIGNED NOT NULL DEFAULT 2",
+                "redondeo_bs_multiplo:DECIMAL(10,2) NOT NULL DEFAULT 0.00 -- 0 = sin redondeo del monto en bolivares",
+                "es_bloquea_venta_sin_tasa:TINYINT(1) NOT NULL DEFAULT 1 -- si no hay tasa del dia, la venta se rechaza con SIN_TASA_DEL_DIA",
+                "impuesto_predeterminado_id:BIGINT UNSIGNED NULL",
+                "es_precio_incluye_impuesto:TINYINT(1) NOT NULL DEFAULT 1",
+                "redondeo_multiplo:INT UNSIGNED NOT NULL DEFAULT 50",
+                "ticket_encabezado:VARCHAR(255) NULL",
+                "ticket_pie:VARCHAR(255) NULL",
+                "ticket_mensaje_legal:VARCHAR(255) NULL",
+                "es_ticket_mostrar_logo:TINYINT(1) NOT NULL DEFAULT 1",
+                "es_ticket_mostrar_nit:TINYINT(1) NOT NULL DEFAULT 1",
+                "es_ticket_muestra_ambas_monedas:TINYINT(1) NOT NULL DEFAULT 1 -- el ticket imprime el total en $ y en Bs",
+                "es_ticket_muestra_tasa:TINYINT(1) NOT NULL DEFAULT 1 -- el ticket imprime la tasa APLICADA en esa venta, no la de hoy",
+                "ticket_ancho_mm:TINYINT UNSIGNED NOT NULL DEFAULT 80",
+                "es_credito_requiere_autorizacion:TINYINT(1) NOT NULL DEFAULT 0",
+                "es_permite_stock_negativo:TINYINT(1) NOT NULL DEFAULT 0",
+                "dias_plazo_credito_defecto:SMALLINT UNSIGNED NOT NULL DEFAULT 30",
+                "zona_horaria:VARCHAR(40) NOT NULL DEFAULT 'America/Caracas'",
+                "actualizado_por:BIGINT UNSIGNED NULL",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "actualizado_en:DATETIME(3) NULL ON UPDATE CURRENT_TIMESTAMP(3)"
+            ],
+            "fks": [
+                "impuesto_predeterminado_id -> impuestos.id ON DELETE RESTRICT ON UPDATE RESTRICT (se agrega en migracion posterior a impuestos)",
+                "actualizado_por -> usuarios.id ON DELETE SET NULL ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "parametros",
+            "proposito": "Banderas de comportamiento clave-valor tipado para lo desconocido a futuro. Complementa a configuracion: se tipa lo conocido y se deja EAV solo para lo que aun no existe.",
+            "columnas": [
+                "clave:VARCHAR(64) NOT NULL PK",
+                "valor:VARCHAR(255) NOT NULL",
+                "tipo:ENUM('STRING','INT','DECIMAL','BOOL','JSON') NOT NULL DEFAULT 'STRING'",
+                "descripcion:VARCHAR(200) NULL",
+                "es_editable:TINYINT(1) NOT NULL DEFAULT 1",
+                "actualizado_por:BIGINT UNSIGNED NULL",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "actualizado_en:DATETIME(3) NULL ON UPDATE CURRENT_TIMESTAMP(3)"
+            ],
+            "fks": [
+                "actualizado_por -> usuarios.id ON DELETE SET NULL ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "tasas_cambio",
+            "proposito": "NUCLEO DEL MODELO BIMONETARIO. Tasa USD->VES del dia, registrada a mano por el usuario. Una fila activa por fecha. Historico completo e inmutable: una tasa pasada nunca se sobrescribe, se corrige insertando una fila con es_correccion=1 y corrige_tasa_id, marcando la anterior con eliminado_en. Si no hay tasa para hoy, el sistema bloquea ventas y abonos con el error SIN_TASA_DEL_DIA.",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "fecha:DATE NOT NULL -- dia al que aplica la tasa",
+                "tasa:DECIMAL(18,6) NOT NULL -- cuantos bolivares equivale 1 USD. CHECK (tasa > 0)",
+                "fuente:ENUM('MANUAL','BCV','PARALELO','OTRO') NOT NULL DEFAULT 'MANUAL' -- informativo",
+                "es_correccion:TINYINT(1) NOT NULL DEFAULT 0 -- 1 si esta fila corrige una tasa previa",
+                "corrige_tasa_id:BIGINT UNSIGNED NULL -- apunta a la fila corregida",
+                "notas:VARCHAR(255) NULL",
+                "usuario_id:BIGINT UNSIGNED NOT NULL -- quien la registro",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "actualizado_en:DATETIME(3) NULL ON UPDATE CURRENT_TIMESTAMP(3)",
+                "eliminado_en:DATETIME(3) NULL -- solo se marca al ser reemplazada por una correccion",
+                "activo_uk:TINYINT UNSIGNED AS (IF(eliminado_en IS NULL,1,NULL)) VIRTUAL -- UNIQUE (fecha, activo_uk): una sola tasa vigente por dia; KEY ix_tasa_fecha (fecha)"
+            ],
+            "fks": [
+                "usuario_id -> usuarios.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "corrige_tasa_id -> tasas_cambio.id ON DELETE RESTRICT ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "unidades_medida",
+            "proposito": "Catalogo de unidades (UND, KG, LB, LT, MT). Define si un producto admite cantidades fraccionadas: sin el, el POS no sabe si 0.485 es una cantidad valida.",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "codigo:VARCHAR(10) NOT NULL UNIQUE",
+                "nombre:VARCHAR(60) NOT NULL",
+                "es_permite_fraccion:TINYINT(1) NOT NULL DEFAULT 0",
+                "decimales:TINYINT UNSIGNED NOT NULL DEFAULT 0",
+                "esta_activa:TINYINT(1) NOT NULL DEFAULT 1",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "actualizado_en:DATETIME(3) NULL ON UPDATE CURRENT_TIMESTAMP(3)",
+                "eliminado_en:DATETIME(3) NULL"
+            ],
+            "fks": []
+        },
+        {
+            "nombre": "impuestos",
+            "proposito": "Catalogo de impuestos con tasa vigente y tipo. Distingue EXENTO (gravado al 0%) de EXCLUIDO (fuera del impuesto): con una sola columna iva DECIMAL es imposible diferenciarlos. La tasa se congela por renglon en venta_detalle.",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "codigo:VARCHAR(20) NOT NULL UNIQUE",
+                "nombre:VARCHAR(80) NOT NULL",
+                "tasa:DECIMAL(6,3) NOT NULL DEFAULT 0.000 -- CHECK (tasa BETWEEN 0 AND 100)",
+                "tipo:ENUM('GRAVADO','EXENTO','EXCLUIDO','NO_APLICA') NOT NULL DEFAULT 'GRAVADO'",
+                "vigente_desde:DATE NOT NULL",
+                "vigente_hasta:DATE NULL",
+                "esta_activo:TINYINT(1) NOT NULL DEFAULT 1",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "actualizado_en:DATETIME(3) NULL ON UPDATE CURRENT_TIMESTAMP(3)",
+                "eliminado_en:DATETIME(3) NULL"
+            ],
+            "fks": []
+        },
+        {
+            "nombre": "categorias",
+            "proposito": "Clasificacion de productos, autorreferencial para admitir subcategorias sin migracion posterior.",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "categoria_padre_id:BIGINT UNSIGNED NULL",
+                "codigo:VARCHAR(30) NULL",
+                "nombre:VARCHAR(100) NOT NULL",
+                "descripcion:VARCHAR(255) NULL",
+                "color_hex:CHAR(7) NULL",
+                "orden:SMALLINT UNSIGNED NOT NULL DEFAULT 0",
+                "esta_activa:TINYINT(1) NOT NULL DEFAULT 1",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "actualizado_en:DATETIME(3) NULL ON UPDATE CURRENT_TIMESTAMP(3)",
+                "eliminado_en:DATETIME(3) NULL",
+                "activo_uk:TINYINT UNSIGNED AS (IF(eliminado_en IS NULL,1,NULL)) VIRTUAL -- UNIQUE (nombre, categoria_padre_id, activo_uk)"
+            ],
+            "fks": [
+                "categoria_padre_id -> categorias.id ON DELETE RESTRICT ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "proveedores",
+            "proposito": "MEJORA OBLIGATORIA. El cliente pidio compras sin proveedor. Sin esta tabla no hay cuentas por pagar, ni analisis de costo por origen, ni devolucion de compra.",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "nit:VARCHAR(32) NULL",
+                "razon_social:VARCHAR(160) NOT NULL",
+                "nombre_comercial:VARCHAR(120) NULL",
+                "contacto_nombre:VARCHAR(120) NULL",
+                "telefono:VARCHAR(40) NULL",
+                "email:VARCHAR(160) NULL",
+                "direccion:VARCHAR(200) NULL",
+                "ciudad:VARCHAR(80) NULL",
+                "dias_plazo:SMALLINT UNSIGNED NOT NULL DEFAULT 0",
+                "cupo_credito:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD",
+                "saldo_actual:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD",
+                "notas:VARCHAR(255) NULL",
+                "esta_activo:TINYINT(1) NOT NULL DEFAULT 1",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "actualizado_en:DATETIME(3) NULL ON UPDATE CURRENT_TIMESTAMP(3)",
+                "eliminado_en:DATETIME(3) NULL",
+                "activo_uk:TINYINT UNSIGNED AS (IF(eliminado_en IS NULL,1,NULL)) VIRTUAL -- UNIQUE (nit, activo_uk)"
+            ],
+            "fks": []
+        },
+        {
+            "nombre": "clientes",
+            "proposito": "Terceros compradores. Incluye cupo de credito y saldo materializado para el reporte de clientes con deuda y el bloqueo de venta a credito.",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "tipo_documento:ENUM('CC','CE','NIT','PASAPORTE','SIN_IDENTIFICAR') NOT NULL DEFAULT 'CC'",
+                "documento:VARCHAR(30) NULL",
+                "nombre:VARCHAR(140) NOT NULL",
+                "telefono:VARCHAR(40) NULL",
+                "email:VARCHAR(160) NULL",
+                "direccion:VARCHAR(200) NULL",
+                "ciudad:VARCHAR(80) NULL",
+                "fecha_nacimiento:DATE NULL",
+                "cupo_credito:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD. CHECK (cupo_credito >= 0)",
+                "dias_plazo:SMALLINT UNSIGNED NOT NULL DEFAULT 30",
+                "saldo_actual:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD. Cache reconciliable con SUM(creditos.saldo_usd). La deuda vive en dolares para que la devaluacion no la licue",
+                "es_permite_credito:TINYINT(1) NOT NULL DEFAULT 0",
+                "esta_bloqueado:TINYINT(1) NOT NULL DEFAULT 0",
+                "motivo_bloqueo:VARCHAR(200) NULL",
+                "notas:VARCHAR(255) NULL",
+                "esta_activo:TINYINT(1) NOT NULL DEFAULT 1",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "actualizado_en:DATETIME(3) NULL ON UPDATE CURRENT_TIMESTAMP(3)",
+                "eliminado_en:DATETIME(3) NULL",
+                "activo_uk:TINYINT UNSIGNED AS (IF(eliminado_en IS NULL,1,NULL)) VIRTUAL -- UNIQUE (tipo_documento, documento, activo_uk)"
+            ],
+            "fks": []
+        },
+        {
+            "nombre": "metodos_pago",
+            "proposito": "Catalogo de formas de pago, cada una con SU MONEDA. En tabla y no ENUM porque el negocio pedira agregar otra billetera o banco: es un INSERT, no una migracion. afecta_caja_efectivo determina si el pago entra al conteo fisico de billetes (un Pago Movil es dinero cobrado pero NO es efectivo en el cajon). Catalogo a sembrar: Efectivo Bs (VES/efectivo), Efectivo USD (USD/efectivo), Pago Movil (VES/referencia), Transferencia (VES/referencia), Punto de venta (VES/referencia), Zelle (USD/referencia), Binance-USDT (USD/referencia) y Credito (USD, no es cobro: genera cuenta por cobrar).",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "codigo:VARCHAR(30) NOT NULL UNIQUE",
+                "nombre:VARCHAR(80) NOT NULL",
+                "tipo:ENUM('EFECTIVO','TARJETA_DEBITO','TARJETA_CREDITO','TRANSFERENCIA','PAGO_MOVIL','CRIPTO','CREDITO','BONO','OTRO') NOT NULL",
+                "moneda:ENUM('USD','VES') NOT NULL DEFAULT 'VES' -- moneda en la que entra el dinero por este metodo",
+                "afecta_caja_efectivo:TINYINT(1) NOT NULL DEFAULT 0 -- 1 solo para Efectivo Bs y Efectivo USD: entra al arqueo fisico de su moneda. Reemplaza al antiguo es_afecta_caja",
+                "requiere_referencia:TINYINT(1) NOT NULL DEFAULT 0 -- si es 1, pagos.referencia y abonos.referencia son obligatorias (error REFERENCIA_REQUERIDA)",
+                "es_permite_cambio:TINYINT(1) NOT NULL DEFAULT 0",
+                "es_no_es_cobro:TINYINT(1) NOT NULL DEFAULT 0 -- 1 para CREDITO: no ingresa dinero, genera cuenta por cobrar",
+                "comision_porcentaje:DECIMAL(6,3) NOT NULL DEFAULT 0.000",
+                "orden:SMALLINT UNSIGNED NOT NULL DEFAULT 0",
+                "esta_activo:TINYINT(1) NOT NULL DEFAULT 1",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "actualizado_en:DATETIME(3) NULL ON UPDATE CURRENT_TIMESTAMP(3)",
+                "eliminado_en:DATETIME(3) NULL"
+            ],
+            "fks": []
+        },
+        {
+            "nombre": "motivos_ajuste",
+            "proposito": "MEJORA. Tipifica por que cambia el inventario fuera de una compra o venta (merma, vencido, robo, error de digitacion, conteo fisico). Sin motivo tipificado no hay reporte de perdida y todo ajuste es indistinguible de un robo.",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "codigo:VARCHAR(30) NOT NULL UNIQUE",
+                "nombre:VARCHAR(80) NOT NULL",
+                "signo:TINYINT NOT NULL DEFAULT -1 -- +1 entrada, -1 salida, 0 ambos",
+                "es_perdida:TINYINT(1) NOT NULL DEFAULT 1",
+                "es_requiere_autorizacion:TINYINT(1) NOT NULL DEFAULT 0",
+                "esta_activo:TINYINT(1) NOT NULL DEFAULT 1",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "actualizado_en:DATETIME(3) NULL ON UPDATE CURRENT_TIMESTAMP(3)"
+            ],
+            "fks": []
+        },
+        {
+            "nombre": "cajas",
+            "proposito": "MEJORA. Cajas fisicas por sucursal (Caja 1, Caja 2). Punto de anclaje de los turnos y del arqueo.",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "sucursal_id:BIGINT UNSIGNED NOT NULL",
+                "codigo:VARCHAR(20) NOT NULL",
+                "nombre:VARCHAR(80) NOT NULL",
+                "impresora_nombre:VARCHAR(120) NULL",
+                "esta_activa:TINYINT(1) NOT NULL DEFAULT 1",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "actualizado_en:DATETIME(3) NULL ON UPDATE CURRENT_TIMESTAMP(3)",
+                "eliminado_en:DATETIME(3) NULL",
+                "activo_uk:TINYINT UNSIGNED AS (IF(eliminado_en IS NULL,1,NULL)) VIRTUAL -- UNIQUE (sucursal_id, codigo, activo_uk)"
+            ],
+            "fks": [
+                "sucursal_id -> sucursales.id ON DELETE RESTRICT ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "turnos_caja",
+            "proposito": "MEJORA CRITICA. Periodo entre apertura y cierre de una caja por un usuario, con ARQUEO SEPARADO POR MONEDA. El efectivo en USD y el efectivo en bolivares se cuentan y cuadran POR SEPARADO y NUNCA se mezclan en un solo total: convertir uno al otro esconde la señal (un faltante real de Bs 7,50 se disfraza de ruido de conversion y un faltante de $20 se compensaria con un sobrante de Bs 730). No existe la columna diferencia_total. El turno queda CUADRADO solo si diferencia_usd = 0 Y diferencia_bs = 0. Sin turno no se puede responder quien tenia la caja cuando falto el dinero.",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "caja_id:BIGINT UNSIGNED NOT NULL",
+                "sucursal_id:BIGINT UNSIGNED NOT NULL",
+                "usuario_apertura_id:BIGINT UNSIGNED NOT NULL",
+                "usuario_cierre_id:BIGINT UNSIGNED NULL",
+                "abierto_en:DATETIME(3) NOT NULL",
+                "cerrado_en:DATETIME(3) NULL",
+                "base_inicial_usd:DECIMAL(14,2) NOT NULL DEFAULT 0.00",
+                "base_inicial_bs:DECIMAL(18,2) NOT NULL DEFAULT 0.00",
+                "total_ventas_efectivo_usd:DECIMAL(14,2) NOT NULL DEFAULT 0.00",
+                "total_ventas_efectivo_bs:DECIMAL(18,2) NOT NULL DEFAULT 0.00",
+                "total_ventas_otros_usd:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- recaudo NO efectivo (Pago Movil, punto, Zelle, Binance) expresado en USD. Sirve al reporte de recaudo por metodo; NO participa del arqueo fisico",
+                "total_abonos_efectivo_usd:DECIMAL(14,2) NOT NULL DEFAULT 0.00",
+                "total_abonos_efectivo_bs:DECIMAL(18,2) NOT NULL DEFAULT 0.00",
+                "total_ingresos_usd:DECIMAL(14,2) NOT NULL DEFAULT 0.00",
+                "total_ingresos_bs:DECIMAL(18,2) NOT NULL DEFAULT 0.00",
+                "total_egresos_usd:DECIMAL(14,2) NOT NULL DEFAULT 0.00",
+                "total_egresos_bs:DECIMAL(18,2) NOT NULL DEFAULT 0.00",
+                "total_retiros_usd:DECIMAL(14,2) NOT NULL DEFAULT 0.00",
+                "total_retiros_bs:DECIMAL(18,2) NOT NULL DEFAULT 0.00",
+                "total_vueltas_usd:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- vueltas entregadas en efectivo USD",
+                "total_vueltas_bs:DECIMAL(18,2) NOT NULL DEFAULT 0.00 -- vueltas entregadas en efectivo Bs",
+                "esperado_usd:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- base_inicial_usd + ventas + abonos + ingresos - egresos - retiros - vueltas, todo en USD",
+                "esperado_bs:DECIMAL(18,2) NOT NULL DEFAULT 0.00 -- misma formula, todo en Bs. Jamas se combina con esperado_usd",
+                "contado_usd:DECIMAL(14,2) NULL -- conteo fisico de dolares al cierre",
+                "contado_bs:DECIMAL(18,2) NULL -- conteo fisico de bolivares al cierre",
+                "diferencia_usd:DECIMAL(14,2) NULL -- contado_usd - esperado_usd",
+                "diferencia_bs:DECIMAL(18,2) NULL -- contado_bs - esperado_bs. NO existe diferencia_total: no se netea una moneda contra la otra",
+                "detalle_denominaciones_usd:JSON NULL -- conteo por denominacion en dolares (100, 50, 20, 10, 5, 1)",
+                "detalle_denominaciones_bs:JSON NULL -- conteo por denominacion en bolivares (200, 100, 50, 20, 10, 5)",
+                "tasa_cierre:DECIMAL(18,6) NULL -- tasa vigente al cerrar el turno, informativa para el reporte de cierre",
+                "observaciones:VARCHAR(255) NULL",
+                "estado:ENUM('ABIERTO','CERRADO','CUADRADO') NOT NULL DEFAULT 'ABIERTO'",
+                "abierto_uk:TINYINT UNSIGNED AS (IF(estado='ABIERTO',1,NULL)) VIRTUAL -- UNIQUE (caja_id, abierto_uk): impide dos turnos abiertos",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "actualizado_en:DATETIME(3) NULL ON UPDATE CURRENT_TIMESTAMP(3)"
+            ],
+            "fks": [
+                "caja_id -> cajas.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "sucursal_id -> sucursales.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "usuario_apertura_id -> usuarios.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "usuario_cierre_id -> usuarios.id ON DELETE RESTRICT ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "productos",
+            "proposito": "Catalogo maestro de articulos. TODOS los precios y costos estan EN USD (moneda base): el usuario captura \"este producto vale $2,50\" y nunca edita el precio en bolivares; el equivalente en Bs es ayuda visual de solo lectura calculada con la tasa vigente. NO lleva columna stock (vive en producto_stock) ni sucursal_id (es catalogo compartido). costo_promedio aqui es solo referencial para valorizar hoy: jamas se usa en reportes historicos.",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "sku:VARCHAR(40) NOT NULL COLLATE utf8mb4_bin",
+                "nombre:VARCHAR(160) NOT NULL",
+                "descripcion:VARCHAR(500) NULL",
+                "categoria_id:BIGINT UNSIGNED NOT NULL",
+                "unidad_medida_id:BIGINT UNSIGNED NOT NULL",
+                "impuesto_id:BIGINT UNSIGNED NOT NULL",
+                "proveedor_preferido_id:BIGINT UNSIGNED NULL",
+                "tipo:ENUM('SIMPLE','SERVICIO','COMPUESTO') NOT NULL DEFAULT 'SIMPLE'",
+                "precio_venta:DECIMAL(14,4) NOT NULL DEFAULT 0.0000 -- EN USD. CHECK (precio_venta >= 0)",
+                "precio_venta_mayorista:DECIMAL(14,4) NULL -- EN USD",
+                "costo_promedio:DECIMAL(14,4) NOT NULL DEFAULT 0.0000 -- EN USD. Valorizacion actual, NO para reportes historicos",
+                "ultimo_costo:DECIMAL(14,4) NOT NULL DEFAULT 0.0000 -- EN USD",
+                "margen_objetivo:DECIMAL(6,3) NULL",
+                "es_precio_incluye_impuesto:TINYINT(1) NOT NULL DEFAULT 1",
+                "es_maneja_inventario:TINYINT(1) NOT NULL DEFAULT 1",
+                "es_permite_fraccion:TINYINT(1) NOT NULL DEFAULT 0",
+                "es_pesable:TINYINT(1) NOT NULL DEFAULT 0",
+                "es_favorito_pos:TINYINT(1) NOT NULL DEFAULT 0",
+                "imagen_ruta:VARCHAR(255) NULL",
+                "esta_activo:TINYINT(1) NOT NULL DEFAULT 1",
+                "creado_por:BIGINT UNSIGNED NULL",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "actualizado_en:DATETIME(3) NULL ON UPDATE CURRENT_TIMESTAMP(3)",
+                "eliminado_en:DATETIME(3) NULL",
+                "activo_uk:TINYINT UNSIGNED AS (IF(eliminado_en IS NULL,1,NULL)) VIRTUAL -- UNIQUE (sku, activo_uk); ademas FULLTEXT (nombre, descripcion)"
+            ],
+            "fks": [
+                "categoria_id -> categorias.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "unidad_medida_id -> unidades_medida.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "impuesto_id -> impuestos.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "proveedor_preferido_id -> proveedores.id ON DELETE SET NULL ON UPDATE RESTRICT",
+                "creado_por -> usuarios.id ON DELETE SET NULL ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "producto_codigos",
+            "proposito": "MEJORA. Un producto tiene N codigos de barras: el proveedor cambia el empaque y llegan dos EAN del mismo articulo. Modelarlo 1:1 obliga a duplicar el producto y parte el historico de ventas.",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "producto_id:BIGINT UNSIGNED NOT NULL",
+                "codigo:VARCHAR(64) NOT NULL COLLATE utf8mb4_bin",
+                "tipo:ENUM('EAN13','EAN8','UPC','INTERNO','BALANZA','PLU') NOT NULL DEFAULT 'EAN13','",
+                "factor_conversion:DECIMAL(14,3) NOT NULL DEFAULT 1.000 -- unidades base que representa este codigo",
+                "es_principal:TINYINT(1) NOT NULL DEFAULT 0",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "actualizado_en:DATETIME(3) NULL ON UPDATE CURRENT_TIMESTAMP(3)",
+                "eliminado_en:DATETIME(3) NULL",
+                "activo_uk:TINYINT UNSIGNED AS (IF(eliminado_en IS NULL,1,NULL)) VIRTUAL -- UNIQUE (codigo, activo_uk)"
+            ],
+            "fks": [
+                "producto_id -> productos.id ON DELETE RESTRICT ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "producto_precios",
+            "proposito": "MEJORA. Historial de cambios de precio de venta y de costo (EN USD) con autor y fecha. Permite auditar por que cayo el margen de un producto y quien lo cambio. Guarda tambien la tasa vigente al momento del cambio, solo como referencia informativa del equivalente en bolivares de ese dia.",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "producto_id:BIGINT UNSIGNED NOT NULL",
+                "precio_venta_anterior:DECIMAL(14,4) NOT NULL -- EN USD",
+                "precio_venta_nuevo:DECIMAL(14,4) NOT NULL -- EN USD",
+                "costo_referencia:DECIMAL(14,4) NOT NULL DEFAULT 0.0000 -- EN USD",
+                "tasa_cambio_referencia:DECIMAL(18,6) NULL -- tasa vigente el dia del cambio, informativa",
+                "motivo:VARCHAR(200) NULL",
+                "vigente_desde:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "usuario_id:BIGINT UNSIGNED NOT NULL",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)"
+            ],
+            "fks": [
+                "producto_id -> productos.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "usuario_id -> usuarios.id ON DELETE RESTRICT ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "producto_stock",
+            "proposito": "MEJORA CRITICA. Existencia y costo promedio por (producto, sucursal). Es una CACHE del kardex, no la verdad. Separarlo de productos evita contencion en el POS y habilita stock por sucursal.",
+            "columnas": [
+                "producto_id:BIGINT UNSIGNED NOT NULL",
+                "sucursal_id:BIGINT UNSIGNED NOT NULL",
+                "cantidad:DECIMAL(14,3) NOT NULL DEFAULT 0.000",
+                "cantidad_reservada:DECIMAL(14,3) NOT NULL DEFAULT 0.000",
+                "stock_minimo:DECIMAL(14,3) NOT NULL DEFAULT 0.000",
+                "stock_maximo:DECIMAL(14,3) NULL",
+                "costo_promedio:DECIMAL(14,4) NOT NULL DEFAULT 0.0000 -- EN USD. Costo ACTUAL, prohibido en reportes historicos",
+                "ubicacion:VARCHAR(60) NULL",
+                "ultima_entrada_en:DATETIME(3) NULL",
+                "ultima_salida_en:DATETIME(3) NULL",
+                "actualizado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)",
+                "PRIMARY KEY (producto_id, sucursal_id) -- KEY ix_stock_suc_cant (sucursal_id, cantidad)"
+            ],
+            "fks": [
+                "producto_id -> productos.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "sucursal_id -> sucursales.id ON DELETE RESTRICT ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "consecutivos",
+            "proposito": "MEJORA CRITICA. Numeracion sin huecos por sucursal, tipo de documento y anio, tomada con SELECT ... FOR UPDATE dentro de la transaccion del documento. AUTO_INCREMENT deja huecos y un revisor fiscal no los acepta.",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "sucursal_id:BIGINT UNSIGNED NOT NULL",
+                "tipo_documento:ENUM('VENTA','COMPRA','ABONO','DEVOLUCION_VENTA','DEVOLUCION_COMPRA','AJUSTE','TRASLADO') NOT NULL",
+                "anio:SMALLINT UNSIGNED NOT NULL",
+                "prefijo:VARCHAR(8) NOT NULL DEFAULT ''",
+                "ultimo_numero:BIGINT UNSIGNED NOT NULL DEFAULT 0",
+                "resolucion:VARCHAR(60) NULL",
+                "rango_desde:BIGINT UNSIGNED NULL",
+                "rango_hasta:BIGINT UNSIGNED NULL",
+                "vigente_hasta:DATE NULL",
+                "esta_activo:TINYINT(1) NOT NULL DEFAULT 1",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "actualizado_en:DATETIME(3) NULL ON UPDATE CURRENT_TIMESTAMP(3) -- UNIQUE (sucursal_id, tipo_documento, anio)"
+            ],
+            "fks": [
+                "sucursal_id -> sucursales.id ON DELETE RESTRICT ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "compras",
+            "proposito": "Cabecera de compra a proveedor. TODOS los importes estan EN USD (moneda base) para que el costo promedio ponderado sea comparable en el tiempo. Si la compra se pago en bolivares, moneda_pago='VES' y tasa_cambio guarda la tasa con la que se convirtio: el equivalente en Bs queda congelado en total_bs. Documento inmutable una vez RECIBIDA: alimenta el kardex y recalcula el costo promedio ponderado.",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "sucursal_id:BIGINT UNSIGNED NOT NULL",
+                "proveedor_id:BIGINT UNSIGNED NOT NULL",
+                "usuario_id:BIGINT UNSIGNED NOT NULL",
+                "prefijo:VARCHAR(8) NOT NULL DEFAULT ''",
+                "numero:BIGINT UNSIGNED NOT NULL",
+                "anio:SMALLINT UNSIGNED NOT NULL",
+                "numero_factura_proveedor:VARCHAR(60) NULL COLLATE utf8mb4_bin",
+                "fecha_documento:DATE NOT NULL",
+                "fecha_recepcion:DATETIME(3) NOT NULL",
+                "fecha_vencimiento:DATE NULL",
+                "subtotal:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD",
+                "descuento_total:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD",
+                "impuesto_total:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD",
+                "flete:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD",
+                "moneda_pago:ENUM('USD','VES') NOT NULL DEFAULT 'USD' -- en que moneda se le pago efectivamente al proveedor",
+                "tasa_cambio:DECIMAL(18,6) NOT NULL -- SNAPSHOT DE TASA de la compra. CHECK (tasa_cambio > 0)",
+                "total_usd:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- total del documento EN USD. CHECK (total_usd >= 0)",
+                "total_bs:DECIMAL(18,2) NOT NULL DEFAULT 0.00 -- ROUND(total_usd * tasa_cambio, 2) congelado al recibir",
+                "total_pagado_moneda:DECIMAL(18,4) NOT NULL DEFAULT 0.0000 -- lo entregado al proveedor en moneda_pago",
+                "saldo_pendiente:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD: la deuda al proveedor tampoco se licua",
+                "condicion_pago:ENUM('CONTADO','CREDITO') NOT NULL DEFAULT 'CONTADO'",
+                "estado:ENUM('BORRADOR','RECIBIDA','ANULADA') NOT NULL DEFAULT 'BORRADOR'",
+                "observaciones:VARCHAR(255) NULL",
+                "clave_idempotencia:CHAR(36) NULL UNIQUE",
+                "anulada_en:DATETIME(3) NULL",
+                "anulada_por:BIGINT UNSIGNED NULL",
+                "motivo_anulacion:VARCHAR(200) NULL",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "actualizado_en:DATETIME(3) NULL ON UPDATE CURRENT_TIMESTAMP(3) -- UNIQUE (sucursal_id, anio, prefijo, numero)"
+            ],
+            "fks": [
+                "sucursal_id -> sucursales.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "proveedor_id -> proveedores.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "usuario_id -> usuarios.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "anulada_por -> usuarios.id ON DELETE RESTRICT ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "compra_detalle",
+            "proposito": "Renglones de la compra, TODOS EN USD. costo_unitario_neto incluye el flete prorrateado porque el flete es costo del inventario, no gasto: es el valor en dolares que entra al calculo del costo promedio.",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "compra_id:BIGINT UNSIGNED NOT NULL",
+                "linea:SMALLINT UNSIGNED NOT NULL",
+                "producto_id:BIGINT UNSIGNED NOT NULL",
+                "descripcion:VARCHAR(160) NOT NULL -- snapshot del nombre",
+                "unidad_medida_id:BIGINT UNSIGNED NOT NULL",
+                "cantidad:DECIMAL(14,3) NOT NULL -- CHECK (cantidad > 0)",
+                "costo_unitario:DECIMAL(14,4) NOT NULL -- EN USD. CHECK (costo_unitario >= 0)",
+                "descuento_unitario:DECIMAL(14,4) NOT NULL DEFAULT 0.0000 -- EN USD",
+                "flete_prorrateado:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD",
+                "costo_unitario_neto:DECIMAL(14,4) NOT NULL -- EN USD. Costo real que entra al CPP",
+                "impuesto_id:BIGINT UNSIGNED NOT NULL",
+                "impuesto_tasa:DECIMAL(6,3) NOT NULL DEFAULT 0.000",
+                "impuesto_monto:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD",
+                "subtotal:DECIMAL(14,2) NOT NULL -- EN USD",
+                "total_linea:DECIMAL(14,2) NOT NULL -- EN USD",
+                "lote_codigo:VARCHAR(40) NULL",
+                "fecha_vencimiento:DATE NULL",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) -- UNIQUE (compra_id, linea)"
+            ],
+            "fks": [
+                "compra_id -> compras.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "producto_id -> productos.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "unidad_medida_id -> unidades_medida.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "impuesto_id -> impuestos.id ON DELETE RESTRICT ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "ventas",
+            "proposito": "Cabecera del documento de venta. Todos los importes estan EN USD salvo total_bs. SNAPSHOT DE TASA (regla innegociable B): tasa_cambio congela la tasa USD->VES usada y total_bs el monto en bolivares ya redondeado al confirmar; los reportes en Bs leen SIEMPRE esas columnas, jamas la tasa de hoy. Inmutable al cerrarse (trigger BEFORE UPDATE con SIGNAL, que tambien protege tasa_cambio y total_bs). Lleva sucursal_id y turno_caja_id NOT NULL desde la primera migracion. utilidad_total es la suma del snapshot de los renglones.",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "sucursal_id:BIGINT UNSIGNED NOT NULL",
+                "turno_caja_id:BIGINT UNSIGNED NOT NULL",
+                "usuario_id:BIGINT UNSIGNED NOT NULL",
+                "cliente_id:BIGINT UNSIGNED NULL -- NULL = consumidor final",
+                "prefijo:VARCHAR(8) NOT NULL DEFAULT ''",
+                "numero:BIGINT UNSIGNED NOT NULL",
+                "anio:SMALLINT UNSIGNED NOT NULL",
+                "fecha:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "subtotal_bruto:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD",
+                "descuento_lineas:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD",
+                "descuento_documento:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD",
+                "base_gravable:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD",
+                "impuesto_total:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD",
+                "redondeo:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD, puede ser negativo",
+                "total_usd:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- TOTAL DEFINITIVO EN USD. CHECK (total_usd >= 0)",
+                "tasa_cambio:DECIMAL(18,6) NOT NULL -- SNAPSHOT DE TASA. Congelada al cerrar la venta. CHECK (tasa_cambio > 0)",
+                "tasa_cambio_id:BIGINT UNSIGNED NULL -- fila de tasas_cambio usada, trazabilidad",
+                "total_bs:DECIMAL(18,2) NOT NULL DEFAULT 0.00 -- ROUND(total_usd * tasa_cambio, 2) calculado UNA vez al confirmar y guardado; nunca se recalcula al vuelo",
+                "redondeo_bs:DECIMAL(18,2) NOT NULL DEFAULT 0.00 -- diferencia por redondeo del monto en bolivares al multiplo configurado",
+                "costo_total:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD, SUM del snapshot",
+                "utilidad_total:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD, SUM del snapshot",
+                "total_pagado:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD, SUM(pagos.monto_usd)",
+                "total_credito:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD, parte que se fio",
+                "cantidad_items:DECIMAL(14,3) NOT NULL DEFAULT 0.000",
+                "es_credito:TINYINT(1) NOT NULL DEFAULT 0",
+                "estado:ENUM('ABIERTA','CERRADA','ANULADA') NOT NULL DEFAULT 'ABIERTA'",
+                "clave_idempotencia:CHAR(36) NULL UNIQUE",
+                "observaciones:VARCHAR(255) NULL",
+                "anulada_en:DATETIME(3) NULL",
+                "anulada_por:BIGINT UNSIGNED NULL",
+                "autorizada_por:BIGINT UNSIGNED NULL",
+                "motivo_anulacion:VARCHAR(200) NULL",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "actualizado_en:DATETIME(3) NULL ON UPDATE CURRENT_TIMESTAMP(3) -- UNIQUE (sucursal_id, anio, prefijo, numero); KEY (sucursal_id, fecha, estado); KEY (cliente_id, fecha, estado)"
+            ],
+            "fks": [
+                "sucursal_id -> sucursales.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "turno_caja_id -> turnos_caja.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "usuario_id -> usuarios.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "cliente_id -> clientes.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "anulada_por -> usuarios.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "autorizada_por -> usuarios.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "tasa_cambio_id -> tasas_cambio.id ON DELETE RESTRICT ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "venta_detalle",
+            "proposito": "EL CORAZON DEL SISTEMA. Renglones de venta con SNAPSHOT HISTORICO COMPLETO, TODO EN USD: costo, precio, descuento, tasa de impuesto y utilidad congelados en el INSERT. Toda consulta de rentabilidad lee EXCLUSIVAMENTE de aqui; ningun reporte hace JOIN a productos para obtener costo. El renglon NO guarda importes en bolivares a proposito: el Bs del renglon se deriva de total_linea * ventas.tasa_cambio, porque guardar Bs por renglon introduce descuadres de redondeo contra el total.",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "venta_id:BIGINT UNSIGNED NOT NULL",
+                "linea:SMALLINT UNSIGNED NOT NULL",
+                "producto_id:BIGINT UNSIGNED NOT NULL",
+                "descripcion:VARCHAR(160) NOT NULL -- snapshot del nombre del producto",
+                "codigo_barras:VARCHAR(64) NULL -- snapshot del codigo escaneado",
+                "categoria_id:BIGINT UNSIGNED NOT NULL -- snapshot para reportes por categoria",
+                "unidad_medida_id:BIGINT UNSIGNED NOT NULL",
+                "cantidad:DECIMAL(14,3) NOT NULL -- CHECK (cantidad > 0)",
+                "precio_compra_unitario:DECIMAL(14,4) NOT NULL -- EN USD. SNAPSHOT DE COSTO HISTORICO, copiado de producto_stock.costo_promedio al vender. CHECK (>= 0)",
+                "precio_venta_unitario:DECIMAL(14,4) NOT NULL -- EN USD. CHECK (>= 0)",
+                "descuento_unitario:DECIMAL(14,4) NOT NULL DEFAULT 0.0000 -- EN USD, incluye el prorrateo del descuento de documento. CHECK (descuento_unitario <= precio_venta_unitario)",
+                "impuesto_id:BIGINT UNSIGNED NOT NULL",
+                "impuesto_tasa:DECIMAL(6,3) NOT NULL DEFAULT 0.000 -- SNAPSHOT de la tasa vigente ese dia",
+                "impuesto_monto:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD, impuesto total del renglon",
+                "es_precio_incluia_impuesto:TINYINT(1) NOT NULL DEFAULT 1",
+                "base_gravable:DECIMAL(14,2) NOT NULL -- EN USD. (precio_venta_unitario - descuento_unitario) * cantidad, sin impuesto",
+                "costo_total:DECIMAL(14,2) NOT NULL -- EN USD. precio_compra_unitario * cantidad",
+                "utilidad_unitaria:DECIMAL(14,4) NOT NULL -- EN USD. (precio_venta_unitario - descuento_unitario) - precio_compra_unitario, sobre base sin impuesto",
+                "utilidad_total:DECIMAL(14,2) NOT NULL -- EN USD. utilidad_unitaria * cantidad",
+                "total_linea:DECIMAL(14,2) NOT NULL -- EN USD. base_gravable + impuesto_monto",
+                "cantidad_devuelta:DECIMAL(14,3) NOT NULL DEFAULT 0.000",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) -- UNIQUE (venta_id, linea); KEY ix_vd_producto (producto_id, venta_id); KEY ix_vd_categoria (categoria_id)"
+            ],
+            "fks": [
+                "venta_id -> ventas.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "producto_id -> productos.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "categoria_id -> categorias.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "unidad_medida_id -> unidades_medida.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "impuesto_id -> impuestos.id ON DELETE RESTRICT ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "pagos",
+            "proposito": "Pagos aplicados a una venta, CON MONEDA POR LINEA. Relacion 1:N: el pago mixto ENTRE MONEDAS es la norma en Venezuela (parte en efectivo USD, parte en Pago Movil en Bs, parte fiado). Cada linea guarda lo que el cliente entrego en SU moneda (monto_moneda), la tasa aplicada (copiada de ventas.tasa_cambio, jamas releida) y el equivalente en dolares (monto_usd). Se valida SUM(pagos.monto_usd) + ventas.total_credito = ventas.total_usd con tolerancia 0,01 USD dentro de la transaccion (PAGO_NO_CUADRA).",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "venta_id:BIGINT UNSIGNED NOT NULL",
+                "sucursal_id:BIGINT UNSIGNED NOT NULL",
+                "turno_caja_id:BIGINT UNSIGNED NOT NULL",
+                "metodo_pago_id:BIGINT UNSIGNED NOT NULL",
+                "moneda:ENUM('USD','VES') NOT NULL -- snapshot de la moneda del metodo. Debe coincidir con metodos_pago.moneda (MONEDA_NO_COINCIDE)",
+                "monto_moneda:DECIMAL(18,4) NOT NULL -- lo que el cliente entrego EN ESA moneda. CHECK (monto_moneda > 0)",
+                "tasa_aplicada:DECIMAL(18,6) NOT NULL -- copiada de ventas.tasa_cambio. CHECK (tasa_aplicada > 0)",
+                "monto_usd:DECIMAL(14,2) NOT NULL -- equivalente en USD; es lo que suma contra ventas.total_usd. VES: ROUND(monto_moneda / tasa_aplicada, 2). CHECK (monto_usd > 0)",
+                "monto_recibido_moneda:DECIMAL(18,4) NULL -- billete entregado, en la moneda del pago (solo efectivo)",
+                "cambio_moneda:DECIMAL(18,4) NULL -- vueltas entregadas, calculadas SIEMPRE con tasa_aplicada",
+                "cambio_moneda_codigo:ENUM('USD','VES') NULL -- en que moneda se dieron las vueltas; pueden ser distintas de la moneda del pago",
+                "referencia:VARCHAR(60) NULL -- OBLIGATORIA si metodos_pago.requiere_referencia = 1 (Pago Movil, Transferencia, Punto, Zelle, Binance). Error REFERENCIA_REQUERIDA",
+                "franquicia:VARCHAR(40) NULL",
+                "comision:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD",
+                "credito_id:BIGINT UNSIGNED NULL -- solo cuando el metodo es de tipo CREDITO",
+                "estado:ENUM('APLICADO','ANULADO') NOT NULL DEFAULT 'APLICADO'",
+                "usuario_id:BIGINT UNSIGNED NOT NULL",
+                "fecha:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "actualizado_en:DATETIME(3) NULL ON UPDATE CURRENT_TIMESTAMP(3)"
+            ],
+            "fks": [
+                "venta_id -> ventas.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "sucursal_id -> sucursales.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "turno_caja_id -> turnos_caja.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "metodo_pago_id -> metodos_pago.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "credito_id -> creditos.id ON DELETE RESTRICT ON UPDATE RESTRICT (FK agregada tras crear creditos)",
+                "usuario_id -> usuarios.id ON DELETE RESTRICT ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "creditos",
+            "proposito": "Cuenta por cobrar generada cuando una venta se paga total o parcialmente a credito. LA DEUDA VIVE EN USD (saldo_usd): si se guardara en bolivares se licuaria sola con la devaluacion. $100 prestados a tasa 36,50 y cobrados tres meses despues a tasa 52,00 devolverian Bs 3.650 = $70,19, una perdida silenciosa del 29,81% que ningun reporte en bolivares mostraria. saldo_usd es cache reconciliable con monto_original_usd - SUM(abono_aplicaciones.monto_usd).",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "sucursal_id:BIGINT UNSIGNED NOT NULL",
+                "cliente_id:BIGINT UNSIGNED NOT NULL",
+                "venta_id:BIGINT UNSIGNED NULL",
+                "origen:ENUM('VENTA','SALDO_INICIAL','NOTA_DEBITO','AJUSTE') NOT NULL DEFAULT 'VENTA'",
+                "fecha_emision:DATE NOT NULL",
+                "fecha_vencimiento:DATE NOT NULL",
+                "dias_plazo:SMALLINT UNSIGNED NOT NULL DEFAULT 30",
+                "monto_original_usd:DECIMAL(14,2) NOT NULL -- EN USD. CHECK (monto_original_usd > 0)",
+                "saldo_usd:DECIMAL(14,2) NOT NULL -- EN USD. CHECK (saldo_usd >= 0 AND saldo_usd <= monto_original_usd)",
+                "tasa_cambio_origen:DECIMAL(18,6) NOT NULL -- tasa del dia en que nacio la deuda, informativa: el saldo NO se reexpresa con ella",
+                "monto_original_bs_referencia:DECIMAL(18,2) NOT NULL DEFAULT 0.00 -- equivalente en Bs el dia de la emision, solo para el estado de cuenta",
+                "estado:ENUM('PENDIENTE','PARCIAL','PAGADO','VENCIDO','ANULADO') NOT NULL DEFAULT 'PENDIENTE'",
+                "autorizado_por:BIGINT UNSIGNED NULL",
+                "usuario_id:BIGINT UNSIGNED NOT NULL",
+                "observaciones:VARCHAR(255) NULL",
+                "pagado_en:DATETIME(3) NULL",
+                "anulado_en:DATETIME(3) NULL",
+                "anulado_por:BIGINT UNSIGNED NULL",
+                "motivo_anulacion:VARCHAR(200) NULL",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "actualizado_en:DATETIME(3) NULL ON UPDATE CURRENT_TIMESTAMP(3) -- KEY ix_cred_cliente (cliente_id, estado, fecha_vencimiento)"
+            ],
+            "fks": [
+                "sucursal_id -> sucursales.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "cliente_id -> clientes.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "venta_id -> ventas.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "usuario_id -> usuarios.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "autorizado_por -> usuarios.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "anulado_por -> usuarios.id ON DELETE RESTRICT ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "abonos",
+            "proposito": "Pago que hace un cliente contra su deuda, EN LA MONEDA QUE EL PAGO y con la TASA DEL DIA DEL ABONO (no la de la venta original). Se convierte a USD para descontar del saldo. El monto en USD se reparte a uno o varios creditos en abono_aplicaciones, en orden FIFO por fecha de vencimiento. Si no hay tasa registrada para hoy, el abono se rechaza con SIN_TASA_DEL_DIA.",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "sucursal_id:BIGINT UNSIGNED NOT NULL",
+                "cliente_id:BIGINT UNSIGNED NOT NULL",
+                "turno_caja_id:BIGINT UNSIGNED NOT NULL",
+                "metodo_pago_id:BIGINT UNSIGNED NOT NULL",
+                "usuario_id:BIGINT UNSIGNED NOT NULL",
+                "prefijo:VARCHAR(8) NOT NULL DEFAULT ''",
+                "numero:BIGINT UNSIGNED NOT NULL",
+                "anio:SMALLINT UNSIGNED NOT NULL",
+                "fecha:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "moneda:ENUM('USD','VES') NOT NULL -- moneda en la que el cliente entrego el dinero",
+                "monto_moneda:DECIMAL(18,4) NOT NULL -- lo recibido EN ESA moneda. CHECK (monto_moneda > 0)",
+                "tasa_aplicada:DECIMAL(18,6) NOT NULL -- tasa del DIA DEL ABONO, no la de la venta original. CHECK (tasa_aplicada > 0)",
+                "tasa_cambio_id:BIGINT UNSIGNED NULL -- fila de tasas_cambio usada, trazabilidad",
+                "monto_usd:DECIMAL(14,2) NOT NULL -- equivalente en USD que descuenta del saldo. CHECK (monto_usd > 0)",
+                "monto_aplicado_usd:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD",
+                "saldo_a_favor_usd:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD",
+                "referencia:VARCHAR(60) NULL -- OBLIGATORIA si metodos_pago.requiere_referencia = 1",
+                "observaciones:VARCHAR(255) NULL",
+                "estado:ENUM('APLICADO','ANULADO') NOT NULL DEFAULT 'APLICADO'",
+                "clave_idempotencia:CHAR(36) NULL UNIQUE",
+                "anulado_en:DATETIME(3) NULL",
+                "anulado_por:BIGINT UNSIGNED NULL",
+                "motivo_anulacion:VARCHAR(200) NULL",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "actualizado_en:DATETIME(3) NULL ON UPDATE CURRENT_TIMESTAMP(3) -- UNIQUE (sucursal_id, anio, prefijo, numero)"
+            ],
+            "fks": [
+                "sucursal_id -> sucursales.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "cliente_id -> clientes.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "turno_caja_id -> turnos_caja.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "metodo_pago_id -> metodos_pago.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "usuario_id -> usuarios.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "anulado_por -> usuarios.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "tasa_cambio_id -> tasas_cambio.id ON DELETE RESTRICT ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "abono_aplicaciones",
+            "proposito": "MEJORA. Trazabilidad renglon por renglon de como se reparte un abono entre creditos, SIEMPRE EN USD (la moneda de la deuda). Sin esta tabla es imposible responder si una factura concreta ya esta pagada cuando el cliente abona un monto global.",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "abono_id:BIGINT UNSIGNED NOT NULL",
+                "credito_id:BIGINT UNSIGNED NOT NULL",
+                "monto_usd:DECIMAL(14,2) NOT NULL -- EN USD. CHECK (monto_usd > 0)",
+                "saldo_anterior_usd:DECIMAL(14,2) NOT NULL -- EN USD",
+                "saldo_posterior_usd:DECIMAL(14,2) NOT NULL -- EN USD",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) -- UNIQUE (abono_id, credito_id)"
+            ],
+            "fks": [
+                "abono_id -> abonos.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "credito_id -> creditos.id ON DELETE RESTRICT ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "devoluciones",
+            "proposito": "MEJORA. Cabecera de devolucion de venta o de compra. Los importes van EN USD y se reintegra usando la TASA DE LA VENTA ORIGINAL (tasa_cambio), no la de hoy: devolver a la tasa de hoy regalaria o robaria la diferencia cambiaria. Sin devolucion modelada el usuario arregla el inventario con un ajuste manual y la utilidad del periodo queda falsa para siempre.",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "sucursal_id:BIGINT UNSIGNED NOT NULL",
+                "tipo:ENUM('VENTA','COMPRA') NOT NULL",
+                "venta_id:BIGINT UNSIGNED NULL",
+                "compra_id:BIGINT UNSIGNED NULL",
+                "cliente_id:BIGINT UNSIGNED NULL",
+                "proveedor_id:BIGINT UNSIGNED NULL",
+                "turno_caja_id:BIGINT UNSIGNED NULL",
+                "usuario_id:BIGINT UNSIGNED NOT NULL",
+                "autorizado_por:BIGINT UNSIGNED NULL",
+                "prefijo:VARCHAR(8) NOT NULL DEFAULT ''",
+                "numero:BIGINT UNSIGNED NOT NULL",
+                "anio:SMALLINT UNSIGNED NOT NULL",
+                "fecha:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "motivo:VARCHAR(200) NOT NULL",
+                "subtotal:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD",
+                "impuesto_total:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD",
+                "total_usd:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD",
+                "tasa_cambio:DECIMAL(18,6) NOT NULL -- COPIADA de la venta o compra original, jamas la tasa de hoy",
+                "total_bs:DECIMAL(18,2) NOT NULL DEFAULT 0.00 -- ROUND(total_usd * tasa_cambio, 2)",
+                "moneda_reintegro:ENUM('USD','VES') NULL -- en que moneda se devolvio el dinero al cliente",
+                "monto_reintegro_moneda:DECIMAL(18,4) NULL -- lo entregado en esa moneda",
+                "costo_total:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD, del snapshot original",
+                "utilidad_revertida:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD, del snapshot original",
+                "forma_reintegro:ENUM('EFECTIVO','NOTA_CREDITO','ABONO_CREDITO','CAMBIO_PRODUCTO') NOT NULL DEFAULT 'EFECTIVO'",
+                "estado:ENUM('APLICADA','ANULADA') NOT NULL DEFAULT 'APLICADA'",
+                "clave_idempotencia:CHAR(36) NULL UNIQUE",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "actualizado_en:DATETIME(3) NULL ON UPDATE CURRENT_TIMESTAMP(3) -- UNIQUE (sucursal_id, tipo, anio, prefijo, numero); CHECK ((venta_id IS NOT NULL) + (compra_id IS NOT NULL) = 1)"
+            ],
+            "fks": [
+                "sucursal_id -> sucursales.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "venta_id -> ventas.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "compra_id -> compras.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "cliente_id -> clientes.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "proveedor_id -> proveedores.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "turno_caja_id -> turnos_caja.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "usuario_id -> usuarios.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "autorizado_por -> usuarios.id ON DELETE RESTRICT ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "devolucion_detalle",
+            "proposito": "MEJORA. Renglones devueltos, EN USD. COPIA el precio_compra_unitario del renglon original de venta_detalle, jamas el costo actual: es lo que hace que la utilidad neta del periodo sea exacta. La conversion a bolivares usa la tasa de la devolucion, que a su vez es la de la venta original.",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "devolucion_id:BIGINT UNSIGNED NOT NULL",
+                "linea:SMALLINT UNSIGNED NOT NULL",
+                "venta_detalle_id:BIGINT UNSIGNED NULL -- obligatorio en devoluciones de venta: no se devuelve lo que no se vendio",
+                "compra_detalle_id:BIGINT UNSIGNED NULL",
+                "producto_id:BIGINT UNSIGNED NOT NULL",
+                "descripcion:VARCHAR(160) NOT NULL",
+                "cantidad:DECIMAL(14,3) NOT NULL -- CHECK (cantidad > 0)",
+                "precio_compra_unitario:DECIMAL(14,4) NOT NULL -- EN USD, copiado del renglon original",
+                "precio_venta_unitario:DECIMAL(14,4) NOT NULL -- EN USD, copiado del renglon original",
+                "descuento_unitario:DECIMAL(14,4) NOT NULL DEFAULT 0.0000 -- EN USD",
+                "impuesto_tasa:DECIMAL(6,3) NOT NULL DEFAULT 0.000",
+                "impuesto_monto:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD",
+                "base_gravable:DECIMAL(14,2) NOT NULL -- EN USD",
+                "costo_total:DECIMAL(14,2) NOT NULL -- EN USD",
+                "utilidad_revertida:DECIMAL(14,2) NOT NULL -- EN USD",
+                "total_linea:DECIMAL(14,2) NOT NULL -- EN USD",
+                "es_reingresa_stock:TINYINT(1) NOT NULL DEFAULT 1 -- 0 si el producto vuelve daÃ±ado",
+                "motivo_id:BIGINT UNSIGNED NULL",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) -- UNIQUE (devolucion_id, linea)"
+            ],
+            "fks": [
+                "devolucion_id -> devoluciones.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "venta_detalle_id -> venta_detalle.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "compra_detalle_id -> compra_detalle.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "producto_id -> productos.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "motivo_id -> motivos_ajuste.id ON DELETE RESTRICT ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "ajustes_inventario",
+            "proposito": "MEJORA. Cabecera de ajuste manual o de conteo fisico. Todo ajuste exige motivo tipificado: sin el, un ajuste es indistinguible de un robo.",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "sucursal_id:BIGINT UNSIGNED NOT NULL",
+                "usuario_id:BIGINT UNSIGNED NOT NULL",
+                "autorizado_por:BIGINT UNSIGNED NULL",
+                "motivo_id:BIGINT UNSIGNED NOT NULL",
+                "prefijo:VARCHAR(8) NOT NULL DEFAULT ''",
+                "numero:BIGINT UNSIGNED NOT NULL",
+                "anio:SMALLINT UNSIGNED NOT NULL",
+                "tipo:ENUM('AJUSTE_MANUAL','CONTEO_FISICO','MERMA','TRASLADO') NOT NULL DEFAULT 'AJUSTE_MANUAL'",
+                "fecha:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "observaciones:VARCHAR(255) NULL",
+                "valor_total_ajuste:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- EN USD",
+                "estado:ENUM('BORRADOR','APLICADO','ANULADO') NOT NULL DEFAULT 'BORRADOR'",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "actualizado_en:DATETIME(3) NULL ON UPDATE CURRENT_TIMESTAMP(3) -- UNIQUE (sucursal_id, anio, prefijo, numero)"
+            ],
+            "fks": [
+                "sucursal_id -> sucursales.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "usuario_id -> usuarios.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "autorizado_por -> usuarios.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "motivo_id -> motivos_ajuste.id ON DELETE RESTRICT ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "ajuste_detalle",
+            "proposito": "MEJORA. Renglones del ajuste con cantidad de sistema, cantidad contada y diferencia valorizada al costo promedio del momento.",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "ajuste_id:BIGINT UNSIGNED NOT NULL",
+                "linea:SMALLINT UNSIGNED NOT NULL",
+                "producto_id:BIGINT UNSIGNED NOT NULL",
+                "descripcion:VARCHAR(160) NOT NULL",
+                "cantidad_sistema:DECIMAL(14,3) NOT NULL",
+                "cantidad_contada:DECIMAL(14,3) NOT NULL",
+                "diferencia:DECIMAL(14,3) NOT NULL -- cantidad_contada - cantidad_sistema, con signo",
+                "costo_unitario:DECIMAL(14,4) NOT NULL -- EN USD, costo promedio en el momento del ajuste",
+                "valor_diferencia:DECIMAL(14,2) NOT NULL -- EN USD",
+                "motivo_id:BIGINT UNSIGNED NULL",
+                "observaciones:VARCHAR(200) NULL",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) -- UNIQUE (ajuste_id, linea)"
+            ],
+            "fks": [
+                "ajuste_id -> ajustes_inventario.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "producto_id -> productos.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "motivo_id -> motivos_ajuste.id ON DELETE RESTRICT ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "inventario_movimientos",
+            "proposito": "KARDEX. Libro mayor APPEND-ONLY del inventario y unica fuente de verdad del stock. Nunca UPDATE ni DELETE: un error se corrige con un movimiento compensatorio. producto_stock.cantidad se reconcilia con SUM(signo * cantidad).",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "sucursal_id:BIGINT UNSIGNED NOT NULL",
+                "producto_id:BIGINT UNSIGNED NOT NULL",
+                "tipo:ENUM('INICIAL','ENTRADA_COMPRA','SALIDA_VENTA','DEVOLUCION_CLIENTE','DEVOLUCION_PROVEEDOR','AJUSTE_POSITIVO','AJUSTE_NEGATIVO','MERMA','TRASLADO_ENTRADA','TRASLADO_SALIDA','ANULACION_VENTA','ANULACION_COMPRA') NOT NULL",
+                "signo:TINYINT NOT NULL -- +1 entrada, -1 salida. CHECK (signo IN (-1,1))",
+                "cantidad:DECIMAL(14,3) NOT NULL -- siempre positiva. CHECK (cantidad > 0)",
+                "costo_unitario:DECIMAL(14,4) NOT NULL -- EN USD, costo vigente EN ESE INSTANTE",
+                "costo_total:DECIMAL(14,2) NOT NULL -- EN USD",
+                "saldo_anterior:DECIMAL(14,3) NOT NULL",
+                "saldo_posterior:DECIMAL(14,3) NOT NULL -- permite auditar el kardex sin recalcular la historia",
+                "costo_promedio_anterior:DECIMAL(14,4) NOT NULL DEFAULT 0.0000 -- EN USD",
+                "costo_promedio_posterior:DECIMAL(14,4) NOT NULL DEFAULT 0.0000 -- EN USD",
+                "documento_tipo:ENUM('VENTA','COMPRA','AJUSTE','DEVOLUCION','TRASLADO','INICIAL') NOT NULL",
+                "venta_id:BIGINT UNSIGNED NULL",
+                "compra_id:BIGINT UNSIGNED NULL",
+                "ajuste_id:BIGINT UNSIGNED NULL",
+                "devolucion_id:BIGINT UNSIGNED NULL",
+                "motivo_id:BIGINT UNSIGNED NULL",
+                "usuario_id:BIGINT UNSIGNED NOT NULL",
+                "nota:VARCHAR(255) NULL",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) -- KEY ix_mov_prod_suc_fecha (producto_id, sucursal_id, creado_en); KEY ix_mov_suc_fecha_tipo (sucursal_id, creado_en, tipo); CHECK ((venta_id IS NOT NULL)+(compra_id IS NOT NULL)+(ajuste_id IS NOT NULL)+(devolucion_id IS NOT NULL) <= 1)"
+            ],
+            "fks": [
+                "sucursal_id -> sucursales.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "producto_id -> productos.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "venta_id -> ventas.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "compra_id -> compras.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "ajuste_id -> ajustes_inventario.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "devolucion_id -> devoluciones.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "motivo_id -> motivos_ajuste.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "usuario_id -> usuarios.id ON DELETE RESTRICT ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "movimientos_caja",
+            "proposito": "MEJORA. Todo flujo de efectivo del turno CON SU MONEDA: ventas, abonos, vueltas, ingresos, egresos, retiros y base. Es lo que permite calcular esperado_usd y esperado_bs por separado. El arqueo se hace sumando monto_moneda filtrando por moneda; monto_usd existe solo para reportes consolidados y JAMAS para el cuadre. Un Pago Movil no genera movimiento aqui porque metodos_pago.afecta_caja_efectivo = 0.",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "turno_caja_id:BIGINT UNSIGNED NOT NULL",
+                "sucursal_id:BIGINT UNSIGNED NOT NULL",
+                "tipo:ENUM('BASE','VENTA','ABONO','INGRESO','EGRESO','RETIRO','DEVOLUCION','VUELTAS','AJUSTE') NOT NULL",
+                "signo:TINYINT NOT NULL -- +1 entra, -1 sale",
+                "moneda:ENUM('USD','VES') NOT NULL -- moneda fisica del movimiento",
+                "monto_moneda:DECIMAL(18,4) NOT NULL -- monto EN ESA moneda, siempre positivo; el sentido lo da signo. CHECK (monto_moneda > 0)",
+                "tasa_aplicada:DECIMAL(18,6) NOT NULL -- tasa congelada del documento o del dia. CHECK (tasa_aplicada > 0)",
+                "monto_usd:DECIMAL(14,2) NOT NULL -- equivalente en USD, SOLO para reportes consolidados. Nunca se usa en el arqueo",
+                "metodo_pago_id:BIGINT UNSIGNED NULL",
+                "concepto:VARCHAR(200) NOT NULL",
+                "documento_tipo:ENUM('VENTA','ABONO','DEVOLUCION','MANUAL') NOT NULL DEFAULT 'MANUAL'",
+                "documento_id:BIGINT UNSIGNED NULL",
+                "usuario_id:BIGINT UNSIGNED NOT NULL",
+                "autorizado_por:BIGINT UNSIGNED NULL",
+                "fecha:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)"
+            ],
+            "fks": [
+                "turno_caja_id -> turnos_caja.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "sucursal_id -> sucursales.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "metodo_pago_id -> metodos_pago.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "usuario_id -> usuarios.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "autorizado_por -> usuarios.id ON DELETE RESTRICT ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "auditoria",
+            "proposito": "MEJORA. Bitacora de operaciones con consecuencia economica o de seguridad. Sin ella, un descuadre de caja no tiene responsable. Nunca serializa password_hash ni tokens.",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "ocurrido_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "usuario_id:BIGINT UNSIGNED NULL -- NULL = sistema o job",
+                "sucursal_id:BIGINT UNSIGNED NULL",
+                "accion:ENUM('CREAR','ACTUALIZAR','ELIMINAR','ANULAR','LOGIN','LOGIN_FALLIDO','LOGOUT','EXPORTAR','AJUSTE_STOCK','CAMBIO_PRECIO','CAMBIO_COSTO','CAMBIO_TASA','CORRECCION_TASA','CAMBIO_PERMISOS','CAMBIO_CONFIG','RECONCILIACION') NOT NULL",
+                "entidad:VARCHAR(60) NOT NULL",
+                "entidad_id:BIGINT UNSIGNED NULL",
+                "datos_antes:JSON NULL -- solo las columnas que cambiaron",
+                "datos_despues:JSON NULL",
+                "ip:VARBINARY(16) NULL",
+                "user_agent:VARCHAR(255) NULL",
+                "request_id:CHAR(26) NULL -- ULID, correlaciona con los logs",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) -- KEY ix_aud_entidad (entidad, entidad_id, ocurrido_en); KEY ix_aud_usuario (usuario_id, ocurrido_en)"
+            ],
+            "fks": [
+                "usuario_id -> usuarios.id ON DELETE SET NULL ON UPDATE RESTRICT",
+                "sucursal_id -> sucursales.id ON DELETE SET NULL ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "idempotencia_solicitudes",
+            "proposito": "MEJORA. Evita ventas duplicadas por doble clic o reintento de axios. Se inserta EN_PROCESO en su propia transaccion antes de abrir la transaccion de negocio.",
+            "columnas": [
+                "clave:CHAR(36) NOT NULL PK",
+                "usuario_id:BIGINT UNSIGNED NOT NULL",
+                "endpoint:VARCHAR(120) NOT NULL",
+                "huella_payload:CHAR(64) NOT NULL -- SHA-256 del body canonicalizado",
+                "estado:ENUM('EN_PROCESO','COMPLETADA','FALLIDA') NOT NULL DEFAULT 'EN_PROCESO'",
+                "http_status:SMALLINT UNSIGNED NULL",
+                "respuesta_json:JSON NULL",
+                "recurso_tipo:VARCHAR(40) NULL",
+                "recurso_id:BIGINT UNSIGNED NULL",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "expira_en:DATETIME(3) NOT NULL -- creado_en + 48h; job de limpieza diario"
+            ],
+            "fks": [
+                "usuario_id -> usuarios.id ON DELETE RESTRICT ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "resumen_ventas_diario",
+            "proposito": "MEJORA. Agregado diario por (fecha, sucursal, producto) derivado EXCLUSIVAMENTE del snapshot de venta_detalle y de la tasa congelada de cada venta. Guarda las cifras en LAS DOS MONEDAS: las de USD salen de las columnas en dolares y las de Bs de SUM(importe * ventas.tasa_cambio) venta por venta, jamas de la tasa de hoy. Evita que el dashboard del dueno ponga lento el mostrador. Recalculado a las 03:00 sobre los ultimos 3 dias, siempre reconstruible.",
+            "columnas": [
+                "fecha:DATE NOT NULL",
+                "sucursal_id:BIGINT UNSIGNED NOT NULL",
+                "producto_id:BIGINT UNSIGNED NOT NULL",
+                "categoria_id:BIGINT UNSIGNED NOT NULL",
+                "cantidad_vendida:DECIMAL(14,3) NOT NULL DEFAULT 0.000",
+                "cantidad_devuelta:DECIMAL(14,3) NOT NULL DEFAULT 0.000",
+                "venta_neta_usd:DECIMAL(14,2) NOT NULL DEFAULT 0.00",
+                "venta_neta_bs:DECIMAL(18,2) NOT NULL DEFAULT 0.00 -- SUM por venta con su tasa congelada",
+                "impuesto_total_usd:DECIMAL(14,2) NOT NULL DEFAULT 0.00",
+                "impuesto_total_bs:DECIMAL(18,2) NOT NULL DEFAULT 0.00",
+                "costo_total_usd:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- del snapshot, jamas del costo actual",
+                "costo_total_bs:DECIMAL(18,2) NOT NULL DEFAULT 0.00",
+                "utilidad_total_usd:DECIMAL(14,2) NOT NULL DEFAULT 0.00 -- del snapshot",
+                "utilidad_total_bs:DECIMAL(18,2) NOT NULL DEFAULT 0.00",
+                "numero_ventas:INT UNSIGNED NOT NULL DEFAULT 0",
+                "tasa_promedio_ponderada:DECIMAL(18,6) NOT NULL DEFAULT 0.000000 -- venta_neta_bs / venta_neta_usd del dia, informativa",
+                "calculado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "PRIMARY KEY (fecha, sucursal_id, producto_id) -- KEY ix_rvd_suc_fecha (sucursal_id, fecha)"
+            ],
+            "fks": [
+                "sucursal_id -> sucursales.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "producto_id -> productos.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "categoria_id -> categorias.id ON DELETE RESTRICT ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "trabajos_exportacion",
+            "proposito": "MEJORA. Cola de exportaciones PDF y Excel. Generar un Excel de 50.000 filas dentro del handler bloquea el event loop de Node y tumba el POS entero.",
+            "columnas": [
+                "id:BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PK",
+                "usuario_id:BIGINT UNSIGNED NOT NULL",
+                "sucursal_id:BIGINT UNSIGNED NOT NULL",
+                "tipo_reporte:VARCHAR(60) NOT NULL",
+                "formato:ENUM('PDF','EXCEL','CSV') NOT NULL",
+                "parametros_json:JSON NOT NULL",
+                "estado:ENUM('PENDIENTE','PROCESANDO','COMPLETADO','FALLIDO') NOT NULL DEFAULT 'PENDIENTE'",
+                "archivo_ruta:VARCHAR(255) NULL",
+                "archivo_bytes:BIGINT UNSIGNED NULL",
+                "filas_generadas:INT UNSIGNED NULL",
+                "error_mensaje:VARCHAR(500) NULL",
+                "iniciado_en:DATETIME(3) NULL",
+                "finalizado_en:DATETIME(3) NULL",
+                "expira_en:DATETIME(3) NULL",
+                "creado_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)"
+            ],
+            "fks": [
+                "usuario_id -> usuarios.id ON DELETE RESTRICT ON UPDATE RESTRICT",
+                "sucursal_id -> sucursales.id ON DELETE RESTRICT ON UPDATE RESTRICT"
+            ]
+        },
+        {
+            "nombre": "migraciones",
+            "proposito": "MEJORA. Registro de migraciones aplicadas con checksum. Detecta que alguien edito una migracion ya aplicada, la causa clasica de 'en mi maquina si funciona'.",
+            "columnas": [
+                "version:VARCHAR(32) NOT NULL PK",
+                "nombre:VARCHAR(160) NOT NULL",
+                "checksum:CHAR(64) NOT NULL",
+                "aplicada_en:DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)",
+                "duracion_ms:INT UNSIGNED NOT NULL DEFAULT 0",
+                "aplicada_por:VARCHAR(60) NULL"
+            ],
+            "fks": []
+        }
+    ],
+    "modulos": [
+        {
+            "nombre": "Autenticacion y sesiones",
+            "rutaApi": "/api/v1/auth",
+            "descripcion": "Login con usuario y contrasena (bcrypt), emision de access token JWT de 15 minutos sin permisos embebidos, refresh token opaco rotativo hasheado en la tabla sesiones con familia y deteccion de reuso, logout individual y global, cambio de contrasena, bloqueo por intentos fallidos y rate limiting."
+        },
+        {
+            "nombre": "Usuarios",
+            "rutaApi": "/api/v1/usuarios",
+            "descripcion": "CRUD de operadores con borrado logico, asignacion de rol y de sucursales (usuario_sucursales), reseteo de contrasena, activacion y desactivacion, listado de sesiones activas y revocacion remota."
+        },
+        {
+            "nombre": "Roles y permisos",
+            "rutaApi": "/api/v1/roles",
+            "descripcion": "Gestion de roles y de la matriz rol_permisos desde la interfaz, sin desplegar codigo. Catalogo de permisos de solo lectura en /api/v1/permisos. Middleware requierePermiso que resuelve el set del usuario para la sucursal del contexto."
+        },
+        {
+            "nombre": "Sucursales",
+            "rutaApi": "/api/v1/sucursales",
+            "descripcion": "CRUD de sedes. En Fase 1 solo existe PRINCIPAL y la interfaz no muestra selector, pero el endpoint existe y sucursal_id viaja en el JWT y en el contexto de cada request."
+        },
+        {
+            "nombre": "Configuracion",
+            "rutaApi": "/api/v1/configuracion",
+            "descripcion": "Lectura y edicion de la fila unica de configuracion: nombre del negocio, logo (subida de archivo), direccion, telefono, parametros bimonetarios (moneda_base USD, moneda_secundaria VES, simbolos, decimales_usd, decimales_bs, redondeo_bs_multiplo, si el ticket muestra ambas monedas y la tasa aplicada, si se bloquea la venta sin tasa del dia), impuesto por defecto, multiplo de redondeo y todo el contenido del ticket. moneda_base y moneda_secundaria no son editables en Fase 1. Incluye /api/v1/parametros para las banderas clave-valor. Toda edicion queda en auditoria."
+        },
+        {
+            "nombre": "Tasas de cambio",
+            "rutaApi": "/api/v1/tasas-cambio",
+            "descripcion": "NUCLEO DEL MODELO BIMONETARIO. Registro manual de la tasa USD->VES del dia, consulta de la tasa vigente (GET /vigente, que responde 409 SIN_TASA_DEL_DIA si no existe), historico paginado por rango de fechas y correccion auditada (POST /:id/corregir) que inserta una fila nueva con es_correccion=1 en lugar de sobrescribir. Una tasa pasada NUNCA se actualiza. Sin tasa registrada para hoy el sistema bloquea la creacion de ventas y de abonos. La tasa vigente se expone tambien en el bootstrap de la sesion para pintarla permanentemente en la barra superior y en el POS."
+        },
+        {
+            "nombre": "Categorias",
+            "rutaApi": "/api/v1/categorias",
+            "descripcion": "CRUD jerarquico con categoria_padre_id, arbol para la interfaz, borrado logico y validacion de que no se elimine una categoria con productos activos."
+        },
+        {
+            "nombre": "Unidades de medida",
+            "rutaApi": "/api/v1/unidades-medida",
+            "descripcion": "Catalogo de unidades con la bandera es_permite_fraccion y el numero de decimales, que gobierna si el POS acepta cantidades como 0.485."
+        },
+        {
+            "nombre": "Impuestos",
+            "rutaApi": "/api/v1/impuestos",
+            "descripcion": "CRUD de impuestos con tasa, tipo (GRAVADO, EXENTO, EXCLUIDO, NO_APLICA) y vigencia. Cambiar una tasa nunca altera documentos ya emitidos porque venta_detalle guarda la tasa como snapshot."
+        },
+        {
+            "nombre": "Productos",
+            "rutaApi": "/api/v1/productos",
+            "descripcion": "CRUD del catalogo maestro, gestion de los N codigos de barras (producto_codigos), historial de precios (producto_precios), busqueda FULLTEXT y por codigo exacto para el POS, y consulta de existencia por sucursal. El cambio de precio o de costo requiere permiso especifico y queda auditado."
+        },
+        {
+            "nombre": "Proveedores",
+            "rutaApi": "/api/v1/proveedores",
+            "descripcion": "MEJORA. CRUD de proveedores con NIT, plazo, cupo y saldo, historial de compras por proveedor y comparativa de ultimo costo por producto."
+        },
+        {
+            "nombre": "Clientes",
+            "rutaApi": "/api/v1/clientes",
+            "descripcion": "CRUD con documento, cupo de credito, dias de plazo, saldo actual y bloqueo. Incluye el estado de cuenta del cliente con sus creditos y abonos."
+        },
+        {
+            "nombre": "Compras",
+            "rutaApi": "/api/v1/compras",
+            "descripcion": "Registro de compra a proveedor con detalle, prorrateo de flete al costo, recepcion que genera los movimientos de entrada en el kardex y recalcula el costo promedio ponderado en producto_stock dentro de la misma transaccion. Anulacion con movimientos compensatorios."
+        },
+        {
+            "nombre": "POS - Venta rapida",
+            "rutaApi": "/api/v1/pos",
+            "descripcion": "Endpoints optimizados para el mostrador: busqueda instantanea por codigo de barras o nombre, resolucion de codigo de balanza, calculo de totales EN USD Y EN BS SIMULTANEAMENTE con la tasa vigente, verificacion previa de que exista tasa del dia (SIN_TASA_DEL_DIA), calculo en vivo del faltante y de las vueltas en ambas monedas para el pago mixto, apertura y consulta del turno activo, y cierre de venta con header Idempotency-Key."
+        },
+        {
+            "nombre": "Ventas",
+            "rutaApi": "/api/v1/ventas",
+            "descripcion": "Creacion transaccional de la venta: verificacion de tasa del dia y congelacion en ventas.tasa_cambio, consecutivo con FOR UPDATE, bloqueo de stock ordenado por producto_id, snapshot de costo por renglon EN USD, calculo y guardado de total_bs, insercion de las lineas de pagos con su moneda y validacion de SUM(monto_usd) + total_credito = total_usd, generacion del credito en USD si aplica, movimientos de kardex y movimientos de caja por moneda. Consulta, listado con filtros, ticket imprimible en ambas monedas con la tasa aplicada y anulacion con motivo y autorizacion."
+        },
+        {
+            "nombre": "Metodos de pago",
+            "rutaApi": "/api/v1/metodos-pago",
+            "descripcion": "CRUD del catalogo de formas de pago con tipo, MONEDA (USD o VES), requiere_referencia, afecta_caja_efectivo y comision. Agregar otra billetera o banco es un INSERT, no una migracion. Catalogo sembrado: Efectivo Bs, Efectivo USD, Pago Movil, Transferencia, Punto de venta, Zelle, Binance/USDT y Credito."
+        },
+        {
+            "nombre": "Pagos",
+            "rutaApi": "/api/v1/pagos",
+            "descripcion": "Consulta de los pagos aplicados a una venta con su moneda, monto en la moneda entregada, tasa aplicada y equivalente en USD; reporte de recaudo por metodo de pago, por moneda y por turno. La creacion ocurre siempre dentro de la transaccion de la venta, nunca como endpoint independiente."
+        },
+        {
+            "nombre": "Creditos",
+            "rutaApi": "/api/v1/creditos",
+            "descripcion": "Cartera por cobrar EN USD: listado de creditos con saldo_usd, su equivalente en Bs a la tasa de HOY (un saldo pendiente es una obligacion viva), estado y vencimiento, antiguedad de saldos en buckets 0-30 / 31-60 / 61-90 / +90, validacion y autorizacion de cupo en dolares, y bloqueo de cliente moroso."
+        },
+        {
+            "nombre": "Abonos",
+            "rutaApi": "/api/v1/abonos",
+            "descripcion": "Registro de abonos EN LA MONEDA QUE PAGA EL CLIENTE con la tasa del dia del abono, conversion a USD, aplicacion FIFO automatica a los creditos mas antiguos por fecha de vencimiento, trazabilidad en abono_aplicaciones (en USD), recibo imprimible con monto en ambas monedas y tasa aplicada, y anulacion con reverso completo del saldo. Se rechaza con SIN_TASA_DEL_DIA si no hay tasa registrada."
+        },
+        {
+            "nombre": "Inventario y movimientos",
+            "rutaApi": "/api/v1/inventario",
+            "descripcion": "Consulta del kardex por producto y sucursal, existencias actuales, valorizacion del inventario al costo promedio, ajustes manuales y conteos fisicos con motivo tipificado, y traslados entre sucursales."
+        },
+        {
+            "nombre": "Devoluciones",
+            "rutaApi": "/api/v1/devoluciones",
+            "descripcion": "MEJORA. Devolucion de venta contra un renglon existente de venta_detalle, copiando el costo original para revertir la utilidad con exactitud, con reingreso opcional al stock. Tambien devolucion a proveedor con salida al costo de esa compra."
+        },
+        {
+            "nombre": "Caja y turnos",
+            "rutaApi": "/api/v1/turnos-caja",
+            "descripcion": "MEJORA. Apertura de turno con base inicial SEPARADA por moneda (base_inicial_usd y base_inicial_bs), registro de ingresos, egresos y retiros indicando moneda, cierre con arqueo por denominaciones de CADA moneda, calculo de esperado_usd/esperado_bs y diferencia_usd/diferencia_bs por separado (nunca se netea una moneda contra la otra ni existe un total combinado), y reporte de cierre de turno imprimible con las dos columnas."
+        },
+        {
+            "nombre": "Reportes de ventas",
+            "rutaApi": "/api/v1/reportes/ventas",
+            "descripcion": "Mas vendidos, menos vendidos, productos sin movimiento (anti-join contra el rango), stock bajo, ventas por periodo, por usuario, por categoria, por metodo de pago y por moneda de cobro, y margen por producto. TODAS las metricas de rentabilidad leen exclusivamente el snapshot de venta_detalle (en USD) y TODAS las cifras en bolivares se obtienen con la tasa CONGELADA de cada venta: SUM(ventas.total_bs), jamas SUM(total_usd) * tasa_de_hoy. Cada reporte presenta columna USD y columna Bs lado a lado."
+        },
+        {
+            "nombre": "Reportes de clientes",
+            "rutaApi": "/api/v1/reportes/clientes",
+            "descripcion": "Clientes mas compradores por numero de transacciones, clientes con mayor gasto acumulado, clientes con deuda y antiguedad de saldos, y clientes inactivos."
+        },
+        {
+            "nombre": "Reportes de inventario",
+            "rutaApi": "/api/v1/reportes/inventario",
+            "descripcion": "Entradas, salidas, existencias, kardex detallado, valorizacion del inventario al costo promedio EN USD con su equivalente en Bs a la tasa de hoy (es un valor presente, no historico), productos proximos a agotarse y reporte de perdidas por motivo de ajuste."
+        },
+        {
+            "nombre": "Exportaciones",
+            "rutaApi": "/api/v1/exportaciones",
+            "descripcion": "MEJORA. Cola de generacion de PDF (pdfkit) y Excel (exceljs) fuera del request: POST encola y responde 202 con un id, GET consulta el estado y entrega el archivo. Toda exportacion queda registrada en auditoria por ser una posible fuga de datos."
+        },
+        {
+            "nombre": "Dashboard",
+            "rutaApi": "/api/v1/dashboard",
+            "descripcion": "Indicadores del dia y del periodo en LAS DOS MONEDAS: venta neta, utilidad, ticket promedio, numero de transacciones, top de productos, tasa vigente y su variacion, alertas de stock bajo, alerta de tasa del dia no registrada y cartera vencida en USD. Los historicos se sirven desde resumen_ventas_diario (que ya guarda las columnas _usd y _bs) y el dia en curso en vivo, unidos con UNION ALL."
+        },
+        {
+            "nombre": "Auditoria",
+            "rutaApi": "/api/v1/auditoria",
+            "descripcion": "MEJORA. Consulta de la bitacora filtrable por usuario, entidad, accion y rango de fechas, con diff de datos_antes y datos_despues. Solo accesible con permiso de administrador."
+        }
+    ],
+    "mejoras": [
+        {
+            "mejora": "Modelo bimonetario USD/VES con tabla tasas_cambio y snapshot de tasa en cada documento",
+            "porQueEsMejor": "El negocio esta en Venezuela: piensa los precios en dolares y cobra en bolivares a la tasa del dia. Un sistema de una sola moneda obliga a elegir entre dos desastres: guardar en bolivares (el catalogo envejece con cada devaluacion, la cartera se licua y el margen historico deja de ser comparable) o guardar en dolares sin congelar la tasa (los reportes de periodos cerrados cambian de numero cada dia que sube el dolar). Guardar en USD y congelar la tasa por documento resuelve ambos. Retrofitear esto despues significaria inventar la tasa de miles de ventas ya emitidas: es matematicamente imposible reconstruirla."
+        },
+        {
+            "mejora": "Deuda de clientes almacenada en USD (creditos.saldo_usd) en lugar de bolivares",
+            "porQueEsMejor": "Ejemplo real: $100 fiados el 01/04 a tasa 36,50 son Bs 3.650. Cobrados el 01/07 con tasa 52,00, esos Bs 3.650 valen $70,19. El negocio pierde $29,81 (29,81%) sin que ningun reporte lo muestre, porque en bolivares \"todo cuadra\". Con una cartera de $5.000 son $1.490 evaporados por trimestre. Guardar la deuda en dolares y convertir cada abono con la tasa de SU dia es lo unico que hace que fiar no sea una donacion progresiva."
+        },
+        {
+            "mejora": "Arqueo de caja con columnas separadas por moneda (esperado_usd/esperado_bs, contado_usd/contado_bs, diferencia_usd/diferencia_bs) y sin ningun total combinado",
+            "porQueEsMejor": "Convertir para netear destruye la señal del control interno. Con esperado_usd 55,00 / contado_usd 55,00 y esperado_bs 4.167,50 / contado_bs 4.160,00 el diagnostico correcto es \"el dolar cuadra, faltan Bs 7,50, investiguemos ese turno\". Si se convierte todo a dolares el resultado es -0,21 USD, que cualquiera descarta como redondeo. Peor aun: un faltante de $20 se compensaria con un sobrante de Bs 730 y el total daria cero. Por eso no existe la columna diferencia_total."
+        },
+        {
+            "mejora": "Pago mixto ENTRE MONEDAS: pagos con moneda, monto_moneda, tasa_aplicada y monto_usd por linea",
+            "porQueEsMejor": "La venta real venezolana es \"te pago $5 en efectivo y $5 por Pago Movil en bolivares\". Con una sola columna monto esa venta es irrepresentable, el arqueo nunca cuadra y no se puede saber cuanto efectivo en dolares hay en el cajon. Guardar por linea lo entregado en su moneda, la tasa aplicada y el equivalente en USD permite validar SUM(monto_usd) = total_usd, calcular vueltas en cualquiera de las dos monedas y cuadrar cada moneda por separado."
+        },
+        {
+            "mejora": "Tabla proveedores (mas proveedor_producto como extension futura) y su relacion obligatoria con compras",
+            "porQueEsMejor": "El cliente pidio el modulo de compras sin mencionar al proveedor. Sin proveedor no existen cuentas por pagar, ni analisis de costo por origen, ni devolucion de compra, ni respuesta a la pregunta mas rentable del negocio: quien me vende mas barato. Agregarlo despues obliga a rellenar proveedor_id en compras historicas con un valor inventado."
+        },
+        {
+            "mejora": "RBAC en tablas: roles, permisos, rol_permisos y usuario_sucursales",
+            "porQueEsMejor": "El primer requerimiento real sera 'el cajero Pedro si puede anular ventas pero Ana no' o 'bodega ve costos pero no utilidades'. Con un ENUM en usuarios eso exige un ALTER TABLE en produccion por cada matiz y condicionales dispersos por todo el codigo. Con tablas es un INSERT desde la interfaz, y se puede responder con una consulta quien puede anular ventas."
+        },
+        {
+            "mejora": "Tabla sucursales y sucursal_id NOT NULL en todas las tablas de hechos desde la migracion 001",
+            "porQueEsMejor": "AÃ±adirlo con doscientos mil movimientos ya escritos exige ALTER TABLE sobre tablas grandes, backfill con un valor inventado, reconstruir todos los UNIQUE compuestos, renumerar comprobantes fiscales y auditar cada WHERE buscando fugas de datos entre sedes. Es una reescritura del backend. Hoy cuesta una columna por tabla y cero interfaz."
+        },
+        {
+            "mejora": "Tabla producto_stock separada, con PK (producto_id, sucursal_id), en vez de una columna stock en productos",
+            "porQueEsMejor": "Una columna stock en productos es un agregado sin historia: si queda mal no hay forma de saber por que. Ademas hace imposible el stock por sucursal y serializa dos cajas sobre la misma fila del catalogo, bloqueando de paso la edicion de precio y nombre."
+        },
+        {
+            "mejora": "Kardex append-only en inventario_movimientos con signo, costo_unitario, saldo_anterior y saldo_posterior",
+            "porQueEsMejor": "Convierte el stock en un valor reconstruible y auditable. Permite responder cuanto habia el 12 de marzo a las 14:30 con una sola fila, detectar fraude y migrar a FIFO en el futuro sin tocar venta_detalle. Un error se corrige con un movimiento compensatorio, nunca reescribiendo la historia."
+        },
+        {
+            "mejora": "Modulo de caja: cajas, turnos_caja y movimientos_caja, con ventas.turno_caja_id NOT NULL",
+            "porQueEsMejor": "Sin turno no existe la pregunta de quien tenia la caja cuando faltaron ochenta mil pesos. Es el unico control real contra el fraude interno en un negocio con empleados. Y es la mejora mas imposible de retrofitear: una columna NOT NULL sobre ventas ya escritas obliga a inventar turnos falsos."
+        },
+        {
+            "mejora": "Devoluciones de venta y de compra (devoluciones y devolucion_detalle) que copian el costo del renglon original",
+            "porQueEsMejor": "El cliente devuelve mercancia el dia 3 y sin devolucion modelada el usuario 'arregla' el inventario con un ajuste manual: la utilidad del periodo queda falsa para siempre y el reingreso entra al costo de hoy en lugar del costo original. Copiar el snapshot del renglon devuelto es lo que hace exacta la utilidad neta."
+        },
+        {
+            "mejora": "Tabla auditoria con datos_antes y datos_despues en JSON, limitada a acciones con consecuencia economica o de seguridad",
+            "porQueEsMejor": "Un descuadre de caja de cuatrocientos mil pesos sin forma de saber quien anulo que es dinero perdido y no recuperable. Auditar solo lo que importa (anulaciones, ajustes, cambios de precio y costo, creditos, permisos, configuracion, logins y exportaciones) mantiene el volumen manejable y el diff legible."
+        },
+        {
+            "mejora": "Tabla impuestos con tipo GRAVADO/EXENTO/EXCLUIDO y snapshot de la tasa en cada renglon",
+            "porQueEsMejor": "Las tasas cambian por ley y sin congelarlas un cambio de IVA alteraria facturas ya emitidas. Ademas, exento (gravado al 0%, con derecho a impuesto descontable) y excluido (fuera del impuesto) no son lo mismo: con una sola columna iva DECIMAL es imposible distinguirlos y la declaracion sale mal."
+        },
+        {
+            "mejora": "Tabla unidades_medida con es_permite_fraccion y decimales",
+            "porQueEsMejor": "Vender por peso exige cantidades DECIMAL(14,3) y una regla que diga si 0.485 es valido para ese producto. Sin catalogo de unidades, o se prohiben los decimales y no se puede vender queso, o se permiten siempre y alguien vende 2.5 celulares."
+        },
+        {
+            "mejora": "Tabla sesiones con refresh tokens hasheados, rotativos y con familia para detectar reuso",
+            "porQueEsMejor": "Con un JWT de larga vida sin refresh persistido, despedir a un empleado no lo desconecta, no hay boton de cerrar todas las sesiones y no se sabe que dispositivos estan activos. Guardar solo el hash hace que una filtracion de la base no permita suplantar sesiones."
+        },
+        {
+            "mejora": "Tabla consecutivos con numeracion sin huecos por sucursal, tipo y anio, tomada con SELECT ... FOR UPDATE",
+            "porQueEsMejor": "AUTO_INCREMENT deja huecos ante cualquier rollback o reinicio del servidor, y un consecutivo con saltos no lo acepta un revisor fiscal. MAX(numero)+1 es una condicion de carrera pura. El costo es un bloqueo de milisegundos por sucursal y tipo, irrelevante a esta escala."
+        },
+        {
+            "mejora": "Tabla producto_codigos con relacion 1:N y factor de conversion",
+            "porQueEsMejor": "Un producto tiene varios codigos de barras porque el proveedor cambia el empaque y llegan dos EAN del mismo articulo. Modelarlo 1:1 obliga a duplicar el producto, lo que parte el historico de ventas en dos y arruina el reporte de mas vendidos."
+        },
+        {
+            "mejora": "Tabla pagos como relacion 1:N respecto a ventas, en vez de una columna metodo_pago_id en ventas",
+            "porQueEsMejor": "Es el error mas caro del diseÃ±o ingenuo: una fraccion muy alta de las ventas reales de una tienda son 'veinte mil en efectivo y el resto lo fio'. Con una sola columna esas ventas son irrepresentables y el arqueo de caja nunca cuadra."
+        },
+        {
+            "mejora": "Tabla abono_aplicaciones con reparto FIFO por fecha de vencimiento",
+            "porQueEsMejor": "El cliente abona cincuenta mil sin decir a que factura. Sin la tabla intermedia es imposible responder si una factura concreta ya esta pagada, calcular antiguedad de saldos o reversar correctamente un abono anulado."
+        },
+        {
+            "mejora": "Ajustes de inventario con motivo tipificado (ajustes_inventario, ajuste_detalle, motivos_ajuste)",
+            "porQueEsMejor": "Sin motivo tipificado (merma, vencido, robo, error de digitacion, conteo) no existe el reporte de perdidas y todo ajuste es indistinguible de un robo. Con motivos, el dueÃ±o puede ver cuanto dinero se pierde al mes por vencimiento y decidir sobre sus compras."
+        },
+        {
+            "mejora": "Idempotencia: header Idempotency-Key, tabla idempotencia_solicitudes y UNIQUE en ventas.clave_idempotencia",
+            "porQueEsMejor": "Doble clic, reintento de axios o red inestable en el mostrador producen dos ventas y dos descuentos de stock. El descuadre se descubre al cierre, cuando ya nadie sabe cual de las dos era la real. Cinturon y tirantes: aunque el middleware falle, la base rechaza el duplicado."
+        },
+        {
+            "mejora": "Agregado resumen_ventas_diario recalculado por job nocturno y pool de lectura separado para reportes",
+            "porQueEsMejor": "El sintoma clasico es 'el POS se pone lento cuando el dueÃ±o abre el dashboard': un reporte anual satura el buffer pool y expulsa las paginas calientes del mostrador. El agregado deriva del snapshot, nunca del costo actual, y es siempre reconstruible desde venta_detalle."
+        },
+        {
+            "mejora": "Tabla trabajos_exportacion para generar PDF y Excel fuera del request",
+            "porQueEsMejor": "Generar un Excel de cincuenta mil filas dentro del handler bloquea el event loop de Node y tumba el POS entero mientras dura. Encolar y responder 202 mantiene el mostrador vendiendo."
+        },
+        {
+            "mejora": "Historial de precios en producto_precios",
+            "porQueEsMejor": "Permite auditar quien cambio un precio, cuando y con que costo de referencia, y explicar por que el margen de un producto cayo. Sin historial, un cambio de precio es un dato perdido en el momento en que se guarda."
+        },
+        {
+            "mejora": "Redondeo del total al multiplo configurado, guardado en ventas.redondeo",
+            "porQueEsMejor": "El peso colombiano no maneja monedas de a peso. Redondear el total y no los renglones evita distorsionar la base gravable y el impuesto declarado, y guardar la diferencia hace que el arqueo de caja cuadre al peso exacto."
+        },
+        {
+            "mejora": "Prorrateo del descuento de documento a los renglones (descuento_unitario)",
+            "porQueEsMejor": "Si el descuento global no se reparte, la suma de utilidad_total de los renglones deja de coincidir con la utilidad real del documento y el reporte de rentabilidad por producto miente. El ultimo centavo se asigna al renglon mayor para que la suma cuadre exacto."
+        },
+        {
+            "mejora": "Reconciliacion nocturna de todos los valores cacheados (stock, saldos de credito, totales de venta)",
+            "porQueEsMejor": "Toda desnormalizacion sin consulta de reconciliacion es una mentira futura. Ejecutarla cada noche y registrar las divergencias hace que un bug se vea al dia siguiente en lugar de a los seis meses, cuando ya contamino miles de documentos."
+        },
+        {
+            "mejora": "Tabla migraciones con checksum y prohibicion de tocar el esquema con cliente grafico",
+            "porQueEsMejor": "El checksum detecta que alguien edito una migracion ya aplicada, que es la causa clasica de 'en mi maquina si funciona' y de que dos entornos diverjan silenciosamente."
+        },
+        {
+            "mejora": "Tabla parametros clave-valor tipado complementando a configuracion con columnas tipadas",
+            "porQueEsMejor": "Tipar lo conocido (nombre, moneda, ticket) preserva la validacion donde importa; dejar EAV solo para lo desconocido evita que agregar una bandera de comportamiento sea una migracion. EAV puro habria sacrificado los tipos justo en los campos que el cliente pidio explicitamente."
+        }
+    ],
+    "decisiones": [
+        "ADR-001 Snapshot de costo en venta_detalle. Decision: cada renglon congela precio_compra_unitario, precio_venta_unitario, descuento_unitario, impuesto_tasa, impuesto_monto, utilidad_unitaria y utilidad_total en el INSERT. Alternativa descartada: calcular la utilidad al vuelo con productos.costo_promedio mediante JOIN. Razon: con el JOIN, la utilidad de una venta de marzo se recalcula con el costo de julio; los reportes historicos mutan entre dos ejecuciones, una subida de costo convierte retroactivamente meses rentables en meses con perdida y es imposible auditar una comision pagada sobre utilidad.",
+        "ADR-002 Costo Promedio Ponderado movil como metodo de costeo. Decision: producto_stock.costo_promedio se recalcula en cada entrada dentro de la transaccion con FOR UPDATE. Alternativa descartada: FIFO por capas de lote. Razon: FIFO exige tabla de lotes, consumo ordenado y resolucion de existencias negativas, triplicando la complejidad del POS y pidiendole al cajero decidir de que lote sale el arroz; CPP es fiscalmente aceptado en Colombia y da margen estable. Como inventario_movimientos guarda costo_unitario por movimiento, migrar a FIFO despues no toca venta_detalle.",
+        "ADR-003 Inventario como libro mayor append-only. Decision: inventario_movimientos es la fuente de verdad y producto_stock es una cache reconciliable. Alternativa descartada: columna stock en productos, o calcular SUM() en vivo en cada consulta. Razon: la columna es un agregado sin historia, impide stock por sucursal y serializa dos cajas sobre la fila del catalogo; el SUM() en vivo es inviable a 60 ms por escaneo con cientos de miles de movimientos.",
+        "ADR-004 Documentos inmutables con ON DELETE RESTRICT universal. Decision: RESTRICT en el 100% de las FKs, incluido venta_detalle -> ventas, mas trigger BEFORE UPDATE ON ventas con SIGNAL SQLSTATE '45000' si el estado es CERRADA. Alternativa descartada: ON DELETE CASCADE en los detalles por dependencia existencial. Razon: CASCADE convierte DELETE FROM ventas WHERE id=? en una operacion que funciona, y un DELETE mal filtrado desde una consola destruye simultaneamente la utilidad historica y el libro de inventario. La anulacion se modela con estado, anulada_en, anulada_por y motivo.",
+        "ADR-005 sucursal_id en todas las tablas de hechos desde la migracion 001. Decision: columna NOT NULL desde el inicio, con una sola sucursal PRINCIPAL y sin selector en la interfaz. Alternativa descartada: agregarlo en la version 2 cuando abran la segunda sede. Razon: hacerlo despues exige ALTER TABLE sobre tablas grandes, backfill inventado, reconstruccion de todos los UNIQUE compuestos, renumeracion de comprobantes y auditoria de cada WHERE por fugas entre sedes; es una reescritura del backend, no una migracion.",
+        "ADR-006 Consecutivos en tabla dedicada, no AUTO_INCREMENT. Decision: tabla consecutivos por (sucursal, tipo, anio) leida con SELECT ... FOR UPDATE dentro de la transaccion del documento y como ultima operacion antes del INSERT, mas UNIQUE de refuerzo en la tabla destino. Alternativas descartadas: AUTO_INCREMENT (deja huecos ante rollback o reinicio) y MAX(numero)+1 (condicion de carrera pura). Razon: un revisor fiscal no acepta un consecutivo con saltos, y el costo real es un bloqueo de milisegundos por sucursal y tipo.",
+        "ADR-007 Pago mixto en tabla pagos 1:N. Decision: N filas de pago por venta, validando SUM(pagos.monto) = ventas.total dentro de la transaccion; un pago con metodo de tipo CREDITO genera automaticamente la fila en creditos. Alternativa descartada: columna ventas.metodo_pago_id. Razon: una fraccion muy alta de las ventas reales son parte efectivo y parte fiado; con una sola columna esas ventas son irrepresentables y el arqueo nunca cuadra.",
+        "ADR-008 Turno de caja obligatorio en toda venta. Decision: ventas.turno_caja_id NOT NULL desde la primera migracion, aunque la interfaz de turnos llegue en una iteracion posterior. Alternativa descartada: agregar el modulo de caja en la Fase 2 con la columna anulable. Razon: es imposible de retrofitear, porque volver NOT NULL una columna sobre ventas ya escritas obliga a inventar turnos falsos, y sin turno no hay forma de auditar el efectivo ni de detectar la venta no registrada.",
+        "ADR-009 Idempotencia del POS con header Idempotency-Key. Decision: middleware con tabla idempotencia_solicitudes (INSERT EN_PROCESO en transaccion propia antes de abrir la de negocio) mas UNIQUE en ventas.clave_idempotencia. Alternativa descartada: confiar en que el frontend deshabilite el boton. Razon: el doble clic no es el unico caso; el reintento automatico de axios ante un timeout de red produce dos ventas identicas que descuadran caja e inventario y se descubren al cierre.",
+        "ADR-010 RBAC en tablas y sesiones persistidas con refresh rotativo. Decision: roles, permisos, rol_permisos y usuario_sucursales; refresh tokens opacos hasheados en sesiones con familia y deteccion de reuso; el JWT no lleva permisos embebidos. Alternativas descartadas: usuarios.rol ENUM y JWT de larga vida con permisos dentro. Razon: el ENUM obliga a ALTER TABLE por cada matiz de permiso, y un permiso revocado dentro del JWT seguiria vigente hasta 15 minutos; sin sesiones persistidas, despedir a un empleado no lo desconecta.",
+        "ADR-011 Configuracion con columnas tipadas mas parametros EAV acotado. Decision: tabla configuracion de fila unica (CHECK id=1) con columnas tipadas para todo lo que el cliente enumero, y tabla parametros clave-valor tipado solo para banderas futuras. Alternativa descartada: EAV puro para toda la configuracion. Razon: EAV puro pierde tipos y validacion precisamente en los campos que el cliente pidio explicitamente (moneda, decimales, impuesto, contenido del ticket), y obliga a castear strings en cada lectura.",
+        "ADR-012 Reportes fuera de la ruta caliente del POS. Decision: escalones progresivos: indices de cobertura, pool de lectura separado (poolReportes con connectionLimit bajo y READ COMMITTED), agregado resumen_ventas_diario recalculado a las 03:00 sobre los ultimos tres dias, y exportaciones encoladas en trabajos_exportacion con respuesta 202. Alternativa descartada: consultar siempre en vivo las tablas transaccionales. Razon: un reporte anual satura el buffer pool y expulsa las paginas calientes del POS; recalcular en lugar de acumular absorbe anulaciones tardias sin descuadrar; y generar un Excel grande dentro del handler bloquea el event loop de Node.",
+        "ADR-013 Tipos de datos monetarios: DECIMAL(14,2) para totales y DECIMAL(14,4) para precios y costos unitarios. Decision: separar la precision de linea de la precision unitaria; cantidades en DECIMAL(14,3). Alternativas descartadas: FLOAT/DOUBLE, y una unica precision DECIMAL(14,2) para todo. Razon: en binario 0.1 + 0.2 no es 0.3 y los arqueos de caja no cuadran; y un producto vendido por gramo con costo de 12.480 COP/kg necesita cuatro decimales en el costo unitario para que el promedio ponderado no se degrade venta tras venta.",
+        "ADR-014 Borrado logico con columna virtual para preservar la unicidad. Decision: eliminado_en DATETIME(3) NULL mas activo_uk TINYINT UNSIGNED AS (IF(eliminado_en IS NULL,1,NULL)) VIRTUAL, con UNIQUE compuesto sobre (clave_natural, activo_uk). Alternativas descartadas: UNIQUE simple sobre la clave natural (impide reutilizar el codigo de un producto eliminado) y UNIQUE (clave, eliminado_en) (MariaDB permite duplicados cuando hay NULL, dejando pasar dos productos activos con el mismo codigo). Razon: las filas eliminadas quedan fuera del indice unico y las activas comparten el valor 1, forzando unicidad real solo donde importa.",
+        "ADR-015 Concurrencia: READ COMMITTED, bloqueo ordenado y reintento. Decision: aislamiento READ COMMITTED, bloqueo de los productos del carrito ordenados por producto_id ASC, innodb_lock_wait_timeout=5 y reintento automatico (maximo 2) ante los errores 1213 y 1205, con la transaccion de venta conteniendo solo SQL. Alternativa descartada: mantener el REPEATABLE READ por defecto de MariaDB y bloquear en el orden en que el cajero escaneo. Razon: el next-key locking de REPEATABLE READ bloquea rangos de indice y genera deadlocks entre ventas de productos distintos, y dos ventas que bloquean los mismos productos en orden inverso son la causa numero uno de deadlocks en un POS.",
+        "ADR-016 Moneda base USD con tasa registrada a mano y snapshot por documento. Decision: precios, costos, utilidades y cartera se almacenan en USD; la tasa USD->VES del dia la registra el usuario en tasas_cambio (una fila activa por fecha); cada venta congela ventas.tasa_cambio y ventas.total_bs al confirmarse; sin tasa del dia el sistema bloquea ventas y abonos con SIN_TASA_DEL_DIA. Alternativas descartadas: (a) almacenar todo en bolivares, (b) almacenar en USD pero convertir a bolivares al vuelo con la tasa de hoy, (c) consumir la tasa de una API externa. Razon: (a) hace envejecer el catalogo con cada devaluacion, licua la cartera y rompe la comparabilidad del margen historico; (b) convierte cualquier reporte de periodo cerrado en un numero que cambia todos los dias (marzo con 400,00 USD reales de Bs 15.756,00 pasaria a reportar Bs 20.800,00 con la tasa de julio, un 32,01% inflado y un ingreso que jamas existio, ademas de romper la conciliacion bancaria y contradecir arqueos ya firmados); (c) la tasa relevante para este negocio no es publicable de forma fiable y una dependencia de red no puede bloquear el mostrador. Registrarla a mano es un gesto de diez segundos al abrir el dia y deja responsable en auditoria.",
+        "ADR-017 Arqueo de caja separado por moneda, sin total combinado. Decision: turnos_caja duplica base, totales, esperado, contado y diferencia en _usd y _bs; movimientos_caja lleva moneda, monto_moneda, tasa_aplicada y monto_usd, y el cuadre suma monto_moneda filtrando por moneda; el turno queda CUADRADO solo si ambas diferencias son cero. Alternativa descartada: convertir el efectivo en bolivares a dolares con la tasa del dia y arquear un unico total. Razon: la conversion introduce ruido del mismo orden de magnitud que los faltantes que se buscan detectar y permite que un faltante en una moneda se compense con un sobrante en la otra, que es exactamente el fraude que el arqueo existe para detectar. monto_usd se conserva solo para reportes consolidados y esta prohibido en el cuadre."
+    ]
+}
