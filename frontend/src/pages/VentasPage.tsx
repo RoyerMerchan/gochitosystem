@@ -6,6 +6,7 @@ import { obtenerPaginado, crear } from '@/lib/axios';
 import { ErrorApi } from '@/lib/errores';
 import { Card, Cargando, Badge, EmptyState } from '@/components/ui/Feedback';
 import { Modal } from '@/components/ui/Modal';
+import { FiltroPeriodo } from '@/components/ui/FiltroPeriodo';
 import { toast } from '@/store/toastStore';
 import { useAuthStore } from '@/store/authStore';
 import { METODOS_PAGO } from '@/features/pos/metodosPago';
@@ -59,7 +60,8 @@ export default function VentasPage() {
 
       {/* Filtros */}
       <Card>
-        <div className="flex flex-wrap items-end gap-3">
+        <FiltroPeriodo desde={desde} hasta={hasta} onCambiar={(d, h) => { setDesde(d); setHasta(h); }} />
+        <div className="mt-3 flex flex-wrap items-end gap-3">
           <div>
             <label className="mb-1 flex items-center gap-1 text-xs font-medium text-gray-500"><Filter className="h-3.5 w-3.5" /> Desde</label>
             <input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className={INP} />

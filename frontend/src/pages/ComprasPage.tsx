@@ -10,6 +10,7 @@ import { obtenerPaginado, obtener, crear } from '@/lib/axios';
 import { ErrorApi } from '@/lib/errores';
 import { Card, Cargando, Badge, EmptyState } from '@/components/ui/Feedback';
 import { Modal } from '@/components/ui/Modal';
+import { FiltroPeriodo } from '@/components/ui/FiltroPeriodo';
 import { toast } from '@/store/toastStore';
 import { useDebounce } from '@/hooks/useDebounce';
 import { formatearUSD, formatearFecha } from '@/lib/formato';
@@ -54,7 +55,8 @@ export default function ComprasPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div><h1 className="text-2xl font-bold">Entrada de mercancía</h1><p className="text-sm text-gray-500">Ingreso manual de stock · {entradas.data?.meta.total ?? 0} entradas</p></div>
-        <div className="flex items-end gap-2">
+        <div className="flex flex-wrap items-end gap-2">
+          <FiltroPeriodo desde={desde} hasta={hasta} onCambiar={(d, h) => { setDesde(d); setHasta(h); }} />
           <div>
             <label className="mb-0.5 block text-[10px] uppercase text-gray-400">Desde</label>
             <input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800" />

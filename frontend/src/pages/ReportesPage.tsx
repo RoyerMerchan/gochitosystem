@@ -6,6 +6,7 @@ import * as XLSX from 'xlsx';
 import { formatearFechaHora } from '@/lib/formato';
 import { obtener } from '@/lib/axios';
 import { Card, Cargando, EmptyState } from '@/components/ui/Feedback';
+import { FiltroPeriodo } from '@/components/ui/FiltroPeriodo';
 import { formatearUSD, formatearBs, formatearCantidad } from '@/lib/formato';
 
 interface DefReporte {
@@ -135,6 +136,7 @@ export default function ReportesPage() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-xl font-bold">{sel.titulo}</h1>
           <div className="flex flex-wrap items-end gap-2">
+            <FiltroPeriodo desde={desde} hasta={hasta} onCambiar={(d, h) => { setDesde(d); setHasta(h); }} />
             <div>
               <label className="mb-0.5 block text-[10px] uppercase text-gray-400">Desde</label>
               <input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-700" />
