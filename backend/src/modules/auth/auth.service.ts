@@ -176,9 +176,6 @@ export async function login(
   if (fila.bloqueado_hasta && new Date(fila.bloqueado_hasta) > new Date()) {
     throw new ReglaNegocio('USUARIO_BLOQUEADO');
   }
-  if (fila.esta_activo !== 1) {
-    throw new ReglaNegocio('USUARIO_INACTIVO');
-  }
 
   const coincide = await bcrypt.compare(entrada.password, fila.password_hash);
   if (!coincide) {
@@ -280,7 +277,7 @@ export async function refrescar(
       WHERE u.id = ? AND u.eliminado_en IS NULL LIMIT 1`,
     [sesion.usuario_id],
   );
-  if (!fila || fila.esta_activo !== 1) {
+  if (!fila) {
     throw new NoAutenticado('TOKEN_INVALIDO');
   }
 

@@ -19,7 +19,7 @@ export default function UsuariosPage() {
   const qc = useQueryClient();
   const [modal, setModal] = useState(false);
   const [editando, setEditando] = useState<Usuario | null>(null);
-  const [form, setForm] = useState({ usuario: '', nombreCompleto: '', email: '', password: '', rolId: 1, estaActivo: true });
+  const [form, setForm] = useState({ usuario: '', nombreCompleto: '', email: '', password: '', rolId: 1 });
   const [resetear, setResetear] = useState<Usuario | null>(null);
   const [nuevaClave, setNuevaClave] = useState('');
 
@@ -28,7 +28,7 @@ export default function UsuariosPage() {
 
   const guardar = useMutation({
     mutationFn: () => editando
-      ? reemplazar(`/usuarios/${editando.id}`, { nombreCompleto: form.nombreCompleto, email: form.email, rolId: form.rolId, estaActivo: form.estaActivo })
+      ? reemplazar(`/usuarios/${editando.id}`, { nombreCompleto: form.nombreCompleto, email: form.email, rolId: form.rolId })
       : crear('/usuarios', { usuario: form.usuario, nombreCompleto: form.nombreCompleto, email: form.email, password: form.password, rolId: form.rolId }),
     onSuccess: () => { toast.exito(editando ? 'Usuario actualizado' : 'Usuario creado'); qc.invalidateQueries({ queryKey: ['usuarios'] }); setModal(false); },
     onError: (e) => toast.error(e instanceof ErrorApi ? e.message : 'No se pudo guardar'),
@@ -40,8 +40,8 @@ export default function UsuariosPage() {
     onError: (e) => toast.error(e instanceof ErrorApi ? e.message : 'No se pudo restablecer'),
   });
 
-  const abrirNuevo = () => { setEditando(null); setForm({ usuario: '', nombreCompleto: '', email: '', password: '', rolId: roles.data?.[0]?.id ?? 1, estaActivo: true }); setModal(true); };
-  const abrirEditar = (u: Usuario) => { setEditando(u); setForm({ usuario: u.usuario, nombreCompleto: u.nombre_completo, email: u.email ?? '', password: '', rolId: u.rol_id, estaActivo: u.esta_activo === 1 }); setModal(true); };
+  const abrirNuevo = () => { setEditando(null); setForm({ usuario: '', nombreCompleto: '', email: '', password: '', rolId: roles.data?.[0]?.id ?? 1 }); setModal(true); };
+  const abrirEditar = (u: Usuario) => { setEditando(u); setForm({ usuario: u.usuario, nombreCompleto: u.nombre_completo, email: u.email ?? '', password: '', rolId: u.rol_id }); setModal(true); };
 
   return (
     <div className="space-y-4">
@@ -57,7 +57,7 @@ export default function UsuariosPage() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-xs uppercase text-gray-500 dark:bg-gray-700/50"><tr>
               <th className="p-3 text-left">Usuario</th><th className="p-3 text-left">Nombre</th><th className="p-3 text-left">Rol</th>
-              <th className="p-3 text-left">Último acceso</th><th className="p-3 text-center">Estado</th><th className="p-3"></th></tr></thead>
+              <th className="p-3 text-left">Último acceso</th><th className="p-3"></th></tr></thead>
             <tbody>
               {usuarios.data!.map((u) => (
                 <tr key={u.id} className="border-t border-gray-100 dark:border-gray-700">
@@ -65,7 +65,6 @@ export default function UsuariosPage() {
                   <td className="p-3 font-medium">{u.nombre_completo}</td>
                   <td className="p-3"><Badge color="azul">{u.rol_nombre}</Badge></td>
                   <td className="p-3 text-gray-500">{u.ultimo_acceso_en ? formatearRelativo(u.ultimo_acceso_en) : 'nunca'}</td>
-                  <td className="p-3 text-center">{u.esta_activo === 1 ? <Badge color="verde">Activo</Badge> : <Badge color="gris">Inactivo</Badge>}</td>
                   <td className="p-3">
                     <div className="flex justify-end gap-1">
                       <button onClick={() => abrirEditar(u)} className="text-gray-400 hover:text-amber-600" title="Editar"><Pencil className="h-4 w-4" /></button>
@@ -99,11 +98,6 @@ export default function UsuariosPage() {
           {!editando && (
             <div><label className="mb-1 block text-xs font-medium text-gray-500">Contraseña * (mín. 8 caracteres)</label>
               <input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} className={INP} /></div>
-          )}
-          {editando && (
-            <label className="flex items-center gap-2 text-sm">
-              <input type="checkbox" checked={form.estaActivo} onChange={(e) => setForm({ ...form, estaActivo: e.target.checked })} /> Usuario activo
-            </label>
           )}
         </div>
       </Modal>

@@ -75,9 +75,6 @@ async function cargarUsuario(usuarioId: number): Promise<UsuarioAutenticado> {
   if (!fila || fila.eliminado_en !== null) {
     throw new NoAutenticado('TOKEN_INVALIDO');
   }
-  if (fila.esta_activo !== 1) {
-    throw new NoAutorizado('USUARIO_INACTIVO');
-  }
 
   return {
     id: fila.id,

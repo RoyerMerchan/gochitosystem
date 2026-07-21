@@ -40,7 +40,6 @@ const esquemaEditar = z.object({
   nombreCompleto: z.string().trim().min(1).max(140),
   email: z.string().trim().email('Correo inválido').max(160).optional().or(z.literal('')),
   rolId: z.coerce.number().int().positive(),
-  estaActivo: z.coerce.boolean().optional(),
 });
 
 router.get('/', requierePermiso('usuarios.ver'), async (_req, res, next) => {
@@ -76,8 +75,8 @@ router.put('/:id', requierePermiso('usuarios.editar'), validar({ params: esquema
     const existe = await queryOne<{ id: number }>(`SELECT id FROM usuarios WHERE id = ? AND eliminado_en IS NULL`, [id]);
     if (!existe) throw new NoEncontrado('USUARIO_NO_ENCONTRADO');
     await ejecutar(
-      `UPDATE usuarios SET nombre_completo=?, email=?, rol_id=?, esta_activo=COALESCE(?, esta_activo) WHERE id=?`,
-      [e.nombreCompleto, e.email || null, e.rolId, e.estaActivo === undefined ? null : e.estaActivo ? 1 : 0, id],
+      `UPDATE usuarios SET nombre_completo=?, email=?, rol_id=? WHERE id=?`,
+      [e.nombreCompleto, e.email || null, e.rolId, id],
     );
     enviarOk(res, await queryOne<UsuarioFila>(`${SELECT} WHERE u.id = ?`, [id]));
   } catch (e) { next(e); }
