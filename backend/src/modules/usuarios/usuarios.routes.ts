@@ -63,7 +63,7 @@ router.post('/', requierePermiso('usuarios.crear'), validar({ body: esquemaCrear
       if ((err as { code?: string }).code === '23505') throw new Conflicto('USUARIO_DUPLICADO');
       throw err;
     }
-    await insertar(`INSERT INTO usuario_sucursales (usuario_id, sucursal_id, rol_id) VALUES (?, 1, ?) ON CONFLICT DO NOTHING`, [id, e.rolId]);
+    await ejecutar(`INSERT INTO usuario_sucursales (usuario_id, sucursal_id, rol_id) VALUES (?, 1, ?) ON CONFLICT DO NOTHING`, [id, e.rolId]);
     enviarCreado(res, await queryOne<UsuarioFila>(`${SELECT} WHERE u.id = ?`, [id]));
   } catch (e) { next(e); }
 });

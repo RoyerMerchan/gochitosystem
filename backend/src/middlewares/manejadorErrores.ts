@@ -27,12 +27,16 @@ function traducirErrorPG(error: unknown): AppError | null {
       return new Conflicto('REGISTRO_DUPLICADO', { causa: error });
     case '23503':
       return new ReglaNegocio('REFERENCIA_INEXISTENTE', { causa: error });
-    case '40001':
+    case '40001': // serialization_failure
+    case '40P01': // deadlock_detected
       return new Conflicto('CONFLICTO_CONCURRENCIA', { causa: error });
-    case '55P03':
+    case '55P03': // lock_not_available
+    case '57014': // query_canceled (statement_timeout)
       return new Conflicto('TIEMPO_BLOQUEO_AGOTADO', { causa: error });
-    case '23514':
-    case '23502':
+    case '23514': // check_violation
+    case '23502': // not_null_violation
+    case '22P02': // invalid_text_representation (p.ej. texto donde se esperaba numero)
+    case '22007': // invalid_datetime_format
       return new ReglaNegocio('DATOS_INVALIDOS', { causa: error });
     default:
       return null;

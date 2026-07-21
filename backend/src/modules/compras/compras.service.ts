@@ -174,7 +174,7 @@ async function ingresarStockYRecalcularCPP(
       [cantidadASql(saldoPosterior), unitarioASql(cppNuevo), d.productoId, d.sucursalId], cx,
     );
   } else {
-    await insertar(
+    await ejecutar(
       `INSERT INTO producto_stock (producto_id, sucursal_id, cantidad, costo_promedio, ultima_entrada_en)
        VALUES (?, ?, ?, ?, NOW())`,
       [d.productoId, d.sucursalId, cantidadASql(saldoPosterior), unitarioASql(cppNuevo)], cx,

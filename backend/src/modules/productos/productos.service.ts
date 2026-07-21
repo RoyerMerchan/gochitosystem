@@ -205,7 +205,7 @@ export async function crear(e: EntradaProducto, sucursalId: number, usuarioId: I
       throw err;
     }
 
-    await insertar(
+    await ejecutar(
       `INSERT INTO producto_stock (producto_id, sucursal_id, cantidad, stock_minimo, costo_promedio)
        VALUES (?, ?, 0, ?, ?)`,
       [id, sucursalId, e.stockMinimo ?? '0', e.costoInicial ?? '0'],
