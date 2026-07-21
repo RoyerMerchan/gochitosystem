@@ -325,7 +325,7 @@ export async function cambiarPassword(
 
   await withTransaction(async (cx) => {
     await ejecutar(
-      `UPDATE usuarios SET password_hash = ?, debe_cambiar_password = 0 WHERE id = ?`,
+      `UPDATE usuarios SET password_hash = ?, debe_cambiar_password = FALSE WHERE id = ?`,
       [nuevoHash, usuarioId],
       cx,
     );

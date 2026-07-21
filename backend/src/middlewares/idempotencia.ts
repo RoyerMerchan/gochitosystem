@@ -10,7 +10,7 @@
  * Secuencia:
  *   1. INSERT ... EN_PROCESO en su propia transaccion (implicita). Si entra, es la
  *      primera vez y la solicitud continua.
- *   2. Si el INSERT choca con la PK (1062) la clave ya existe:
+ *   2. Si el INSERT choca con la PK (23505) la clave ya existe:
  *        - huella de payload distinta -> 422 IDEMPOTENCY_KEY_REUSE
  *        - EN_PROCESO                 -> 409 SOLICITUD_EN_PROCESO
  *        - COMPLETADA                 -> se reproduce la respuesta original
@@ -30,7 +30,7 @@ import {
 import { ahoraSql, sumarHorasSql } from '../utils/fechas';
 import { logger, describirError } from '../utils/logger';
 
-const ERROR_DUPLICADO = 1062;
+const ERROR_DUPLICADO = '23505';
 
 const UUID_VALIDO =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -151,7 +151,7 @@ async function reservarClave(
     engancharCaptura(clave, req, res);
     return true;
   } catch (error) {
-    if ((error as { errno?: number }).errno !== ERROR_DUPLICADO) throw error;
+    if ((error as { code?: string }).code !== ERROR_DUPLICADO) throw error;
     return resolverClaveExistente(clave, huella, req, res);
   }
 }

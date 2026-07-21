@@ -60,7 +60,7 @@ router.post('/', requierePermiso('usuarios.crear'), validar({ body: esquemaCrear
         [e.usuario, e.email || null, e.nombreCompleto, hash, e.rolId],
       );
     } catch (err) {
-      if ((err as { errno?: number }).errno === 1062) throw new Conflicto('USUARIO_DUPLICADO');
+      if ((err as { code?: string }).code === '23505') throw new Conflicto('USUARIO_DUPLICADO');
       throw err;
     }
     await insertar(`INSERT INTO usuario_sucursales (usuario_id, sucursal_id, rol_id) VALUES (?, 1, ?) ON CONFLICT DO NOTHING`, [id, e.rolId]);
@@ -89,7 +89,7 @@ router.post('/:id/password', requierePermiso('usuarios.editar'),
       const id = datosParams<{ id: number }>(req).id;
       const { password } = datosBody<{ password: string }>(req);
       const hash = await bcrypt.hash(password, env.seguridad.bcryptRondas);
-      const r = await ejecutar(`UPDATE usuarios SET password_hash = ?, debe_cambiar_password = 0 WHERE id = ? AND eliminado_en IS NULL`, [hash, id]);
+      const r = await ejecutar(`UPDATE usuarios SET password_hash = ?, debe_cambiar_password = FALSE WHERE id = ? AND eliminado_en IS NULL`, [hash, id]);
       if (r.rowCount === 0) throw new NoEncontrado('USUARIO_NO_ENCONTRADO');
       // Revoca las sesiones del usuario para forzar reingreso.
       await ejecutar(`UPDATE sesiones SET revocada_en = NOW(), motivo_revocacion = 'ADMIN' WHERE usuario_id = ? AND revocada_en IS NULL`, [id]);

@@ -136,7 +136,7 @@ export async function buscarPos(
   const like = `%${term}%`;
   const porNombre = await query<ProductoListado>(
     `${SELECT_BASE}
-     WHERE (p.nombre LIKE ? OR p.sku LIKE ?) AND p.eliminado_en IS NULL AND p.esta_activo = 1
+     WHERE (p.nombre LIKE ? OR p.sku LIKE ?) AND p.eliminado_en IS NULL AND p.esta_activo = TRUE
      ORDER BY p.es_favorito_pos DESC, p.nombre
      LIMIT ?`,
     [sucursalId, like, like, limite],
@@ -196,12 +196,12 @@ export async function crear(e: EntradaProducto, sucursalId: number, usuarioId: I
         [
           e.sku, e.nombre, e.descripcion ?? null, e.categoriaId, e.unidadMedidaId, e.impuestoId,
           e.precioVenta, e.costoInicial ?? '0', e.costoInicial ?? '0',
-          e.esPrecioIncluyeImpuesto === false ? 0 : 1, e.esPesable ? 1 : 0, e.esFavoritoPos ? 1 : 0, usuarioId,
+          e.esPrecioIncluyeImpuesto ?? false, e.esPesable ?? false, e.esFavoritoPos ?? false, usuarioId,
         ],
         cx,
       );
     } catch (err) {
-      if ((err as { errno?: number }).errno === 1062) throw new Conflicto('SKU_DUPLICADO');
+      if ((err as { code?: string }).code === '23505') throw new Conflicto('SKU_DUPLICADO');
       throw err;
     }
 
@@ -215,12 +215,12 @@ export async function crear(e: EntradaProducto, sucursalId: number, usuarioId: I
     if (e.codigoBarras?.trim()) {
       try {
         await insertar(
-          `INSERT INTO producto_codigos (producto_id, codigo, tipo, es_principal) VALUES (?, ?, 'EAN13', 1)`,
+          `INSERT INTO producto_codigos (producto_id, codigo, tipo, es_principal) VALUES (?, ?, 'EAN13', TRUE)`,
           [id, e.codigoBarras.trim()],
           cx,
         );
       } catch (err) {
-        if ((err as { errno?: number }).errno === 1062) throw new Conflicto('CODIGO_BARRAS_DUPLICADO');
+        if ((err as { code?: string }).code === '23505') throw new Conflicto('CODIGO_BARRAS_DUPLICADO');
         throw err;
       }
     }
@@ -244,11 +244,11 @@ export async function actualizar(id: Id, e: EntradaProducto, sucursalId: number)
         WHERE id=?`,
       [
         e.sku, e.nombre, e.descripcion ?? null, e.categoriaId, e.unidadMedidaId, e.impuestoId,
-        e.precioVenta, e.esPrecioIncluyeImpuesto === false ? 0 : 1, e.esPesable ? 1 : 0, e.esFavoritoPos ? 1 : 0, id,
+        e.precioVenta, e.esPrecioIncluyeImpuesto ?? false, e.esPesable ?? false, e.esFavoritoPos ?? false, id,
       ],
     );
   } catch (err) {
-    if ((err as { errno?: number }).errno === 1062) throw new Conflicto('SKU_DUPLICADO');
+    if ((err as { code?: string }).code === '23505') throw new Conflicto('SKU_DUPLICADO');
     throw err;
   }
 
@@ -265,7 +265,7 @@ export async function actualizar(id: Id, e: EntradaProducto, sucursalId: number)
 export async function eliminar(id: Id): Promise<void> {
   const p = await queryOne<{ id: number }>(`SELECT id FROM productos WHERE id = ? AND eliminado_en IS NULL`, [id]);
   if (!p) throw new NoEncontrado('PRODUCTO_NO_ENCONTRADO');
-  await ejecutar(`UPDATE productos SET eliminado_en = NOW(), esta_activo = 0 WHERE id = ?`, [id]);
+  await ejecutar(`UPDATE productos SET eliminado_en = NOW(), esta_activo = FALSE WHERE id = ?`, [id]);
 }
 
 /** Cambia el precio de venta y registra el cambio en el historial. */
