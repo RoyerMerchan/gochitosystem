@@ -268,6 +268,10 @@ function mensajePorDefecto(estado: number): string {
 /* ------------------------------------------------------------------ */
 
 function desempacar<T>(cuerpo: RespuestaApi<T>, estado: number): T {
+  // 204 No Content (p.ej. DELETE) o cuerpo vacio: exito sin datos que desempacar.
+  if (estado === 204 || cuerpo == null || (cuerpo as unknown) === '') {
+    return undefined as T;
+  }
   if (!cuerpo.ok) throw ErrorApi.desdePayload(cuerpo.error, estado);
   const datos = (cuerpo.datos ?? cuerpo.data) as T | undefined;
   if (datos === undefined) {
