@@ -52,7 +52,7 @@ export async function registrar(
   return withTransaction(async (cx) => {
     // Tasa vigente para registrar el equivalente en Bs (informativo).
     const tasaFila = await queryOne<{ tasa: string }>(
-      `SELECT tasa FROM tasas_cambio WHERE fecha = CURDATE() AND eliminado_en IS NULL LIMIT 1`,
+      `SELECT tasa FROM tasas_cambio WHERE fecha = CURRENT_DATE AND eliminado_en IS NULL LIMIT 1`,
       [], cx,
     );
     const tasa = tasaFila?.tasa ?? '1';
@@ -81,7 +81,7 @@ export async function registrar(
         (sucursal_id, proveedor_id, usuario_id, prefijo, numero, anio, numero_factura_proveedor,
          fecha_documento, fecha_recepcion, subtotal, impuesto_total, moneda_pago, tasa_cambio,
          total_usd, total_bs, saldo_pendiente, condicion_pago, estado, observaciones, clave_idempotencia)
-       VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURDATE()), NOW(3), ?, 0, ?, ?, ?, ?, ?, ?, 'RECIBIDA', ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_DATE), NOW(), ?, 0, ?, ?, ?, ?, ?, ?, 'RECIBIDA', ?, ?)`,
       [
         usuario.sucursalId, proveedorId, usuario.id, prefijo, numero, anio,
         entrada.numeroFacturaProveedor ?? null, entrada.fechaDocumento ?? null,
@@ -169,14 +169,14 @@ async function ingresarStockYRecalcularCPP(
 
   if (stock) {
     await ejecutar(
-      `UPDATE producto_stock SET cantidad = ?, costo_promedio = ?, ultima_entrada_en = NOW(3)
+      `UPDATE producto_stock SET cantidad = ?, costo_promedio = ?, ultima_entrada_en = NOW()
         WHERE producto_id = ? AND sucursal_id = ?`,
       [cantidadASql(saldoPosterior), unitarioASql(cppNuevo), d.productoId, d.sucursalId], cx,
     );
   } else {
     await insertar(
       `INSERT INTO producto_stock (producto_id, sucursal_id, cantidad, costo_promedio, ultima_entrada_en)
-       VALUES (?, ?, ?, ?, NOW(3))`,
+       VALUES (?, ?, ?, ?, NOW())`,
       [d.productoId, d.sucursalId, cantidadASql(saldoPosterior), unitarioASql(cppNuevo)], cx,
     );
   }
@@ -239,7 +239,7 @@ export async function listar(
   const where = `WHERE ${cond.join(' AND ')}`;
 
   const datos = await query(
-    `SELECT c.id, CONCAT(c.prefijo, c.numero) AS numero, c.fecha_recepcion, c.total_usd, c.total_bs,
+    `SELECT c.id, c.prefijo || c.numero AS numero, c.fecha_recepcion, c.total_usd, c.total_bs,
             c.estado, c.condicion_pago, c.saldo_pendiente, p.razon_social AS proveedor
        FROM compras c JOIN proveedores p ON p.id = c.proveedor_id
       ${where} ORDER BY c.id DESC LIMIT ? OFFSET ?`,
@@ -313,7 +313,7 @@ export async function anular(id: number, sucursalId: number, usuario: UsuarioAut
     }
 
     await ejecutar(
-      `UPDATE compras SET estado = 'ANULADA', anulada_en = NOW(3), anulada_por = ?, motivo_anulacion = ? WHERE id = ?`,
+      `UPDATE compras SET estado = 'ANULADA', anulada_en = NOW(), anulada_por = ?, motivo_anulacion = ? WHERE id = ?`,
       [usuario.id, motivo, id], cx,
     );
   });

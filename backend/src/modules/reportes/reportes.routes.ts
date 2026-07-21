@@ -66,7 +66,7 @@ router.get('/ventas/sin-movimiento', requierePermiso('reportes.ver'), validar({ 
     const datos = await queryReporte(
       `SELECT p.id, p.sku, p.nombre, COALESCE(ps.cantidad,0) AS stock
          FROM productos p LEFT JOIN producto_stock ps ON ps.producto_id = p.id AND ps.sucursal_id = ?
-        WHERE p.eliminado_en IS NULL AND p.esta_activo = 1
+        WHERE p.eliminado_en IS NULL AND p.esta_activo = TRUE
           AND p.id NOT IN (
             SELECT DISTINCT vd.producto_id FROM venta_detalle vd JOIN ventas v ON v.id = vd.venta_id
              WHERE v.sucursal_id = ? AND v.estado='CERRADA' AND v.fecha BETWEEN ? AND ?)
@@ -171,7 +171,7 @@ router.get('/inventario/movimientos', requierePermiso('reportes.ver'), validar({
     if (q.desde) { cond.push('im.creado_en >= ?'); params.push(`${q.desde} 00:00:00`); }
     if (q.hasta) { cond.push('im.creado_en <= ?'); params.push(`${q.hasta} 23:59:59`); }
     const datos = await queryReporte(
-      `SELECT DATE_FORMAT(im.creado_en,'%Y-%m-%d %H:%i') AS fecha, p.nombre AS producto, im.tipo,
+      `SELECT TO_CHAR(im.creado_en, 'YYYY-MM-DD HH24:MI') AS fecha, p.nombre AS producto, im.tipo,
               im.signo, im.cantidad, im.costo_total AS valor_usd
          FROM inventario_movimientos im JOIN productos p ON p.id = im.producto_id
         WHERE ${cond.join(' AND ')} ORDER BY im.id DESC LIMIT 500`,
@@ -190,7 +190,7 @@ router.get('/dashboard/resumen', requierePermiso('dashboard.ver'), async (req, r
     const kpis = await queryReporte<{ ventas_usd: string; ventas_bs: string; utilidad_usd: string; tickets: number }>(
       `SELECT COALESCE(SUM(total_usd),0) AS ventas_usd, COALESCE(SUM(total_bs),0) AS ventas_bs,
               COALESCE(SUM(utilidad_total),0) AS utilidad_usd, COUNT(*) AS tickets
-         FROM ventas WHERE sucursal_id = ? AND estado='CERRADA' AND DATE(fecha) = CURDATE()`,
+         FROM ventas WHERE sucursal_id = ? AND estado='CERRADA' AND DATE(fecha) = CURRENT_DATE`,
       [u.sucursalId],
     );
     const cartera = await queryReporte<{ total: string }>(
@@ -198,20 +198,20 @@ router.get('/dashboard/resumen', requierePermiso('dashboard.ver'), async (req, r
     );
     const serie = await queryReporte(
       `SELECT DATE(fecha) AS dia, SUM(total_usd) AS usd, SUM(utilidad_total) AS utilidad
-         FROM ventas WHERE sucursal_id = ? AND estado='CERRADA' AND fecha >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+         FROM ventas WHERE sucursal_id = ? AND estado='CERRADA' AND fecha >= CURRENT_DATE - INTERVAL '30 days'
         GROUP BY DATE(fecha) ORDER BY dia`,
       [u.sucursalId],
     );
     const topProductos = await queryReporte(
       `SELECT vd.descripcion AS producto, SUM(vd.cantidad) AS cantidad, SUM(vd.total_linea) AS usd
          FROM venta_detalle vd JOIN ventas v ON v.id = vd.venta_id
-        WHERE v.sucursal_id = ? AND v.estado='CERRADA' AND v.fecha >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+        WHERE v.sucursal_id = ? AND v.estado='CERRADA' AND v.fecha >= CURRENT_DATE - INTERVAL '30 days'
         GROUP BY vd.producto_id, vd.descripcion ORDER BY cantidad DESC LIMIT 10`,
       [u.sucursalId],
     );
     const alertas = await queryReporte<{ stock_bajo: number; creditos_vencidos: number }>(
       `SELECT (SELECT COUNT(*) FROM producto_stock ps WHERE ps.sucursal_id=? AND ps.cantidad <= ps.stock_minimo) AS stock_bajo,
-              (SELECT COUNT(*) FROM creditos WHERE estado IN ('PENDIENTE','PARCIAL') AND fecha_vencimiento < CURDATE()) AS creditos_vencidos`,
+              (SELECT COUNT(*) FROM creditos WHERE estado IN ('PENDIENTE','PARCIAL') AND fecha_vencimiento < CURRENT_DATE) AS creditos_vencidos`,
       [u.sucursalId],
     );
     enviarOk(res, {

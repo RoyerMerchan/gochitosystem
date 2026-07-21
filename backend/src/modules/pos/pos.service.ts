@@ -69,9 +69,9 @@ interface FilaProductoVenta {
   impuesto_id: number;
   impuesto_tasa: string;
   precio_venta: string;
-  es_precio_incluye_impuesto: number;
-  es_maneja_inventario: number;
-  esta_activo: number;
+  es_precio_incluye_impuesto: boolean;
+  es_maneja_inventario: boolean;
+  esta_activo: boolean;
   cantidad: string | null;
   costo_promedio: string | null;
 }
@@ -80,10 +80,10 @@ interface FilaProductoVenta {
 interface FilaMetodoPago {
   id: number;
   moneda: 'USD' | 'VES';
-  requiere_referencia: number;
-  afecta_caja_efectivo: number;
-  es_no_es_cobro: number;
-  esta_activo: number;
+  requiere_referencia: boolean;
+  afecta_caja_efectivo: boolean;
+  es_no_es_cobro: boolean;
+  esta_activo: boolean;
 }
 
 /** Calculo intermedio por renglon (todo en escala USD). */
@@ -187,7 +187,7 @@ export async function registrarVenta(
          subtotal_bruto, descuento_lineas, descuento_documento, base_gravable, impuesto_total,
          total_usd, tasa_cambio, tasa_cambio_id, total_bs, costo_total, utilidad_total,
          total_pagado, total_credito, cantidad_items, es_credito, estado, clave_idempotencia)
-       VALUES (?, ?, ?, ?, ?, ?, ?, NOW(3), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         usuario.sucursalId, turno.id, usuario.id, entrada.clienteId ?? null, prefijo, numero, anio,
         centavosASql(subtotalBruto), centavosASql(descuentoLineas),
@@ -364,7 +364,7 @@ async function calcularRenglones(
       cx,
     );
     if (!fila) throw new NoEncontrado('PRODUCTO_NO_ENCONTRADO');
-    if (fila.esta_activo !== 1) throw new ReglaNegocio('PRODUCTO_INACTIVO');
+    if (!fila.esta_activo) throw new ReglaNegocio('PRODUCTO_INACTIVO');
     filas.push(fila);
 
     const cantidad = aCantidad(r.cantidad);
@@ -396,7 +396,7 @@ async function calcularRenglones(
     // SNAPSHOT DE COSTO: costo promedio vigente en este instante.
     const costoUnit = aUnitario(fila.costo_promedio ?? '0');
     const tasaMilesimas = aTasa(fila.impuesto_tasa);
-    const esIncluye = fila.es_precio_incluye_impuesto === 1;
+    const esIncluye = fila.es_precio_incluye_impuesto;
 
     const brutoLinea = multiplicarPorCantidad(precioUnit, cantidad); // escala 2
     const descLinea = multiplicarPorCantidad(descUnit, cantidad); // escala 2
@@ -428,7 +428,7 @@ async function calcularRenglones(
       precioCompraUnit: costoUnit,
       descuentoUnit: descUnit,
       esPrecioIncluyeImpuesto: esIncluye,
-      esManejaInventario: fila.es_maneja_inventario === 1,
+      esManejaInventario: fila.es_maneja_inventario,
       base,
       impuesto,
       costoTotal,
@@ -455,12 +455,12 @@ async function descontarStock(
   const saldoAnterior = aCantidad(stock?.cantidad ?? '0');
   if (saldoAnterior < r.cantidad) {
     // Se permite vender sin stock solo si la configuracion lo autoriza.
-    const cfg = await queryOne<{ es_permite_stock_negativo: number }>(
+    const cfg = await queryOne<{ es_permite_stock_negativo: boolean }>(
       `SELECT es_permite_stock_negativo FROM configuracion WHERE id = 1`,
       [],
       cx,
     );
-    if (!cfg || cfg.es_permite_stock_negativo !== 1) {
+    if (!cfg || !cfg.es_permite_stock_negativo) {
       throw new Conflicto('STOCK_INSUFICIENTE');
     }
   }
@@ -468,7 +468,7 @@ async function descontarStock(
   const costoProm = aUnitario(stock?.costo_promedio ?? '0');
 
   await ejecutar(
-    `UPDATE producto_stock SET cantidad = ?, ultima_salida_en = NOW(3)
+    `UPDATE producto_stock SET cantidad = ?, ultima_salida_en = NOW()
       WHERE producto_id = ? AND sucursal_id = ?`,
     [cantidadASql(saldoPosterior), r.productoId, sucursalId],
     cx,
@@ -519,8 +519,8 @@ async function calcularPagos(
       [p.metodoPagoId],
       cx,
     );
-    if (!metodo || metodo.esta_activo !== 1) throw new NoEncontrado('NO_ENCONTRADO');
-    if (metodo.requiere_referencia === 1 && !p.referencia?.trim()) {
+    if (!metodo || !metodo.esta_activo) throw new NoEncontrado('NO_ENCONTRADO');
+    if (metodo.requiere_referencia && !p.referencia?.trim()) {
       throw new ReglaNegocio('REFERENCIA_REQUERIDA');
     }
 
@@ -528,7 +528,7 @@ async function calcularPagos(
     if (montoMoneda <= 0n) throw new ReglaNegocio('MONTO_INVALIDO');
     const montoUsd = montoMonedaAUsd(montoMoneda, metodo.moneda, tasaEscalada);
 
-    const esCredito = metodo.es_no_es_cobro === 1;
+    const esCredito = metodo.es_no_es_cobro;
     if (esCredito) creditoDeclarado += montoUsd;
     else pagadoUsd += montoUsd;
 
@@ -538,7 +538,7 @@ async function calcularPagos(
       montoMoneda,
       montoUsd,
       referencia: p.referencia?.trim(),
-      afectaCaja: metodo.afecta_caja_efectivo === 1,
+      afectaCaja: metodo.afecta_caja_efectivo,
       esCredito,
     });
   }
@@ -567,8 +567,8 @@ async function validarCredito(
 ): Promise<void> {
   if (!clienteId || clienteId === 1) throw new ReglaNegocio('CLIENTE_GENERICO_SIN_CREDITO');
   const cliente = await queryOne<{
-    es_permite_credito: number;
-    esta_bloqueado: number;
+    es_permite_credito: boolean;
+    esta_bloqueado: boolean;
     cupo_credito: string;
     saldo_actual: string;
   }>(
@@ -578,8 +578,8 @@ async function validarCredito(
     cx,
   );
   if (!cliente) throw new NoEncontrado('CLIENTE_NO_ENCONTRADO');
-  if (cliente.esta_bloqueado === 1) throw new Conflicto('CLIENTE_BLOQUEADO');
-  if (cliente.es_permite_credito !== 1) throw new ReglaNegocio('CLIENTE_SIN_CREDITO');
+  if (cliente.esta_bloqueado) throw new Conflicto('CLIENTE_BLOQUEADO');
+  if (!cliente.es_permite_credito) throw new ReglaNegocio('CLIENTE_SIN_CREDITO');
 
   const cupo = aCentavos(cliente.cupo_credito);
   const saldo = aCentavos(cliente.saldo_actual);
@@ -612,7 +612,7 @@ async function crearCredito(
       (sucursal_id, cliente_id, venta_id, origen, fecha_emision, fecha_vencimiento, dias_plazo,
        monto_original_usd, saldo_usd, tasa_cambio_origen, monto_original_bs_referencia,
        estado, usuario_id)
-     VALUES (?, ?, ?, ?, CURDATE(), DATE_ADD(CURDATE(), INTERVAL ? DAY), ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, CURRENT_DATE, CURRENT_DATE + (?::TEXT || ' days')::INTERVAL, ?, ?, ?, ?, ?, ?, ?)`,
     [
       d.sucursalId, d.clienteId, d.ventaId, ORIGEN_CREDITO.VENTA, dias, dias,
       centavosASql(d.montoUsd), centavosASql(d.montoUsd), d.tasa, bsASql(montoBs),
@@ -703,10 +703,10 @@ export async function listarVentas(
   const where = `WHERE ${cond.join(' AND ')}`;
 
   const datos = await query(
-    `SELECT v.id, CONCAT(v.prefijo, v.numero) AS numero, v.fecha, v.total_usd, v.total_bs,
+    `SELECT v.id, v.prefijo || v.numero AS numero, v.fecha, v.total_usd, v.total_bs,
             v.tasa_cambio, v.utilidad_total, v.estado, v.es_credito,
             COALESCE(c.nombre, 'CONSUMIDOR FINAL') AS cliente, u.nombre_completo AS cajero,
-            (SELECT GROUP_CONCAT(DISTINCT mp.nombre SEPARATOR ', ')
+            (SELECT STRING_AGG(DISTINCT mp.nombre, ', ')
                FROM pagos pg JOIN metodos_pago mp ON mp.id = pg.metodo_pago_id
               WHERE pg.venta_id = v.id) AS metodos_pago
        FROM ventas v
@@ -734,7 +734,7 @@ export async function anularVenta(
   motivo: string,
 ): Promise<void> {
   await withTransaction(async (cx) => {
-    const venta = await queryOne<{ id: number; estado: string; es_credito: number; cliente_id: number | null; prefijo: string; numero: number }>(
+    const venta = await queryOne<{ id: number; estado: string; es_credito: boolean; cliente_id: number | null; prefijo: string; numero: number }>(
       `SELECT id, estado, es_credito, cliente_id, prefijo, numero FROM ventas
         WHERE id = ? AND sucursal_id = ? LIMIT 1 FOR UPDATE`,
       [ventaId, sucursalId], cx,
@@ -746,7 +746,7 @@ export async function anularVenta(
     const renglones = await query<{ producto_id: number; cantidad: string; precio_compra_unitario: string }>(
       `SELECT vd.producto_id, vd.cantidad, vd.precio_compra_unitario
          FROM venta_detalle vd JOIN productos p ON p.id = vd.producto_id
-        WHERE vd.venta_id = ? AND p.es_maneja_inventario = 1`,
+        WHERE vd.venta_id = ? AND p.es_maneja_inventario = TRUE`,
       [ventaId], cx,
     );
     for (const r of renglones) {
@@ -759,7 +759,7 @@ export async function anularVenta(
       const saldoPosterior = saldoAnterior + cantidad;
       const cpp = aUnitario(stock?.costo_promedio ?? r.precio_compra_unitario);
       await ejecutar(
-        `UPDATE producto_stock SET cantidad = ?, ultima_entrada_en = NOW(3) WHERE producto_id = ? AND sucursal_id = ?`,
+        `UPDATE producto_stock SET cantidad = ?, ultima_entrada_en = NOW() WHERE producto_id = ? AND sucursal_id = ?`,
         [cantidadASql(saldoPosterior), r.producto_id, sucursalId], cx,
       );
       await insertar(
@@ -779,7 +779,7 @@ export async function anularVenta(
     }
 
     // Anula el credito y devuelve el cupo al cliente.
-    if (venta.es_credito === 1 && venta.cliente_id) {
+    if (venta.es_credito && venta.cliente_id) {
       const credito = await queryOne<{ id: number; saldo_usd: string }>(
         `SELECT id, saldo_usd FROM creditos WHERE venta_id = ? AND estado <> 'ANULADO' LIMIT 1 FOR UPDATE`,
         [ventaId], cx,
@@ -790,14 +790,14 @@ export async function anularVenta(
           [credito.saldo_usd, venta.cliente_id], cx,
         );
         await ejecutar(
-          `UPDATE creditos SET estado = 'ANULADO', saldo_usd = 0, anulado_en = NOW(3), anulado_por = ?, motivo_anulacion = ? WHERE id = ?`,
+          `UPDATE creditos SET estado = 'ANULADO', saldo_usd = 0, anulado_en = NOW(), anulado_por = ?, motivo_anulacion = ? WHERE id = ?`,
           [usuario.id, motivo, credito.id], cx,
         );
       }
     }
 
     await ejecutar(
-      `UPDATE ventas SET estado = 'ANULADA', anulada_en = NOW(3), anulada_por = ?, motivo_anulacion = ? WHERE id = ?`,
+      `UPDATE ventas SET estado = 'ANULADA', anulada_en = NOW(), anulada_por = ?, motivo_anulacion = ? WHERE id = ?`,
       [usuario.id, motivo, ventaId], cx,
     );
   });

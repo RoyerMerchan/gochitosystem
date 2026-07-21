@@ -72,7 +72,7 @@ export async function abrirTurno(
       `INSERT INTO turnos_caja
         (caja_id, sucursal_id, usuario_apertura_id, abierto_en,
          base_inicial_usd, base_inicial_bs, esperado_usd, esperado_bs, estado)
-       VALUES (?, ?, ?, NOW(3), ?, ?, ?, ?, 'ABIERTO')`,
+       VALUES (?, ?, ?, NOW(), ?, ?, ?, ?, 'ABIERTO')`,
       [
         entrada.cajaId,
         caja.sucursal_id,
@@ -195,7 +195,7 @@ export async function cerrarTurno(
 
     await ejecutar(
       `UPDATE turnos_caja
-          SET estado = ?, cerrado_en = NOW(3), usuario_cierre_id = ?,
+          SET estado = ?, cerrado_en = NOW(), usuario_cierre_id = ?,
               contado_usd = ?, contado_bs = ?, diferencia_usd = ?, diferencia_bs = ?,
               detalle_denominaciones_usd = ?, detalle_denominaciones_bs = ?, observaciones = ?
         WHERE id = ?`,

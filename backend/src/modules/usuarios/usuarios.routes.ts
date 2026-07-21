@@ -22,7 +22,7 @@ router.use(autenticar);
 
 interface UsuarioFila {
   id: number; usuario: string; email: string | null; nombre_completo: string;
-  rol_id: number; rol_nombre: string; esta_activo: number; ultimo_acceso_en: string | null;
+  rol_id: number; rol_nombre: string; esta_activo: boolean; ultimo_acceso_en: string | null;
 }
 
 const SELECT = `SELECT u.id, u.usuario, u.email, u.nombre_completo, u.rol_id, r.nombre AS rol_nombre,
@@ -63,7 +63,7 @@ router.post('/', requierePermiso('usuarios.crear'), validar({ body: esquemaCrear
       if ((err as { errno?: number }).errno === 1062) throw new Conflicto('USUARIO_DUPLICADO');
       throw err;
     }
-    await insertar(`INSERT IGNORE INTO usuario_sucursales (usuario_id, sucursal_id, rol_id) VALUES (?, 1, ?)`, [id, e.rolId]);
+    await insertar(`INSERT INTO usuario_sucursales (usuario_id, sucursal_id, rol_id) VALUES (?, 1, ?) ON CONFLICT DO NOTHING`, [id, e.rolId]);
     enviarCreado(res, await queryOne<UsuarioFila>(`${SELECT} WHERE u.id = ?`, [id]));
   } catch (e) { next(e); }
 });
@@ -90,9 +90,9 @@ router.post('/:id/password', requierePermiso('usuarios.editar'),
       const { password } = datosBody<{ password: string }>(req);
       const hash = await bcrypt.hash(password, env.seguridad.bcryptRondas);
       const r = await ejecutar(`UPDATE usuarios SET password_hash = ?, debe_cambiar_password = 0 WHERE id = ? AND eliminado_en IS NULL`, [hash, id]);
-      if (r.affectedRows === 0) throw new NoEncontrado('USUARIO_NO_ENCONTRADO');
+      if (r.rowCount === 0) throw new NoEncontrado('USUARIO_NO_ENCONTRADO');
       // Revoca las sesiones del usuario para forzar reingreso.
-      await ejecutar(`UPDATE sesiones SET revocada_en = NOW(3), motivo_revocacion = 'ADMIN' WHERE usuario_id = ? AND revocada_en IS NULL`, [id]);
+      await ejecutar(`UPDATE sesiones SET revocada_en = NOW(), motivo_revocacion = 'ADMIN' WHERE usuario_id = ? AND revocada_en IS NULL`, [id]);
       enviarOk(res, { mensaje: 'Contraseña restablecida' });
     } catch (e) { next(e); }
   });
@@ -103,7 +103,7 @@ routerRoles.use(autenticar);
 
 routerRoles.get('/', async (_req, res, next) => {
   try {
-    enviarOk(res, await query(`SELECT id, codigo, nombre, descripcion FROM roles WHERE eliminado_en IS NULL AND esta_activo = 1 ORDER BY id`));
+    enviarOk(res, await query(`SELECT id, codigo, nombre, descripcion FROM roles WHERE eliminado_en IS NULL AND esta_activo = TRUE ORDER BY id`));
   } catch (e) { next(e); }
 });
 

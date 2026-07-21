@@ -40,5 +40,8 @@ Thumbs.db
 .idea/
 *.swp
 
+# === Notas internas del proyecto ===
+INTERNO.md
+
 # === Herramientas del asistente ===
 .claude/

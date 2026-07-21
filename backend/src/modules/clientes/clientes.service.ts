@@ -14,9 +14,9 @@ export interface ClienteFila {
   cupo_credito: string;
   dias_plazo: number;
   saldo_actual: string;
-  es_permite_credito: number;
-  esta_bloqueado: number;
-  esta_activo: number;
+  es_permite_credito: boolean;
+  esta_bloqueado: boolean;
+  esta_activo: boolean;
 }
 
 export interface EntradaCliente {
@@ -108,5 +108,5 @@ export async function eliminar(id: Id): Promise<void> {
   );
   if (!cliente) throw new NoEncontrado('CLIENTE_NO_ENCONTRADO');
   if (Number(cliente.saldo_actual) > 0) throw new Conflicto('REFERENCIA_EN_USO');
-  await ejecutar(`UPDATE clientes SET eliminado_en = NOW(3) WHERE id = ?`, [id]);
+  await ejecutar(`UPDATE clientes SET eliminado_en = NOW() WHERE id = ?`, [id]);
 }

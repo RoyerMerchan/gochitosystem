@@ -16,7 +16,7 @@ interface ProvFila {
   id: number; nit: string | null; razon_social: string; nombre_comercial: string | null;
   contacto_nombre: string | null; telefono: string | null; email: string | null;
   direccion: string | null; ciudad: string | null; dias_plazo: number;
-  cupo_credito: string; saldo_actual: string; esta_activo: number;
+  cupo_credito: string; saldo_actual: string; esta_activo: boolean;
 }
 
 const SELECT = `SELECT id, nit, razon_social, nombre_comercial, contacto_nombre, telefono, email,
@@ -89,7 +89,7 @@ router.delete('/:id', requierePermiso('proveedores.eliminar'), validar({ params:
     const id = datosParams<{ id: number }>(req).id;
     const p = await obtener(id);
     if (Number(p.saldo_actual) > 0) throw new Conflicto('REFERENCIA_EN_USO');
-    await ejecutar(`UPDATE proveedores SET eliminado_en = NOW(3) WHERE id = ?`, [id]);
+    await ejecutar(`UPDATE proveedores SET eliminado_en = NOW() WHERE id = ?`, [id]);
     enviarSinContenido(res);
   } catch (e) { next(e); }
 });

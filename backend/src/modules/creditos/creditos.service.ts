@@ -18,11 +18,11 @@ export async function listarCartera(): Promise<unknown[]> {
   return query(
     `SELECT c.id AS cliente_id, c.nombre, c.documento, c.saldo_actual AS saldo_usd,
             c.cupo_credito,
-            COALESCE(SUM(CASE WHEN DATEDIFF(CURDATE(), cr.fecha_vencimiento) <= 0 THEN cr.saldo_usd ELSE 0 END),0) AS por_vencer,
-            COALESCE(SUM(CASE WHEN DATEDIFF(CURDATE(), cr.fecha_vencimiento) BETWEEN 1 AND 30 THEN cr.saldo_usd ELSE 0 END),0) AS d1_30,
-            COALESCE(SUM(CASE WHEN DATEDIFF(CURDATE(), cr.fecha_vencimiento) BETWEEN 31 AND 60 THEN cr.saldo_usd ELSE 0 END),0) AS d31_60,
-            COALESCE(SUM(CASE WHEN DATEDIFF(CURDATE(), cr.fecha_vencimiento) BETWEEN 61 AND 90 THEN cr.saldo_usd ELSE 0 END),0) AS d61_90,
-            COALESCE(SUM(CASE WHEN DATEDIFF(CURDATE(), cr.fecha_vencimiento) > 90 THEN cr.saldo_usd ELSE 0 END),0) AS d90_mas
+            COALESCE(SUM(CASE WHEN (CURRENT_DATE - cr.fecha_vencimiento) <= 0 THEN cr.saldo_usd ELSE 0 END),0) AS por_vencer,
+            COALESCE(SUM(CASE WHEN (CURRENT_DATE - cr.fecha_vencimiento) BETWEEN 1 AND 30 THEN cr.saldo_usd ELSE 0 END),0) AS d1_30,
+            COALESCE(SUM(CASE WHEN (CURRENT_DATE - cr.fecha_vencimiento) BETWEEN 31 AND 60 THEN cr.saldo_usd ELSE 0 END),0) AS d31_60,
+            COALESCE(SUM(CASE WHEN (CURRENT_DATE - cr.fecha_vencimiento) BETWEEN 61 AND 90 THEN cr.saldo_usd ELSE 0 END),0) AS d61_90,
+            COALESCE(SUM(CASE WHEN (CURRENT_DATE - cr.fecha_vencimiento) > 90 THEN cr.saldo_usd ELSE 0 END),0) AS d90_mas
        FROM clientes c
        JOIN creditos cr ON cr.cliente_id = c.id AND cr.estado IN ('PENDIENTE','PARCIAL','VENCIDO')
       WHERE c.eliminado_en IS NULL
@@ -41,8 +41,8 @@ export async function estadoCuenta(clienteId: Id): Promise<unknown> {
   if (!cliente) throw new NoEncontrado('CLIENTE_NO_ENCONTRADO');
 
   const creditos = await query(
-    `SELECT cr.id, CONCAT(v.prefijo, v.numero) AS documento, cr.fecha_emision, cr.fecha_vencimiento,
-            cr.monto_original_usd, cr.saldo_usd, cr.estado, DATEDIFF(CURDATE(), cr.fecha_vencimiento) AS dias_mora
+    `SELECT cr.id, v.prefijo || v.numero AS documento, cr.fecha_emision, cr.fecha_vencimiento,
+            cr.monto_original_usd, cr.saldo_usd, cr.estado, (CURRENT_DATE - cr.fecha_vencimiento) AS dias_mora
        FROM creditos cr LEFT JOIN ventas v ON v.id = cr.venta_id
       WHERE cr.cliente_id = ? AND cr.estado <> 'ANULADO'
       ORDER BY cr.fecha_emision`,
@@ -50,7 +50,7 @@ export async function estadoCuenta(clienteId: Id): Promise<unknown> {
   );
 
   const abonos = await query(
-    `SELECT a.id, CONCAT(a.prefijo, a.numero) AS numero, a.fecha, a.moneda, a.monto_moneda,
+    `SELECT a.id, a.prefijo || a.numero AS numero, a.fecha, a.moneda, a.monto_moneda,
             a.tasa_aplicada, a.monto_usd, a.estado
        FROM abonos a WHERE a.cliente_id = ? ORDER BY a.fecha DESC LIMIT 50`,
     [clienteId],
@@ -77,18 +77,18 @@ export async function registrarAbono(
   return withTransaction(async (cx) => {
     // Tasa del dia del abono.
     const tasaFila = await queryOne<{ tasa: string }>(
-      `SELECT tasa FROM tasas_cambio WHERE fecha = CURDATE() AND eliminado_en IS NULL LIMIT 1`, [], cx,
+      `SELECT tasa FROM tasas_cambio WHERE fecha = CURRENT_DATE AND eliminado_en IS NULL LIMIT 1`, [], cx,
     );
     if (!tasaFila) throw new ReglaNegocio('SIN_TASA_DEL_DIA');
     const tasaEsc = aTasaCambio(tasaFila.tasa);
 
     // Metodo de pago (para referencia y caja).
-    const metodo = await queryOne<{ moneda: string; requiere_referencia: number; afecta_caja_efectivo: number }>(
+    const metodo = await queryOne<{ moneda: string; requiere_referencia: boolean; afecta_caja_efectivo: boolean }>(
       `SELECT moneda, requiere_referencia, afecta_caja_efectivo FROM metodos_pago WHERE id = ? AND eliminado_en IS NULL`,
       [entrada.metodoPagoId], cx,
     );
     if (!metodo) throw new NoEncontrado('NO_ENCONTRADO');
-    if (metodo.requiere_referencia === 1 && !entrada.referencia?.trim()) throw new ReglaNegocio('REFERENCIA_REQUERIDA');
+    if (metodo.requiere_referencia && !entrada.referencia?.trim()) throw new ReglaNegocio('REFERENCIA_REQUERIDA');
 
     const montoMonedaEsc = aMontoMoneda(entrada.montoMoneda);
     const montoUsd = montoMonedaAUsd(montoMonedaEsc, entrada.moneda, tasaEsc);
@@ -105,7 +105,7 @@ export async function registrarAbono(
 
     // Turno de caja (para el movimiento de efectivo).
     const turno = await turnoActivoDeUsuario(usuario.id, usuario.sucursalId);
-    if (!turno && metodo.afecta_caja_efectivo === 1) throw new Conflicto('CAJA_NO_ABIERTA');
+    if (!turno && metodo.afecta_caja_efectivo) throw new Conflicto('CAJA_NO_ABIERTA');
 
     const anio = new Date().getFullYear();
     const { numero, prefijo } = await siguienteConsecutivo(cx, usuario.sucursalId, TIPO_DOCUMENTO.ABONO, anio);
@@ -168,7 +168,7 @@ export async function registrarAbono(
     }
 
     // Movimiento de caja si el abono fue en efectivo.
-    if (turno && metodo.afecta_caja_efectivo === 1) {
+    if (turno && metodo.afecta_caja_efectivo) {
       await registrarMovimiento(
         cx, turno.id, usuario.sucursalId, 'ABONO', 1, entrada.moneda,
         montoMonedaASql(montoMonedaEsc), tasaFila.tasa, centavosASql(montoUsd),

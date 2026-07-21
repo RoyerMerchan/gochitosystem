@@ -38,8 +38,8 @@ interface FilaUsuarioAuth {
   sucursal_predeterminada_id: number | null;
   intentos_fallidos: number;
   bloqueado_hasta: string | null;
-  debe_cambiar_password: number;
-  esta_activo: number;
+  debe_cambiar_password: boolean;
+  esta_activo: boolean;
   eliminado_en: string | null;
 }
 
@@ -86,7 +86,7 @@ function aUsuarioDominio(fila: FilaUsuarioAuth): UsuarioAutenticado {
     rolId: fila.rol_id,
     rolCodigo: fila.rol_codigo,
     sucursalId: fila.sucursal_predeterminada_id ?? 1,
-    debeCambiarPassword: fila.debe_cambiar_password === 1,
+    debeCambiarPassword: fila.debe_cambiar_password,
   };
 }
 
@@ -108,7 +108,7 @@ async function crearSesion(
       usuarioId,
       hashToken(refreshToken),
       familiaId,
-      ip ? ipABuffer(ip) : null,
+      ip ? validarIp(ip) : null,
       userAgent ?? null,
       formatearFecha(expira),
     ],
@@ -133,19 +133,10 @@ function formatearFecha(fecha: Date): string {
   return fecha.toISOString().slice(0, 23).replace('T', ' ');
 }
 
-/** IPv4/IPv6 a Buffer para la columna VARBINARY(16). Best-effort. */
-function ipABuffer(ip: string): Buffer | null {
-  try {
-    if (ip.includes('.')) {
-      const partes = ip.split('.').map((p) => Number.parseInt(p, 10));
-      if (partes.length === 4 && partes.every((n) => n >= 0 && n <= 255)) {
-        return Buffer.from(partes);
-      }
-    }
-    return null;
-  } catch {
-    return null;
-  }
+/** Valida formato IPv4/IPv6 basico y devuelve el string (PostgreSQL tipo INET). */
+function validarIp(ip: string): string | null {
+  if (ip.includes('.') || ip.includes(':')) return ip;
+  return null;
 }
 
 /**
@@ -176,6 +167,9 @@ export async function login(
   if (fila.bloqueado_hasta && new Date(fila.bloqueado_hasta) > new Date()) {
     throw new ReglaNegocio('USUARIO_BLOQUEADO');
   }
+  if (!fila.esta_activo) {
+    throw new ReglaNegocio('USUARIO_INACTIVO');
+  }
 
   const coincide = await bcrypt.compare(entrada.password, fila.password_hash);
   if (!coincide) {
@@ -188,7 +182,7 @@ export async function login(
   return withTransaction(async (cx) => {
     await ejecutar(
       `UPDATE usuarios
-          SET intentos_fallidos = 0, bloqueado_hasta = NULL, ultimo_acceso_en = NOW(3)
+          SET intentos_fallidos = 0, bloqueado_hasta = NULL, ultimo_acceso_en = NOW()
         WHERE id = ?`,
       [fila.id],
       cx,
@@ -257,7 +251,7 @@ export async function refrescar(
   // Reuso de un token ya revocado: se revoca toda la familia por seguridad.
   if (sesion.revocada_en !== null) {
     await ejecutar(
-      `UPDATE sesiones SET revocada_en = NOW(3), motivo_revocacion = ?
+      `UPDATE sesiones SET revocada_en = NOW(), motivo_revocacion = ?
         WHERE familia_id = ? AND revocada_en IS NULL`,
       [MOTIVO_REVOCACION.REUSO_DETECTADO, sesion.familia_id],
     );
@@ -277,7 +271,7 @@ export async function refrescar(
       WHERE u.id = ? AND u.eliminado_en IS NULL LIMIT 1`,
     [sesion.usuario_id],
   );
-  if (!fila) {
+  if (!fila || !fila.esta_activo) {
     throw new NoAutenticado('TOKEN_INVALIDO');
   }
 
@@ -291,7 +285,7 @@ export async function refrescar(
     );
 
     await ejecutar(
-      `UPDATE sesiones SET revocada_en = NOW(3), motivo_revocacion = ?, reemplazada_por_id = ?
+      `UPDATE sesiones SET revocada_en = NOW(), motivo_revocacion = ?, reemplazada_por_id = ?
         WHERE id = ?`,
       [MOTIVO_REVOCACION.ROTACION, sesionId, sesion.id],
       cx,
@@ -306,7 +300,7 @@ export async function refrescar(
 /** Revoca el refresh token indicado (logout de la sesion actual). */
 export async function logout(refreshToken: string): Promise<void> {
   await ejecutar(
-    `UPDATE sesiones SET revocada_en = NOW(3), motivo_revocacion = ?
+    `UPDATE sesiones SET revocada_en = NOW(), motivo_revocacion = ?
       WHERE token_hash = ? AND revocada_en IS NULL`,
     [MOTIVO_REVOCACION.LOGOUT, hashToken(refreshToken)],
   );
@@ -336,7 +330,7 @@ export async function cambiarPassword(
       cx,
     );
     await ejecutar(
-      `UPDATE sesiones SET revocada_en = NOW(3), motivo_revocacion = ?
+      `UPDATE sesiones SET revocada_en = NOW(), motivo_revocacion = ?
         WHERE usuario_id = ? AND revocada_en IS NULL`,
       [MOTIVO_REVOCACION.ADMIN, usuarioId],
       cx,

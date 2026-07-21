@@ -20,13 +20,13 @@ export interface ProductoListado {
   precio_venta: DecimalSql;
   precio_venta_bs?: DecimalSql;
   costo_promedio: DecimalSql;
-  es_precio_incluye_impuesto: number;
-  es_pesable: number;
-  es_favorito_pos: number;
+  es_precio_incluye_impuesto: boolean;
+  es_pesable: boolean;
+  es_favorito_pos: boolean;
   imagen_ruta: string | null;
   cantidad: DecimalSql;
   stock_minimo: DecimalSql;
-  esta_activo: number;
+  esta_activo: boolean;
 }
 
 interface FiltrosProductos {
@@ -73,12 +73,12 @@ export async function listar(
   const cond: string[] = ['p.eliminado_en IS NULL'];
   const params: (string | number)[] = [filtros.sucursalId];
 
-  if (filtros.soloActivos) cond.push('p.esta_activo = 1');
+  if (filtros.soloActivos) cond.push('p.esta_activo = TRUE');
   if (filtros.categoriaId) {
     cond.push('p.categoria_id = ?');
     params.push(filtros.categoriaId);
   }
-  if (filtros.favoritos) cond.push('p.es_favorito_pos = 1');
+  if (filtros.favoritos) cond.push('p.es_favorito_pos = TRUE');
   if (filtros.busqueda) {
     cond.push('(p.nombre LIKE ? OR p.sku LIKE ?)');
     const like = `%${filtros.busqueda}%`;
@@ -119,7 +119,7 @@ export async function buscarPos(
   const porCodigo = await query<ProductoListado>(
     `${SELECT_BASE}
       JOIN producto_codigos pc ON pc.producto_id = p.id AND pc.eliminado_en IS NULL
-     WHERE pc.codigo = ? AND p.eliminado_en IS NULL AND p.esta_activo = 1
+     WHERE pc.codigo = ? AND p.eliminado_en IS NULL AND p.esta_activo = TRUE
      LIMIT 1`,
     [sucursalId, term],
   );
@@ -127,7 +127,7 @@ export async function buscarPos(
 
   // 2) SKU exacto.
   const porSku = await query<ProductoListado>(
-    `${SELECT_BASE} WHERE p.sku = ? AND p.eliminado_en IS NULL AND p.esta_activo = 1 LIMIT 1`,
+    `${SELECT_BASE} WHERE p.sku = ? AND p.eliminado_en IS NULL AND p.esta_activo = TRUE LIMIT 1`,
     [sucursalId, term],
   );
   if (porSku.length > 0) return conEquivalenteBs(porSku, tasa);
@@ -265,7 +265,7 @@ export async function actualizar(id: Id, e: EntradaProducto, sucursalId: number)
 export async function eliminar(id: Id): Promise<void> {
   const p = await queryOne<{ id: number }>(`SELECT id FROM productos WHERE id = ? AND eliminado_en IS NULL`, [id]);
   if (!p) throw new NoEncontrado('PRODUCTO_NO_ENCONTRADO');
-  await ejecutar(`UPDATE productos SET eliminado_en = NOW(3), esta_activo = 0 WHERE id = ?`, [id]);
+  await ejecutar(`UPDATE productos SET eliminado_en = NOW(), esta_activo = 0 WHERE id = ?`, [id]);
 }
 
 /** Cambia el precio de venta y registra el cambio en el historial. */
@@ -289,9 +289,9 @@ export async function cambiarPrecio(id: Id, nuevoPrecio: string, usuarioId: Id, 
 /** Kardex del producto: movimientos con saldo corrido (ya persistido en el ledger). */
 export async function kardex(productoId: Id, sucursalId: number): Promise<KardexLinea[]> {
   return query<KardexLinea>(
-    `SELECT DATE_FORMAT(creado_en, '%Y-%m-%d %H:%i') AS fecha, tipo, nota AS documento,
-            IF(signo = 1, cantidad, 0) AS entrada,
-            IF(signo = -1, cantidad, 0) AS salida,
+    `SELECT TO_CHAR(creado_en, 'YYYY-MM-DD HH24:MI') AS fecha, tipo, nota AS documento,
+            CASE WHEN signo = 1 THEN cantidad ELSE 0 END AS entrada,
+            CASE WHEN signo = -1 THEN cantidad ELSE 0 END AS salida,
             saldo_posterior AS saldo, costo_unitario
        FROM inventario_movimientos
       WHERE producto_id = ? AND sucursal_id = ?

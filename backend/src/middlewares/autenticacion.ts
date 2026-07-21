@@ -23,8 +23,8 @@ interface FilaUsuario {
   rol_id: number;
   rol_codigo: string;
   sucursal_predeterminada_id: number | null;
-  debe_cambiar_password: number;
-  esta_activo: number;
+  debe_cambiar_password: boolean;
+  esta_activo: boolean;
   bloqueado_hasta: string | null;
   eliminado_en: string | null;
 }
@@ -75,6 +75,9 @@ async function cargarUsuario(usuarioId: number): Promise<UsuarioAutenticado> {
   if (!fila || fila.eliminado_en !== null) {
     throw new NoAutenticado('TOKEN_INVALIDO');
   }
+  if (!fila.esta_activo) {
+    throw new NoAutorizado('USUARIO_INACTIVO');
+  }
 
   return {
     id: fila.id,
@@ -84,7 +87,7 @@ async function cargarUsuario(usuarioId: number): Promise<UsuarioAutenticado> {
     rolCodigo: fila.rol_codigo,
     // La sucursal efectiva viene del token (el usuario puede operar en varias).
     sucursalId: fila.sucursal_predeterminada_id ?? 0,
-    debeCambiarPassword: fila.debe_cambiar_password === 1,
+    debeCambiarPassword: fila.debe_cambiar_password,
   };
 }
 

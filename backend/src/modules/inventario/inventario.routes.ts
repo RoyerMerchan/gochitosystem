@@ -20,7 +20,7 @@ router.get('/existencias', requierePermiso('inventario.ver'), validar({ query: e
     const q = datosQuery<{ pagina?: number; limite?: number; busqueda?: string; stockBajo?: boolean }>(req);
     const p = normalizarPaginacion(q);
     const u = usuarioActual(req);
-    const cond = ['p.eliminado_en IS NULL', 'p.es_maneja_inventario = 1']; const params: (string | number)[] = [u.sucursalId];
+    const cond = ['p.eliminado_en IS NULL', 'p.es_maneja_inventario = TRUE']; const params: (string | number)[] = [u.sucursalId];
     if (q.busqueda) { cond.push('(p.nombre LIKE ? OR p.sku LIKE ?)'); const l = `%${q.busqueda}%`; params.push(l, l); }
     if (q.stockBajo) cond.push('COALESCE(ps.cantidad,0) <= COALESCE(ps.stock_minimo,0)');
     const where = `WHERE ${cond.join(' AND ')}`;
@@ -52,7 +52,7 @@ router.get('/reconciliacion', requierePermiso('inventario.reconciliar', 'inventa
               COALESCE(ps.cantidad,0) - COALESCE((SELECT SUM(im.signo * im.cantidad) FROM inventario_movimientos im
                         WHERE im.producto_id = p.id AND im.sucursal_id = ?),0) AS diferencia
          FROM productos p LEFT JOIN producto_stock ps ON ps.producto_id = p.id AND ps.sucursal_id = ?
-        WHERE p.eliminado_en IS NULL AND p.es_maneja_inventario = 1
+        WHERE p.eliminado_en IS NULL AND p.es_maneja_inventario = TRUE
         HAVING diferencia <> 0 ORDER BY ABS(diferencia) DESC`,
       [u.sucursalId, u.sucursalId, u.sucursalId],
     );
@@ -64,8 +64,8 @@ router.get('/kardex/:id', requierePermiso('inventario.ver'), validar({ params: e
   try {
     const u = usuarioActual(req);
     const datos = await query(
-      `SELECT DATE_FORMAT(creado_en,'%Y-%m-%d %H:%i') AS fecha, tipo, nota,
-              IF(signo=1, cantidad, 0) AS entrada, IF(signo=-1, cantidad, 0) AS salida,
+      `SELECT TO_CHAR(creado_en, 'YYYY-MM-DD HH24:MI') AS fecha, tipo, nota,
+              CASE WHEN signo=1 THEN cantidad ELSE 0 END AS entrada, CASE WHEN signo=-1 THEN cantidad ELSE 0 END AS salida,
               saldo_posterior AS saldo, costo_unitario
          FROM inventario_movimientos WHERE producto_id = ? AND sucursal_id = ? ORDER BY id ASC`,
       [datosParams<{ id: number }>(req).id, u.sucursalId],

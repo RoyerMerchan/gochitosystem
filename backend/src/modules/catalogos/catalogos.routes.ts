@@ -55,7 +55,7 @@ routerCategorias.put('/:id', requierePermiso('categorias.editar'), validar({ par
       `UPDATE categorias SET nombre=?, descripcion=?, categoria_padre_id=?, color_hex=?, orden=? WHERE id=? AND eliminado_en IS NULL`,
       [e.nombre, e.descripcion ?? null, e.categoriaPadreId ?? null, e.colorHex ?? null, e.orden ?? 0, id],
     );
-    if (r.affectedRows === 0) throw new NoEncontrado('NO_ENCONTRADO');
+    if (r.rowCount === 0) throw new NoEncontrado('NO_ENCONTRADO');
     enviarOk(res, await queryOne(`SELECT * FROM categorias WHERE id = ?`, [id]));
   } catch (e) { next(e); }
 });
@@ -65,7 +65,7 @@ routerCategorias.delete('/:id', requierePermiso('categorias.eliminar'), validar(
     const id = datosParams<{ id: number }>(req).id;
     const enUso = await queryOne<{ n: number }>(`SELECT COUNT(*) AS n FROM productos WHERE categoria_id=? AND eliminado_en IS NULL`, [id]);
     if ((enUso?.n ?? 0) > 0) throw new Conflicto('REFERENCIA_EN_USO');
-    await ejecutar(`UPDATE categorias SET eliminado_en = NOW(3) WHERE id = ?`, [id]);
+    await ejecutar(`UPDATE categorias SET eliminado_en = NOW() WHERE id = ?`, [id]);
     enviarSinContenido(res);
   } catch (e) { next(e); }
 });

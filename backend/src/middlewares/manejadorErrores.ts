@@ -1,7 +1,7 @@
 /**
  * Manejador global de errores de Express 5.
  *
- * Traduce los errores de MariaDB a errores de negocio comprensibles y garantiza
+ * Traduce los errores de PostgreSQL a errores de negocio comprensibles y garantiza
  * que NUNCA se filtre al cliente un stack, un mensaje de SQL ni una ruta interna.
  * Todo lo que no sea AppError se registra completo en el log y se responde como
  * ERROR_INTERNO generico.
@@ -17,33 +17,22 @@ import {
 import { enviarFallo } from '../utils/respuesta';
 import { logger, describirError } from '../utils/logger';
 
-// Codigos de error de MariaDB relevantes.
-const ER_DUP_ENTRY = 1062;
-const ER_NO_REFERENCED_ROW = 1452;
-const ER_ROW_IS_REFERENCED = 1451;
-const ER_LOCK_DEADLOCK = 1213;
-const ER_LOCK_WAIT_TIMEOUT = 1205;
-const ER_CHECK_CONSTRAINT = 4025;
-const ER_BAD_NULL = 1048;
+/** Convierte un error del driver de PostgreSQL en un AppError del dominio. */
+function traducirErrorPG(error: unknown): AppError | null {
+  const code = (error as { code?: string } | null)?.code;
+  if (code === undefined) return null;
 
-/** Convierte un error de driver de MariaDB en un AppError del dominio. */
-function traducirErrorMariaDB(error: unknown): AppError | null {
-  const errno = (error as { errno?: number } | null)?.errno;
-  if (errno === undefined) return null;
-
-  switch (errno) {
-    case ER_DUP_ENTRY:
+  switch (code) {
+    case '23505':
       return new Conflicto('REGISTRO_DUPLICADO', { causa: error });
-    case ER_NO_REFERENCED_ROW:
+    case '23503':
       return new ReglaNegocio('REFERENCIA_INEXISTENTE', { causa: error });
-    case ER_ROW_IS_REFERENCED:
-      return new Conflicto('REFERENCIA_EN_USO', { causa: error });
-    case ER_LOCK_DEADLOCK:
+    case '40001':
       return new Conflicto('CONFLICTO_CONCURRENCIA', { causa: error });
-    case ER_LOCK_WAIT_TIMEOUT:
+    case '55P03':
       return new Conflicto('TIEMPO_BLOQUEO_AGOTADO', { causa: error });
-    case ER_CHECK_CONSTRAINT:
-    case ER_BAD_NULL:
+    case '23514':
+    case '23502':
       return new ReglaNegocio('DATOS_INVALIDOS', { causa: error });
     default:
       return null;
@@ -68,7 +57,7 @@ export const manejadorErrores: ErrorRequestHandler = (err, req, res, _next) => {
   if (esAppError(err)) {
     appError = err;
   } else {
-    appError = traducirErrorMariaDB(err) ?? new ErrorInterno({ causa: err });
+    appError = traducirErrorPG(err) ?? new ErrorInterno({ causa: err });
   }
 
   // Log: los 5xx y los fallos no operacionales van como error; el resto como warn.

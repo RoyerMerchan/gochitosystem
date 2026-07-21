@@ -43,9 +43,9 @@ export async function tasaDeFecha(
   fecha?: string,
   ejecutor?: Ejecutor,
 ): Promise<{ id: number; tasa: string; fecha: string } | null> {
-  const sql = `SELECT id, tasa, DATE_FORMAT(fecha, '%Y-%m-%d') AS fecha
+  const sql = `SELECT id, tasa, TO_CHAR(fecha, 'YYYY-MM-DD') AS fecha
                  FROM tasas_cambio
-                WHERE fecha = ${fecha ? '?' : 'CURDATE()'} AND eliminado_en IS NULL
+                WHERE fecha = ${fecha ? '?' : 'CURRENT_DATE'} AND eliminado_en IS NULL
                 LIMIT 1`;
   const params = fecha ? [fecha] : [];
   return queryOne<{ id: number; tasa: string; fecha: string }>(sql, params, ejecutor);
@@ -80,8 +80,8 @@ export async function registrar(
   if (existente) throw new Conflicto('TASA_YA_REGISTRADA');
 
   const id = await insertar(
-    `INSERT INTO tasas_cambio (fecha, tasa, fuente, usuario_id, notas)
-     VALUES (${entrada.fecha ? '?' : 'CURDATE()'}, ?, ?, ?, ?)`,
+     `INSERT INTO tasas_cambio (fecha, tasa, fuente, usuario_id, notas)
+      VALUES (${entrada.fecha ? '?' : 'CURRENT_DATE'}, ?, ?, ?, ?)`,
     [
       ...(entrada.fecha ? [entrada.fecha] : []),
       entrada.tasa,
@@ -92,7 +92,7 @@ export async function registrar(
   );
 
   const creada = await queryOne<{ id: number; tasa: string; fecha: string }>(
-    `SELECT id, tasa, DATE_FORMAT(fecha, '%Y-%m-%d') AS fecha FROM tasas_cambio WHERE id = ?`,
+    `SELECT id, tasa, TO_CHAR(fecha, 'YYYY-MM-DD') AS fecha FROM tasas_cambio WHERE id = ?`,
     [id],
   );
   return { id, fecha: creada?.fecha ?? '', tasa: creada?.tasa ?? entrada.tasa };
@@ -112,14 +112,14 @@ export async function corregir(
 
   return withTransaction(async (cx) => {
     const anterior = await queryOne<{ id: number; fecha: string }>(
-      `SELECT id, DATE_FORMAT(fecha, '%Y-%m-%d') AS fecha
+      `SELECT id, TO_CHAR(fecha, 'YYYY-MM-DD') AS fecha
          FROM tasas_cambio WHERE id = ? AND eliminado_en IS NULL LIMIT 1`,
       [tasaId],
       cx,
     );
     if (!anterior) throw new NoEncontrado('NO_ENCONTRADO');
 
-    await ejecutar(`UPDATE tasas_cambio SET eliminado_en = NOW(3) WHERE id = ?`, [tasaId], cx);
+    await ejecutar(`UPDATE tasas_cambio SET eliminado_en = NOW() WHERE id = ?`, [tasaId], cx);
 
     const id = await insertar(
       `INSERT INTO tasas_cambio (fecha, tasa, fuente, es_correccion, corrige_tasa_id, usuario_id, notas)
@@ -138,7 +138,7 @@ export async function listar(
   limite: number,
 ): Promise<{ datos: FilaTasa[]; total: number }> {
   const datos = await query<FilaTasa>(
-    `SELECT t.id, DATE_FORMAT(t.fecha, '%Y-%m-%d') AS fecha, t.tasa, t.fuente,
+    `SELECT t.id, TO_CHAR(t.fecha, 'YYYY-MM-DD') AS fecha, t.tasa, t.fuente,
             t.es_correccion, t.notas, t.usuario_id, u.nombre_completo AS usuario_nombre,
             t.creado_en
        FROM tasas_cambio t
