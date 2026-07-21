@@ -5,11 +5,37 @@ import type { ErrorPayload } from './tipos';
  * instancia de esta clase, venga del backend, de la red o de un timeout,
  * para que las pantallas nunca tengan que inspeccionar AxiosError.
  */
+/** Codigos que NO son culpa del usuario: se muestran con codigo + referencia. */
+const CODIGOS_TECNICOS = new Set<string>([
+  'ERROR_INTERNO',
+  'SIN_CONEXION',
+  'TIEMPO_AGOTADO',
+]);
+
+/**
+ * Aviso legible. Los errores de negocio (stock, cupo, duplicado) muestran su
+ * mensaje tal cual; los tecnicos (5xx, red, inesperado) agregan el codigo y una
+ * referencia corta para poder identificarlos.
+ */
+function componerMensaje(
+  mensaje: string,
+  codigo: string,
+  estadoHttp: number,
+  requestId: string | null,
+): string {
+  const esTecnico = estadoHttp >= 500 || CODIGOS_TECNICOS.has(codigo);
+  if (!esTecnico) return mensaje;
+  const ref = requestId ? ` · ref: ${requestId.slice(0, 8)}` : '';
+  return `${mensaje} (${codigo}${ref})`;
+}
+
 export class ErrorApi extends Error {
   readonly codigo: string;
   readonly detalles: unknown;
   readonly estadoHttp: number;
   readonly requestId: string | null;
+  /** Mensaje del backend sin el sufijo tecnico (codigo/ref). */
+  readonly mensajeBase: string;
 
   constructor(params: {
     codigo: string;
@@ -18,12 +44,15 @@ export class ErrorApi extends Error {
     estadoHttp?: number;
     requestId?: string | null;
   }) {
-    super(params.mensaje);
+    const estadoHttp = params.estadoHttp ?? 0;
+    const requestId = params.requestId ?? null;
+    super(componerMensaje(params.mensaje, params.codigo, estadoHttp, requestId));
     this.name = 'ErrorApi';
+    this.mensajeBase = params.mensaje;
     this.codigo = params.codigo;
     this.detalles = params.detalles ?? null;
-    this.estadoHttp = params.estadoHttp ?? 0;
-    this.requestId = params.requestId ?? null;
+    this.estadoHttp = estadoHttp;
+    this.requestId = requestId;
     Object.setPrototypeOf(this, ErrorApi.prototype);
   }
 
@@ -101,7 +130,8 @@ export const CODIGOS_ERROR = {
   errorInterno: 'ERROR_INTERNO',
 } as const;
 
-/** Convierte cualquier excepcion en un mensaje presentable. */
+/** Convierte cualquier excepcion en un mensaje presentable (ya incluye el codigo
+ *  y la referencia en los errores tecnicos, compuestos por ErrorApi). */
 export function mensajeDeError(error: unknown): string {
   if (error instanceof ErrorApi) return error.message;
   if (error instanceof Error) return error.message;

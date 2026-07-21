@@ -123,7 +123,7 @@ export async function corregir(
 
     const id = await insertar(
       `INSERT INTO tasas_cambio (fecha, tasa, fuente, es_correccion, corrige_tasa_id, usuario_id, notas)
-       VALUES (?, ?, ?, 1, ?, ?, ?)`,
+       VALUES (?, ?, ?, TRUE, ?, ?, ?)`,
       [anterior.fecha, nuevaTasa, FUENTE_TASA.MANUAL, tasaId, usuarioId, notas ?? null],
       cx,
     );
