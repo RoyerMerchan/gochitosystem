@@ -47,7 +47,7 @@ router.get('/', requierePermiso('proveedores.ver'), validar({ query: listado }),
     const q = datosQuery<z.infer<typeof listado>>(req);
     const p = normalizarPaginacion(q);
     const cond = ['eliminado_en IS NULL']; const params: (string | number)[] = [];
-    if (q.busqueda) { cond.push('(razon_social LIKE ? OR nit LIKE ?)'); const l = `%${q.busqueda}%`; params.push(l, l); }
+    if (q.busqueda) { cond.push('(razon_social ILIKE ? OR nit ILIKE ?)'); const l = `%${q.busqueda}%`; params.push(l, l); }
     const where = `WHERE ${cond.join(' AND ')}`;
     const datos = await query<ProvFila>(`${SELECT} ${where} ORDER BY razon_social LIMIT ? OFFSET ?`, [...params, p.limite, p.desplazamiento]);
     const total = await queryOne<{ n: number }>(`SELECT COUNT(*) AS n FROM proveedores ${where}`, params);

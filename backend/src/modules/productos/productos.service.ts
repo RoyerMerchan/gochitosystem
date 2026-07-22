@@ -81,7 +81,7 @@ export async function listar(
   }
   if (filtros.favoritos) cond.push('p.es_favorito_pos = TRUE');
   if (filtros.busqueda) {
-    cond.push('(p.nombre LIKE ? OR p.sku LIKE ?)');
+    cond.push('(p.nombre ILIKE ? OR p.sku ILIKE ?)');
     const like = `%${filtros.busqueda}%`;
     params.push(like, like);
   }

@@ -21,7 +21,7 @@ router.get('/existencias', requierePermiso('inventario.ver'), validar({ query: e
     const p = normalizarPaginacion(q);
     const u = usuarioActual(req);
     const cond = ['p.eliminado_en IS NULL', 'p.es_maneja_inventario = TRUE']; const params: (string | number)[] = [u.sucursalId];
-    if (q.busqueda) { cond.push('(p.nombre LIKE ? OR p.sku LIKE ?)'); const l = `%${q.busqueda}%`; params.push(l, l); }
+    if (q.busqueda) { cond.push('(p.nombre ILIKE ? OR p.sku ILIKE ?)'); const l = `%${q.busqueda}%`; params.push(l, l); }
     if (q.stockBajo) cond.push('COALESCE(ps.cantidad,0) <= COALESCE(ps.stock_minimo,0)');
     const where = `WHERE ${cond.join(' AND ')}`;
     const datos = await query(

@@ -38,7 +38,7 @@ export async function listar(
   const cond = ['eliminado_en IS NULL'];
   const params: (string | number)[] = [];
   if (filtros.busqueda) {
-    cond.push('(nombre LIKE ? OR documento LIKE ?)');
+    cond.push('(nombre ILIKE ? OR documento ILIKE ?)');
     const like = `%${filtros.busqueda}%`;
     params.push(like, like);
   }
