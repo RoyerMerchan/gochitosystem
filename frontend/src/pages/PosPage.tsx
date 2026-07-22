@@ -269,10 +269,10 @@ export default function PosPage() {
                         >
                           <Minus className="h-3 w-3" />
                         </button>
-                        <input
+                        <CantidadInput
                           value={i.cantidad}
-                          onChange={(e) => carrito.cambiarCantidad(i.productoId, Number(e.target.value) || 0)}
-                          className="w-14 rounded border border-gray-200 px-1 py-0.5 text-center text-sm dark:border-gray-600 dark:bg-gray-700"
+                          pesable={i.esPesable}
+                          onChange={(n) => carrito.cambiarCantidad(i.productoId, n)}
                         />
                         <button
                           onClick={() => carrito.cambiarCantidad(i.productoId, i.cantidad + 1)}
@@ -322,11 +322,15 @@ export default function PosPage() {
             <span className="font-medium">{carrito.clienteNombre}</span>
           </button>
 
-          {hayMayor && (
-            <button onClick={() => carrito.aplicarMayorTodo(!todoMayor)}
+          {items.length > 0 && (
+            <button
+              onClick={() => {
+                if (!hayMayor) { toast.info('Ningún producto del carrito tiene precio al mayor. Configúralo en Productos (campo "Precio al mayor").'); return; }
+                carrito.aplicarMayorTodo(!todoMayor);
+              }}
               className={`mb-3 flex w-full items-center justify-between rounded-lg border px-3 py-2 text-sm ${todoMayor ? 'border-amber-500 bg-amber-50 text-amber-700 dark:bg-amber-900/20' : 'border-gray-300 dark:border-gray-600'}`}>
               <span>Precios al mayor</span>
-              <span className="font-semibold">{todoMayor ? 'Activado' : 'Aplicar a todo'}</span>
+              <span className="font-semibold">{!hayMayor ? 'Sin configurar' : todoMayor ? 'Activado' : 'Aplicar a todo'}</span>
             </button>
           )}
           <div className="space-y-2 border-t border-gray-100 pt-3 text-sm dark:border-gray-700">
@@ -383,5 +387,42 @@ export default function PosPage() {
         onSeleccionar={(id, nombre) => carrito.fijarCliente(id, nombre)}
       />
     </div>
+  );
+}
+
+/**
+ * Input de cantidad que admite decimales (para productos por kg/litro). Acepta coma
+ * o punto. Mientras se edita mantiene el texto local; commitea solo valores > 0 para
+ * no borrar el renglón al escribir "0.".
+ */
+function CantidadInput({ value, pesable, onChange }: { value: number; pesable: boolean; onChange: (n: number) => void }) {
+  const [texto, setTexto] = useState(String(value));
+  const [editando, setEditando] = useState(false);
+
+  useEffect(() => {
+    if (!editando) setTexto(String(value));
+  }, [value, editando]);
+
+  return (
+    <input
+      inputMode="decimal"
+      value={editando ? texto : String(value)}
+      onFocus={(e) => { setEditando(true); setTexto(String(value)); e.currentTarget.select(); }}
+      onChange={(e) => {
+        const t = e.target.value.replace(',', '.');
+        // Pesable: admite decimales. No pesable: solo enteros.
+        const patron = pesable ? /^\d*\.?\d*$/ : /^\d*$/;
+        if (!patron.test(t)) return;
+        setTexto(t);
+        const n = Number(t);
+        if (n > 0) onChange(n);
+      }}
+      onBlur={() => {
+        setEditando(false);
+        const n = Number(texto.replace(',', '.'));
+        onChange(n > 0 ? n : value);
+      }}
+      className="w-16 rounded border border-gray-200 px-1 py-0.5 text-center text-sm dark:border-gray-600 dark:bg-gray-700"
+    />
   );
 }
