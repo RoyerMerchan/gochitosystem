@@ -1,8 +1,8 @@
 /** Historial de ventas con método de pago, filtros y anulación. */
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Receipt, Ban, Filter, X } from 'lucide-react';
-import { obtenerPaginado, crear } from '@/lib/axios';
+import { Receipt, Ban, Filter, X, Eye } from 'lucide-react';
+import { obtenerPaginado, obtener, crear } from '@/lib/axios';
 import { ErrorApi } from '@/lib/errores';
 import { Card, Cargando, Badge, EmptyState } from '@/components/ui/Feedback';
 import { Modal } from '@/components/ui/Modal';
@@ -17,12 +17,30 @@ interface VentaFila {
   utilidad_total: string; estado: string; es_credito: number; cliente: string; cajero: string;
   metodos_pago: string | null;
 }
+interface DetalleVenta {
+  venta: {
+    numero: string; fecha: string; cliente_nombre: string; cajero: string; estado: string;
+    total_usd: string; total_bs: string; tasa_cambio: string; impuesto_total: string;
+  };
+  renglones: Array<{
+    linea: number; descripcion: string; cantidad: string;
+    precio_venta_unitario: string; descuento_unitario: string; total_linea: string;
+  }>;
+  pagos: Array<{ metodo_nombre: string; moneda: string; monto_moneda: string; monto_usd: string }>;
+}
 
 export default function VentasPage() {
   const qc = useQueryClient();
   const puedeAnular = useAuthStore((s) => s.permisos.includes('ventas.anular'));
   const [anular, setAnular] = useState<VentaFila | null>(null);
   const [motivo, setMotivo] = useState('');
+  const [verId, setVerId] = useState<number | null>(null);
+
+  const detalle = useQuery({
+    queryKey: ['venta-detalle', verId],
+    queryFn: () => obtener<DetalleVenta>(`/ventas/${verId}`),
+    enabled: verId !== null,
+  });
   const [desde, setDesde] = useState('');
   const [hasta, setHasta] = useState('');
   const [metodoPagoId, setMetodoPagoId] = useState('');
@@ -115,11 +133,16 @@ export default function VentasPage() {
                         : <Badge color="verde">Pagada</Badge>}
                     </td>
                     <td className="p-3 text-right">
-                      {puedeAnular && v.estado !== 'ANULADA' && (
-                        <button onClick={() => { setAnular(v); setMotivo(''); }} className="text-gray-400 hover:text-red-500" title="Anular venta">
-                          <Ban className="h-4 w-4" />
+                      <div className="flex justify-end gap-2">
+                        <button onClick={() => setVerId(v.id)} className="text-gray-400 hover:text-amber-600" title="Ver detalle">
+                          <Eye className="h-4 w-4" />
                         </button>
-                      )}
+                        {puedeAnular && v.estado !== 'ANULADA' && (
+                          <button onClick={() => { setAnular(v); setMotivo(''); }} className="text-gray-400 hover:text-red-500" title="Anular venta">
+                            <Ban className="h-4 w-4" />
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -145,6 +168,58 @@ export default function VentasPage() {
         <input value={motivo} onChange={(e) => setMotivo(e.target.value)} autoFocus
           className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700"
           placeholder="Ej: error del cajero, cliente se arrepintió…" />
+      </Modal>
+
+      {/* Detalle de la venta: qué se vendió */}
+      <Modal abierto={verId !== null} onCerrar={() => setVerId(null)} titulo={`Detalle de venta ${detalle.data?.venta.numero ?? ''}`} ancho="lg">
+        {detalle.isLoading ? <Cargando /> : detalle.data && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+              <div><span className="text-gray-500">Fecha:</span> <span className="font-medium">{formatearFechaHora(detalle.data.venta.fecha)}</span></div>
+              <div><span className="text-gray-500">Cliente:</span> <span className="font-medium">{detalle.data.venta.cliente_nombre}</span></div>
+              <div><span className="text-gray-500">Cajero:</span> <span className="font-medium">{detalle.data.venta.cajero}</span></div>
+              <div><span className="text-gray-500">Estado:</span> <span className="font-medium">{detalle.data.venta.estado}</span></div>
+            </div>
+
+            <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 text-xs uppercase text-gray-500 dark:bg-gray-700/50">
+                  <tr>
+                    <th className="p-2 text-left">Producto</th><th className="p-2 text-right">Cant.</th>
+                    <th className="p-2 text-right">Precio</th><th className="p-2 text-right">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {detalle.data.renglones.map((r) => (
+                    <tr key={r.linea} className="border-t border-gray-100 dark:border-gray-700">
+                      <td className="p-2 font-medium">{r.descripcion}</td>
+                      <td className="p-2 text-right tabular-nums">{r.cantidad}</td>
+                      <td className="p-2 text-right tabular-nums">{formatearUSD(r.precio_venta_unitario)}</td>
+                      <td className="p-2 text-right tabular-nums font-medium">{formatearUSD(r.total_linea)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex flex-col gap-1 text-sm">
+              <div className="flex justify-between"><span className="text-gray-500">IVA incluido</span><span>{formatearUSD(detalle.data.venta.impuesto_total)}</span></div>
+              <div className="flex justify-between text-base font-bold"><span>TOTAL</span><span className="tabular-nums">{formatearUSD(detalle.data.venta.total_usd)} · {formatearBs(detalle.data.venta.total_bs)}</span></div>
+            </div>
+
+            {detalle.data.pagos.length > 0 && (
+              <div className="rounded-lg border border-gray-200 p-3 text-sm dark:border-gray-700">
+                <p className="mb-1 font-medium">Pagos</p>
+                {detalle.data.pagos.map((p, i) => (
+                  <div key={i} className="flex justify-between text-gray-600 dark:text-gray-300">
+                    <span>{p.metodo_nombre}</span>
+                    <span className="tabular-nums">{p.moneda === 'VES' ? formatearBs(p.monto_moneda) : formatearUSD(p.monto_moneda)} ({formatearUSD(p.monto_usd)})</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </Modal>
     </div>
   );

@@ -77,14 +77,8 @@ export default function PosPage() {
     obtener<Producto[]>(`/productos/buscar?q=${encodeURIComponent(terminoDebounced)}`)
       .then((r) => {
         if (!activo) return;
-        // Si es un unico resultado exacto (scanner), agregarlo directo.
-        if (r.length === 1 && r[0]!.sku.toLowerCase() === terminoDebounced.toLowerCase()) {
-          carrito.agregar(r[0]!);
-          setTermino('');
-          setResultados([]);
-        } else {
-          setResultados(r);
-        }
+        // Siempre mostrar la lista para que el usuario elija (no agregar solo).
+        setResultados(r);
       })
       .catch(() => activo && setResultados([]))
       .finally(() => activo && setBuscando(false));

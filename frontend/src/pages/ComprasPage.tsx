@@ -5,7 +5,7 @@
  */
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { PackagePlus, Plus, Trash2, Search } from 'lucide-react';
+import { PackagePlus, Plus, Trash2, Search, Eye } from 'lucide-react';
 import { obtenerPaginado, obtener, crear } from '@/lib/axios';
 import { ErrorApi } from '@/lib/errores';
 import { Card, Cargando, Badge, EmptyState } from '@/components/ui/Feedback';
@@ -18,6 +18,10 @@ import type { Producto } from '@/lib/tipos';
 
 interface EntradaFila { id: number; numero: string; fecha_recepcion: string; total_usd: string; estado: string; }
 interface Renglon { productoId: number; nombre: string; sku: string; cantidad: string; costoUnitario: string; }
+interface DetalleCompra {
+  compra: { proveedor: string; estado: string; total_usd: string; fecha_recepcion: string };
+  renglones: Array<{ linea: number; descripcion: string; cantidad: string; costo_unitario_neto: string; total_linea: string }>;
+}
 
 export default function ComprasPage() {
   const qc = useQueryClient();
@@ -28,10 +32,12 @@ export default function ComprasPage() {
 
   const [desde, setDesde] = useState('');
   const [hasta, setHasta] = useState('');
+  const [ver, setVer] = useState<EntradaFila | null>(null);
   const paramsE = new URLSearchParams({ limite: '100' });
   if (desde) paramsE.set('desde', desde);
   if (hasta) paramsE.set('hasta', hasta);
   const entradas = useQuery({ queryKey: ['compras', desde, hasta], queryFn: () => obtenerPaginado<EntradaFila>(`/compras?${paramsE.toString()}`) });
+  const detalle = useQuery({ queryKey: ['compra-detalle', ver?.id], queryFn: () => obtener<DetalleCompra>(`/compras/${ver!.id}`), enabled: ver !== null });
   const busq = useQuery({ queryKey: ['prodBuscar', q], queryFn: () => obtener<Producto[]>(`/productos/buscar?q=${encodeURIComponent(q)}`), enabled: q.length > 0 });
 
   const registrar = useMutation({
@@ -76,7 +82,7 @@ export default function ComprasPage() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-xs uppercase text-gray-500 dark:bg-gray-700/50"><tr>
               <th className="p-3 text-left">N.º</th><th className="p-3 text-left">Fecha</th>
-              <th className="p-3 text-right">Total USD</th><th className="p-3 text-center">Estado</th></tr></thead>
+              <th className="p-3 text-right">Total USD</th><th className="p-3 text-center">Estado</th><th className="p-3"></th></tr></thead>
             <tbody>
               {entradas.data!.datos.map((c) => (
                 <tr key={c.id} className="border-t border-gray-100 dark:border-gray-700">
@@ -84,6 +90,11 @@ export default function ComprasPage() {
                   <td className="p-3 text-gray-500">{formatearFecha(c.fecha_recepcion)}</td>
                   <td className="p-3 text-right tabular-nums">{formatearUSD(c.total_usd)}</td>
                   <td className="p-3 text-center">{c.estado === 'ANULADA' ? <Badge color="rojo">Anulada</Badge> : <Badge color="verde">Ingresada</Badge>}</td>
+                  <td className="p-3 text-right">
+                    <button onClick={() => setVer(c)} className="text-gray-400 hover:text-amber-600" title="Ver productos">
+                      <Eye className="h-4 w-4" />
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -125,6 +136,42 @@ export default function ComprasPage() {
             </tbody>
           </table>
         </div>
+      </Modal>
+
+      {/* Detalle de la entrada: qué productos se ingresaron */}
+      <Modal abierto={ver !== null} onCerrar={() => setVer(null)} titulo={`Entrada ${ver?.numero ?? ''}`} ancho="lg">
+        {detalle.isLoading ? <Cargando /> : detalle.data && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
+              <div><span className="text-gray-500">Fecha:</span> <span className="font-medium">{formatearFecha(detalle.data.compra.fecha_recepcion)}</span></div>
+              <div><span className="text-gray-500">Proveedor:</span> <span className="font-medium">{detalle.data.compra.proveedor}</span></div>
+              <div><span className="text-gray-500">Estado:</span> <span className="font-medium">{detalle.data.compra.estado}</span></div>
+            </div>
+            <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 text-xs uppercase text-gray-500 dark:bg-gray-700/50">
+                  <tr>
+                    <th className="p-2 text-left">Producto</th><th className="p-2 text-right">Cant.</th>
+                    <th className="p-2 text-right">Costo</th><th className="p-2 text-right">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {detalle.data.renglones.map((r) => (
+                    <tr key={r.linea} className="border-t border-gray-100 dark:border-gray-700">
+                      <td className="p-2 font-medium">{r.descripcion}</td>
+                      <td className="p-2 text-right tabular-nums">{r.cantidad}</td>
+                      <td className="p-2 text-right tabular-nums">{formatearUSD(r.costo_unitario_neto)}</td>
+                      <td className="p-2 text-right tabular-nums font-medium">{formatearUSD(r.total_linea)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex justify-between text-base font-bold">
+              <span>TOTAL</span><span className="tabular-nums">{formatearUSD(detalle.data.compra.total_usd)}</span>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );
