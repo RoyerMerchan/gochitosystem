@@ -1,0 +1,27 @@
+// =============================================================================
+// Esquema Prisma de GochitoSystem.
+//
+// La BD de PRODUCCIÓN es la fuente de verdad. Los modelos de abajo se GENERAN por
+// introspección con:
+//     npx prisma db pull
+// No los edites a mano: si divergen de la BD, `prisma migrate` podría intentar
+// "corregir" la base con ALTER/DROP destructivos.
+//
+// Flujo de onboarding seguro (se corre en el VPS, donde vive la BD):
+//   1. npx prisma db pull            -> llena los modelos desde la BD real
+//   2. npx prisma migrate diff ...   -> genera la migración baseline (estado actual)
+//   3. npx prisma migrate resolve --applied 0_init   -> marca la baseline como aplicada
+//   4. npx prisma generate           -> genera el cliente tipado
+// (Ver database/PRISMA.md para el runbook completo.)
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --- Los modelos se agregan aquí con `prisma db pull` ---

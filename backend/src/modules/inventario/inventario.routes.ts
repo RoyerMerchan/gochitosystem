@@ -107,7 +107,7 @@ router.post('/ajustes', requierePermiso('inventario.ajustar'), validar({ body: e
       else { numero = cons.ultimo_numero + 1; prefijo = cons.prefijo; await ejecutar(`UPDATE consecutivos SET ultimo_numero=? WHERE id=?`, [numero, cons.id], cx); }
 
       const ajusteId = await insertar(
-        `INSERT INTO ajustes_inventario (sucursal_id, usuario_id, motivo_id, prefijo, numero, anio, tipo, estado, observaciones)
+        `INSERT INTO ajustes_inventario (sucursal_id, usuario_id, motivo_ajuste_id, prefijo, numero, anio, tipo, estado, observaciones)
          VALUES (?, ?, ?, ?, ?, ?, 'CONTEO_FISICO', 'APLICADO', ?)`,
         [u.sucursalId, u.id, e.motivoId, prefijo, numero, anio, e.observaciones ?? null], cx,
       );
@@ -130,7 +130,7 @@ router.post('/ajustes', requierePermiso('inventario.ajustar'), validar({ body: e
         const absDif = positivo ? diferencia : -diferencia;
 
         await insertar(
-          `INSERT INTO ajuste_detalle (ajuste_id, linea, producto_id, descripcion, cantidad_sistema, cantidad_contada, diferencia, costo_unitario, valor_diferencia)
+          `INSERT INTO ajuste_detalle (ajuste_id, linea, producto_id, descripcion, cantidad_sistema, cantidad_fisica, cantidad_diferencia, costo_unitario, costo_total_diferencia)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [ajusteId, linea, r.productoId, prod.nombre, cantidadASql(sistema), cantidadASql(contada), cantidadASql(diferencia), unitarioASql(cpp), centavosASql(multiplicarPorCantidad(cpp, absDif))], cx,
         );

@@ -141,9 +141,9 @@ export async function registrarAbono(
       const saldoNuevo = saldoCred - aplicar;
 
       await insertar(
-        `INSERT INTO abono_aplicaciones (abono_id, credito_id, monto_usd, saldo_anterior_usd, saldo_posterior_usd)
-         VALUES (?, ?, ?, ?, ?)`,
-        [abonoId, cr.id, centavosASql(aplicar), centavosASql(saldoCred), centavosASql(saldoNuevo)], cx,
+        `INSERT INTO abono_aplicaciones (abono_id, credito_id, monto_aplicado_usd)
+         VALUES (?, ?, ?)`,
+        [abonoId, cr.id, centavosASql(aplicar)], cx,
       );
 
       const nuevoEstado = saldoNuevo <= 0n ? ESTADO_CREDITO.PAGADO : ESTADO_CREDITO.PARCIAL;
