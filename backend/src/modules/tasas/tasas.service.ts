@@ -135,29 +135,61 @@ export async function corregir(
 }
 
 /**
- * Obtiene la tasa BCV del día desde Cotizave (https://cotizave.com/api-bcv).
+ * Busca en un JSON (a cualquier profundidad) el valor de la tasa y una fecha, sin
+ * depender del nombre exacto de los campos. Así sirve para bcvapi.tech (`dolar`),
+ * Cotizave (`mid`) u otros proveedores sin cambiar código.
+ */
+const CLAVE_TASA = /^(mid|dolar|dollar|usd|promedio|tasa|rate|precio|price|valor)$/i;
+const CLAVE_FECHA = /(updated_at|fecha|date|timestamp|actualiz)/i;
+
+function extraerTasaYFecha(json: unknown): { tasa: string; actualizadoEn: string | null } | null {
+  let tasa: number | null = null;
+  let fecha: string | null = null;
+
+  const visitar = (valor: unknown, clave?: string): void => {
+    if (valor === null || valor === undefined) return;
+    if (typeof valor === 'number') {
+      if (tasa === null && clave && CLAVE_TASA.test(clave) && valor > 0 && valor < 1_000_000) tasa = valor;
+      return;
+    }
+    if (typeof valor === 'string') {
+      const n = Number(valor.replace(',', '.'));
+      if (tasa === null && clave && CLAVE_TASA.test(clave) && Number.isFinite(n) && n > 0 && n < 1_000_000) tasa = n;
+      if (fecha === null && clave && CLAVE_FECHA.test(clave) && /\d{4}-\d{2}/.test(valor)) fecha = valor;
+      return;
+    }
+    if (Array.isArray(valor)) { valor.forEach((v) => visitar(v)); return; }
+    if (typeof valor === 'object') {
+      for (const [k, v] of Object.entries(valor as Record<string, unknown>)) visitar(v, k);
+    }
+  };
+
+  visitar(json);
+  return tasa !== null ? { tasa: String(tasa), actualizadoEn: fecha } : null;
+}
+
+/**
+ * Obtiene la tasa BCV del día desde la API configurada (TASA_BCV_URL).
  * Devuelve el valor sin registrarlo: el usuario decide si lo guarda.
  */
 export async function obtenerTasaBcv(): Promise<{ tasa: string; actualizadoEn: string | null }> {
-  const apiKey = env.integraciones.cotizaveApiKey;
-  if (!apiKey) throw new ReglaNegocio('BCV_SIN_API_KEY');
+  const { tasaBcvUrl, tasaBcvApiKey, tasaBcvAuthHeader } = env.integraciones;
+  if (!tasaBcvApiKey) throw new ReglaNegocio('BCV_SIN_API_KEY');
+
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  headers[tasaBcvAuthHeader] = tasaBcvApiKey;
 
   let respuesta: Response;
   try {
-    respuesta = await fetch(env.integraciones.cotizaveUrl, {
-      headers: { 'X-API-Key': apiKey, Accept: 'application/json' },
-      signal: AbortSignal.timeout(8000),
-    });
+    respuesta = await fetch(tasaBcvUrl, { headers, signal: AbortSignal.timeout(8000) });
   } catch (causa) {
     throw new ReglaNegocio('BCV_NO_DISPONIBLE', { causa });
   }
   if (!respuesta.ok) throw new ReglaNegocio('BCV_NO_DISPONIBLE');
 
-  const datos = (await respuesta.json()) as { mid?: number; updated_at?: string };
-  if (typeof datos.mid !== 'number' || !(datos.mid > 0)) {
-    throw new ReglaNegocio('BCV_NO_DISPONIBLE');
-  }
-  return { tasa: String(datos.mid), actualizadoEn: datos.updated_at ?? null };
+  const encontrado = extraerTasaYFecha(await respuesta.json());
+  if (!encontrado) throw new ReglaNegocio('BCV_NO_DISPONIBLE');
+  return encontrado;
 }
 
 /** Historial de tasas paginado. */

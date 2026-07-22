@@ -126,7 +126,7 @@ export default function TasasPage() {
             className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-blue-500 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-50 dark:bg-blue-900/20 dark:text-blue-300"
           >
             <Download className="h-4 w-4" />
-            {trayendoBcv ? 'Consultando BCV…' : 'Traer tasa BCV (Cotizave)'}
+            {trayendoBcv ? 'Consultando BCV…' : 'Traer tasa BCV (oficial)'}
           </button>
           <p className="mt-1 text-xs text-gray-400">O escriba la tasa manual abajo. Usted elige cuál usar cada día.</p>
 

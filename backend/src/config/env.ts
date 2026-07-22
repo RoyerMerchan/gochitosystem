@@ -116,9 +116,15 @@ const esquemaEnv = z.object({
     .pipe(z.number().int().min(1))
     .default('50'),
 
-  // Integraciones externas
-  COTIZAVE_API_KEY: z.string().trim().optional(),
-  COTIZAVE_URL: z.string().trim().url().default('https://api.cotizave.com/v1/fx/rates/reference'),
+  // Integraciones externas — API de tasa BCV (configurable: Cotizave, bcvapi.tech, etc.)
+  TASA_BCV_URL: z.string().trim().url().default('https://api.cotizave.com/v1/fx/rates/reference'),
+  TASA_BCV_API_KEY: z.string().trim().optional(),
+  // Nombre del header donde va la API key. Cotizave usa 'X-API-Key'; bcvapi.tech usa 'Authorization'.
+  TASA_BCV_AUTH_HEADER: z.string().trim().min(1).default('X-API-Key'),
+
+  // Migraciones (se aplican al arrancar el backend)
+  EJECUTAR_MIGRACIONES: booleano.default('true'),
+  MIGRACIONES_DIR: z.string().trim().optional(),
 
   // Logs
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
@@ -203,8 +209,14 @@ export const env = {
   },
 
   integraciones: {
-    cotizaveApiKey: crudo.COTIZAVE_API_KEY ?? null,
-    cotizaveUrl: crudo.COTIZAVE_URL,
+    tasaBcvUrl: crudo.TASA_BCV_URL,
+    tasaBcvApiKey: crudo.TASA_BCV_API_KEY ?? null,
+    tasaBcvAuthHeader: crudo.TASA_BCV_AUTH_HEADER,
+  },
+
+  migraciones: {
+    ejecutar: crudo.EJECUTAR_MIGRACIONES,
+    dir: crudo.MIGRACIONES_DIR ?? null,
   },
 
   logs: {

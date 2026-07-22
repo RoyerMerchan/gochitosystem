@@ -359,7 +359,7 @@ async function calcularRenglones(
          JOIN impuestos i ON i.id = p.impuesto_id
          LEFT JOIN producto_stock ps ON ps.producto_id = p.id AND ps.sucursal_id = ?
         WHERE p.id = ? AND p.eliminado_en IS NULL
-        LIMIT 1 FOR UPDATE`,
+        LIMIT 1 FOR UPDATE OF p`,
       [sucursalId, r.productoId],
       cx,
     );

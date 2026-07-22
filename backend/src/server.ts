@@ -4,6 +4,7 @@
 import { crearApp } from './app';
 import { env } from './config/env';
 import { verificarConexion, cerrarPools } from './database/pool';
+import { ejecutarMigracionesPendientes } from './database/migrador';
 import { logger, describirError } from './utils/logger';
 
 async function main(): Promise<void> {
@@ -15,6 +16,15 @@ async function main(): Promise<void> {
   } catch (error) {
     logger.error('No se pudo conectar a la base de datos. El servidor no arranca.', describirError(error));
     process.exit(1);
+  }
+
+  // Migraciones automáticas al desplegar (aplica solo las pendientes).
+  if (env.migraciones.ejecutar) {
+    try {
+      await ejecutarMigracionesPendientes(env.migraciones.dir);
+    } catch (error) {
+      logger.error('El migrador lanzó un error; el servidor continúa', describirError(error));
+    }
   }
 
   const app = crearApp();

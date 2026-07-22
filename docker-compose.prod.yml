@@ -28,8 +28,17 @@ services:
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
       JWT_REFRESH_EXPIRES_IN: 30d
       BCRYPT_ROUNDS: "12"
+      # Tasa BCV (Cotizave por defecto). Solo la key es obligatoria; URL/header opcionales.
+      TASA_BCV_API_KEY: ${TASA_BCV_API_KEY:-}
+      TASA_BCV_URL: ${TASA_BCV_URL:-https://api.cotizave.com/v1/fx/rates/reference}
+      TASA_BCV_AUTH_HEADER: ${TASA_BCV_AUTH_HEADER:-X-API-Key}
+      # Migraciones automáticas al arrancar (aplica las pendientes de /app/migraciones).
+      EJECUTAR_MIGRACIONES: "true"
+      MIGRACIONES_DIR: /app/migraciones
     volumes:
       - gochito_uploads:/app/uploads
+      # Monta las migraciones del repo (solo lectura) para que el backend las aplique al arrancar.
+      - ./database/migraciones:/app/migraciones:ro
     networks:
       - interna
 
