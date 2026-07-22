@@ -11,6 +11,7 @@ import { cerrarSesion } from '@/lib/authApi';
 import { iniciales } from '@/lib/formato';
 import { cn } from '@/lib/cn';
 import { TasaBadge } from './TasaBadge';
+import { ToggleTema, BotonInstalarApp } from './NavbarAcciones';
 import { useScannerGlobal } from '@/features/pos/useScannerGlobal';
 
 interface ItemNav {
@@ -140,8 +141,10 @@ export function AppLayout({ children }: { children: ReactNode }) {
             <Menu className="h-5 w-5" />
           </button>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 sm:gap-3">
             <TasaBadge />
+            <ToggleTema />
+            <BotonInstalarApp />
             <Link to="/mi-cuenta" className="flex items-center gap-2 rounded-lg p-1 hover:bg-gray-100 dark:hover:bg-gray-700" title="Mi cuenta">
               <div className="flex h-8 w-8 items-center justify-center rounded-full bg-amber-500 text-xs font-semibold text-white">
                 {iniciales(usuario?.nombreCompleto)}

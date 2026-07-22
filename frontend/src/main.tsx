@@ -11,3 +11,12 @@ createRoot(contenedor).render(
     <App />
   </StrictMode>,
 );
+
+// Registra el service worker (habilita instalar como app). No cachea datos.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {
+      /* sin PWA: la app funciona igual */
+    });
+  });
+}
