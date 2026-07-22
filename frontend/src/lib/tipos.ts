@@ -82,6 +82,7 @@ export interface Producto {
   impuesto_tasa: string;
   precio_venta: string;
   precio_venta_bs?: string;
+  precio_venta_mayorista: string | null;
   costo_promedio: string;
   es_precio_incluye_impuesto: number;
   es_pesable: number;

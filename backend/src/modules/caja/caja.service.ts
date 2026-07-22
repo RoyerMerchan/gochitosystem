@@ -3,7 +3,7 @@
  * en Bs se cuentan y cuadran por separado, nunca se netea una moneda contra otra.
  */
 import { Conflicto, NoEncontrado, ReglaNegocio } from '../../errores/AppError';
-import { queryOne, ejecutar, insertar, withTransaction, type Ejecutor } from '../../database/pool';
+import { query, queryOne, ejecutar, insertar, withTransaction, type Ejecutor } from '../../database/pool';
 import { ESTADO_TURNO } from '../../config/constantes';
 import type { Id, DecimalSql } from '../../tipos/comunes';
 
@@ -49,6 +49,45 @@ export async function turnoActivoDeUsuario(
       ORDER BY t.id DESC LIMIT 1`,
     [usuarioId, sucursalId],
   );
+}
+
+export interface CajaConEstado {
+  caja_id: Id;
+  caja_nombre: string;
+  turno_id: Id | null;
+  usuario_apertura_id: Id | null;
+  abierto_por: string | null;
+  abierto_en: string | null;
+  base_inicial_usd: DecimalSql | null;
+  base_inicial_bs: DecimalSql | null;
+}
+
+/**
+ * Lista TODAS las cajas de la sucursal con su turno abierto (si lo hay) y quien lo
+ * abrio. Cualquier usuario ve el estado completo, sin importar quien abrio cada caja.
+ */
+export async function listarCajasConEstado(sucursalId: Id): Promise<CajaConEstado[]> {
+  return query<CajaConEstado>(
+    `SELECT c.id AS caja_id, c.nombre AS caja_nombre,
+            t.id AS turno_id, t.usuario_apertura_id, u.nombre_completo AS abierto_por,
+            t.abierto_en, t.base_inicial_usd, t.base_inicial_bs
+       FROM cajas c
+       LEFT JOIN turnos_caja t ON t.caja_id = c.id AND t.estado = 'ABIERTO'
+       LEFT JOIN usuarios u ON u.id = t.usuario_apertura_id
+      WHERE c.sucursal_id = ? AND c.eliminado_en IS NULL AND c.esta_activa = TRUE
+      ORDER BY c.id`,
+    [sucursalId],
+  );
+}
+
+/** Crea una caja nueva en la sucursal (para que varios usuarios operen cajas distintas). */
+export async function crearCaja(sucursalId: Id, nombre: string): Promise<{ id: number; nombre: string }> {
+  const codigo = `CJ-${Date.now().toString(36).toUpperCase()}`.slice(0, 20);
+  const id = await insertar(
+    `INSERT INTO cajas (sucursal_id, codigo, nombre) VALUES (?, ?, ?)`,
+    [sucursalId, codigo, nombre],
+  );
+  return { id, nombre };
 }
 
 /** Abre un turno. Falla si la caja ya tiene uno abierto. */

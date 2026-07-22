@@ -46,6 +46,27 @@ router.get('/activo', requierePermiso('caja.ver', 'pos.vender'), async (req, res
   }
 });
 
+/** Todas las cajas de la sucursal con su estado y quien las abrio (para cualquier usuario). */
+router.get('/cajas', requierePermiso('caja.ver', 'pos.vender'), async (req, res, next) => {
+  try {
+    enviarOk(res, await caja.listarCajasConEstado(usuarioActual(req).sucursalId));
+  } catch (e) {
+    next(e);
+  }
+});
+
+/** Crea una caja nueva (para operar varias cajas en paralelo). */
+router.post('/cajas', requierePermiso('caja.abrir'),
+  validar({ body: z.object({ nombre: z.string().trim().min(1, 'Indique el nombre').max(80) }) }),
+  async (req, res, next) => {
+    try {
+      const { nombre } = datosBody<{ nombre: string }>(req);
+      enviarCreado(res, await caja.crearCaja(usuarioActual(req).sucursalId, nombre));
+    } catch (e) {
+      next(e);
+    }
+  });
+
 router.post('/abrir', requierePermiso('caja.abrir'), validar({ body: esquemaAbrir }), async (req, res, next) => {
   try {
     const e = datosBody<z.infer<typeof esquemaAbrir>>(req);

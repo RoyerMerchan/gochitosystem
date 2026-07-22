@@ -11,6 +11,7 @@ import { cerrarSesion } from '@/lib/authApi';
 import { iniciales } from '@/lib/formato';
 import { cn } from '@/lib/cn';
 import { TasaBadge } from './TasaBadge';
+import { useScannerGlobal } from '@/features/pos/useScannerGlobal';
 
 interface ItemNav {
   a: string;
@@ -66,6 +67,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const usuario = useAuthStore((s) => s.usuario);
   const permisos = useAuthStore((s) => s.permisos);
   const navegar = useNavigate();
+  useScannerGlobal();
 
   const puede = (p?: string) => !p || permisos.includes(p);
 

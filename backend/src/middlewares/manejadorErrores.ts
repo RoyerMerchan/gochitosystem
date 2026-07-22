@@ -43,6 +43,29 @@ function traducirErrorPG(error: unknown): AppError | null {
   }
 }
 
+/**
+ * Extrae los campos de diagnostico de un error del driver (o Error normal) para
+ * exponer la causa real al cliente. Se usa SOLO en fallos no previstos (500), para
+ * que el operador vea "el porque" en pantalla y no un generico "error inesperado".
+ * Nota: puede incluir fragmentos de SQL; es intencional para depurar este POS.
+ */
+function diagnosticoError(err: unknown): Record<string, unknown> | undefined {
+  const e = err as {
+    message?: string; code?: string; detail?: string; constraint?: string;
+    table?: string; column?: string; hint?: string; where?: string;
+  } | null;
+  if (!e) return undefined;
+  const d: Record<string, unknown> = {};
+  if (typeof e.message === 'string' && e.message) d.causa = e.message;
+  if (typeof e.code === 'string' && e.code) d.sqlstate = e.code;
+  if (typeof e.detail === 'string' && e.detail) d.detalle = e.detail;
+  if (typeof e.constraint === 'string' && e.constraint) d.restriccion = e.constraint;
+  if (typeof e.table === 'string' && e.table) d.tabla = e.table;
+  if (typeof e.column === 'string' && e.column) d.columna = e.column;
+  if (typeof e.hint === 'string' && e.hint) d.pista = e.hint;
+  return Object.keys(d).length > 0 ? d : undefined;
+}
+
 /** 404 para cualquier ruta no registrada. Va antes del manejador de errores. */
 export const rutaNoEncontrada: RequestHandler = (_req, _res, next) => {
   next(new AppError('RUTA_NO_ENCONTRADA'));

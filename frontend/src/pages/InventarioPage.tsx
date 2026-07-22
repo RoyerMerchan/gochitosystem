@@ -1,9 +1,11 @@
-/** Inventario: existencias valorizadas en USD y verificación de reconciliación. */
+/** Inventario: existencias valorizadas en USD, reconciliación y ajuste manual. */
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Boxes, CheckCircle2, AlertTriangle, Search } from 'lucide-react';
-import { obtenerPaginado, obtener } from '@/lib/axios';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Boxes, CheckCircle2, AlertTriangle, Search, SlidersHorizontal } from 'lucide-react';
+import { obtenerPaginado, obtener, crear } from '@/lib/axios';
+import { ErrorApi } from '@/lib/errores';
 import { Card, Cargando, EmptyState } from '@/components/ui/Feedback';
+import { Modal } from '@/components/ui/Modal';
 import { toast } from '@/store/toastStore';
 import { useDebounce } from '@/hooks/useDebounce';
 import { formatearUSD, formatearCantidad } from '@/lib/formato';
@@ -12,15 +14,44 @@ interface Existencia {
   id: number; sku: string; nombre: string; categoria: string;
   cantidad: string; stock_minimo: string; costo_promedio: string; valor_usd: string;
 }
+interface Motivo { id: number; codigo: string; nombre: string; signo: number; }
 
 export default function InventarioPage() {
+  const qc = useQueryClient();
   const [busqueda, setBusqueda] = useState('');
   const [soloBajo, setSoloBajo] = useState(false);
+  const [ajustando, setAjustando] = useState<Existencia | null>(null);
+  const [nuevaCantidad, setNuevaCantidad] = useState('');
+  const [motivoId, setMotivoId] = useState(0);
+  const [observaciones, setObservaciones] = useState('');
   const q = useDebounce(busqueda, 300);
 
   const existencias = useQuery({
     queryKey: ['existencias', q, soloBajo],
     queryFn: () => obtenerPaginado<Existencia>(`/inventario/existencias?limite=200${q ? `&busqueda=${encodeURIComponent(q)}` : ''}${soloBajo ? '&stockBajo=true' : ''}`),
+  });
+  const motivos = useQuery({ queryKey: ['motivos-ajuste'], queryFn: () => obtener<Motivo[]>('/inventario/motivos') });
+
+  const abrirAjuste = (e: Existencia) => {
+    setAjustando(e);
+    setNuevaCantidad(e.cantidad);
+    setMotivoId(motivos.data?.find((m) => m.codigo === 'CORRECCION')?.id ?? motivos.data?.[0]?.id ?? 0);
+    setObservaciones('');
+  };
+
+  const ajustar = useMutation({
+    mutationFn: () => crear('/inventario/ajustes', {
+      motivoId,
+      observaciones: observaciones || undefined,
+      renglones: [{ productoId: ajustando!.id, cantidadContada: nuevaCantidad || '0' }],
+    }),
+    onSuccess: () => {
+      toast.exito('Inventario ajustado');
+      qc.invalidateQueries({ queryKey: ['existencias'] });
+      qc.invalidateQueries({ queryKey: ['productos'] });
+      setAjustando(null);
+    },
+    onError: (e) => toast.error(e instanceof ErrorApi ? e.message : 'No se pudo ajustar'),
   });
 
   const reconciliar = async () => {
@@ -67,7 +98,7 @@ export default function InventarioPage() {
                   <th className="p-3 text-left">SKU</th><th className="p-3 text-left">Producto</th>
                   <th className="p-3 text-left">Categoría</th><th className="p-3 text-right">Stock</th>
                   <th className="p-3 text-right">Mínimo</th><th className="p-3 text-right">Costo prom.</th>
-                  <th className="p-3 text-right">Valor USD</th>
+                  <th className="p-3 text-right">Valor USD</th><th className="p-3"></th>
                 </tr>
               </thead>
               <tbody>
@@ -85,6 +116,11 @@ export default function InventarioPage() {
                       <td className="p-3 text-right text-gray-400">{formatearCantidad(e.stock_minimo)}</td>
                       <td className="p-3 text-right tabular-nums text-gray-500">{formatearUSD(e.costo_promedio)}</td>
                       <td className="p-3 text-right tabular-nums font-medium">{formatearUSD(e.valor_usd)}</td>
+                      <td className="p-3 text-right">
+                        <button onClick={() => abrirAjuste(e)} className="text-gray-400 hover:text-amber-600" title="Ajustar existencia">
+                          <SlidersHorizontal className="h-4 w-4" />
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}
@@ -93,6 +129,41 @@ export default function InventarioPage() {
           </div>
         )}
       </Card>
+
+      <Modal abierto={Boolean(ajustando)} onCerrar={() => setAjustando(null)} titulo={`Ajustar existencia · ${ajustando?.nombre ?? ''}`}
+        pie={<div className="flex justify-end gap-2">
+          <button onClick={() => setAjustando(null)} className="rounded-lg border border-gray-300 px-4 py-2 text-sm dark:border-gray-600">Cancelar</button>
+          <button onClick={() => ajustar.mutate()} disabled={nuevaCantidad === '' || !motivoId || ajustar.isPending} className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600 disabled:opacity-50">Aplicar ajuste</button>
+        </div>}>
+        {ajustando && (() => {
+          const dif = Number(nuevaCantidad || 0) - Number(ajustando.cantidad);
+          return (
+            <div className="space-y-3">
+              <p className="text-sm text-gray-500">
+                Fija la cantidad real en existencia. Genera un movimiento de ajuste (no es una venta).
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className="mb-1 block text-xs font-medium text-gray-500">Stock actual (sistema)</label>
+                  <input value={formatearCantidad(ajustando.cantidad)} readOnly className={`${INP} bg-gray-50 dark:bg-gray-800`} /></div>
+                <div><label className="mb-1 block text-xs font-medium text-gray-500">Cantidad real *</label>
+                  <input type="number" step="0.001" value={nuevaCantidad} onChange={(ev) => setNuevaCantidad(ev.target.value)} autoFocus className={INP} /></div>
+              </div>
+              {dif !== 0 && (
+                <p className={`text-sm font-medium ${dif > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  Diferencia: {dif > 0 ? '+' : ''}{formatearCantidad(String(dif))} ({dif > 0 ? 'entra' : 'sale'} inventario)
+                </p>
+              )}
+              <div><label className="mb-1 block text-xs font-medium text-gray-500">Motivo *</label>
+                <select value={motivoId} onChange={(ev) => setMotivoId(Number(ev.target.value))} className={INP}>
+                  {(motivos.data ?? []).map((m) => <option key={m.id} value={m.id}>{m.nombre}</option>)}
+                </select></div>
+              <div><label className="mb-1 block text-xs font-medium text-gray-500">Observaciones</label>
+                <input value={observaciones} onChange={(ev) => setObservaciones(ev.target.value)} className={INP} placeholder="Opcional" /></div>
+            </div>
+          );
+        })()}
+      </Modal>
     </div>
   );
 }
+const INP = 'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700';

@@ -487,6 +487,18 @@ export const CODIGOS_ERROR = {
     mensaje: 'Ocurrio un error inesperado.',
     httpStatus: 500,
   },
+
+  // ---------------------------------------------------------------------------
+  // Integraciones (tasa BCV via Cotizave)
+  // ---------------------------------------------------------------------------
+  BCV_SIN_API_KEY: {
+    mensaje: 'No hay API key de Cotizave configurada. Defina COTIZAVE_API_KEY o use la tasa manual.',
+    httpStatus: 503,
+  },
+  BCV_NO_DISPONIBLE: {
+    mensaje: 'No se pudo obtener la tasa BCV desde Cotizave. Reintente o ingrese la tasa manual.',
+    httpStatus: 502,
+  },
 } as const satisfies Record<string, DefinicionError>;
 
 /** Union de todos los codigos de error validos del dominio. */

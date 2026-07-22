@@ -50,6 +50,9 @@ export default function PosPage() {
 
   const totalUsd = carrito.totalUsd();
   const items = carrito.items;
+  const conMayor = items.filter((i) => i.precioMayorista != null);
+  const hayMayor = conMayor.length > 0;
+  const todoMayor = hayMayor && conMayor.every((i) => i.esMayor);
 
   const impuestoTotal = useMemo(
     () =>
@@ -285,7 +288,18 @@ export default function PosPage() {
                         </button>
                       </div>
                     </td>
-                    <td className="p-3 text-right tabular-nums">{formatearUSD(i.precioUnitario)}</td>
+                    <td className="p-3 text-right tabular-nums">
+                      <div>{formatearUSD(i.precioUnitario)}</div>
+                      {i.precioMayorista != null && (
+                        <button
+                          onClick={() => carrito.alternarMayor(i.productoId)}
+                          className={`mt-1 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${i.esMayor ? 'bg-amber-500 text-white' : 'bg-gray-100 text-gray-500 hover:bg-amber-100 dark:bg-gray-700'}`}
+                          title={i.esMayor ? 'Cobrando al mayor · toca para volver a detal' : `Cobrar al mayor (${formatearUSD(i.precioMayorista)})`}
+                        >
+                          {i.esMayor ? 'Mayor' : 'Detal'}
+                        </button>
+                      )}
+                    </td>
                     <td className="p-3 text-right font-semibold tabular-nums">
                       {formatearUSD((i.precioUnitario - i.descuentoUnitario) * i.cantidad)}
                     </td>
@@ -313,6 +327,14 @@ export default function PosPage() {
             <span className="text-gray-500">Cliente (F3)</span>
             <span className="font-medium">{carrito.clienteNombre}</span>
           </button>
+
+          {hayMayor && (
+            <button onClick={() => carrito.aplicarMayorTodo(!todoMayor)}
+              className={`mb-3 flex w-full items-center justify-between rounded-lg border px-3 py-2 text-sm ${todoMayor ? 'border-amber-500 bg-amber-50 text-amber-700 dark:bg-amber-900/20' : 'border-gray-300 dark:border-gray-600'}`}>
+              <span>Precios al mayor</span>
+              <span className="font-semibold">{todoMayor ? 'Activado' : 'Aplicar a todo'}</span>
+            </button>
+          )}
           <div className="space-y-2 border-t border-gray-100 pt-3 text-sm dark:border-gray-700">
             <div className="flex justify-between text-gray-500">
               <span>Artículos</span>

@@ -23,6 +23,7 @@ const esquemaCorregir = z.object({
   tasa: z.union([z.string(), z.number()]).transform((v) => String(v))
     .refine((v) => /^\d+(\.\d+)?$/.test(v) && Number(v) > 0, 'La tasa debe ser un numero mayor que cero'),
   notas: z.string().trim().max(255).optional(),
+  fuente: z.nativeEnum(FUENTE_TASA).optional(),
 });
 
 router.use(autenticar);
@@ -31,6 +32,15 @@ router.use(autenticar);
 router.get('/vigente', async (_req, res, next) => {
   try {
     enviarOk(res, await servicio.obtenerVigente());
+  } catch (e) {
+    next(e);
+  }
+});
+
+/** Consulta la tasa BCV del dia en Cotizave (sin registrarla). */
+router.get('/bcv', requierePermiso('tasas.registrar', 'tasas.ver'), async (_req, res, next) => {
+  try {
+    enviarOk(res, await servicio.obtenerTasaBcv());
   } catch (e) {
     next(e);
   }
@@ -60,8 +70,8 @@ router.post('/:id/corregir', requierePermiso('tasas.corregir'),
   validar({ params: esquemaParamsId, body: esquemaCorregir }), async (req, res, next) => {
     try {
       const { id } = datosParams<{ id: number }>(req);
-      const { tasa, notas } = datosBody<z.infer<typeof esquemaCorregir>>(req);
-      enviarOk(res, await servicio.corregir(id, tasa, usuarioActual(req).id, notas));
+      const { tasa, notas, fuente } = datosBody<z.infer<typeof esquemaCorregir>>(req);
+      enviarOk(res, await servicio.corregir(id, tasa, usuarioActual(req).id, notas, fuente));
     } catch (e) {
       next(e);
     }

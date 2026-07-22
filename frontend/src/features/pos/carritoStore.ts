@@ -7,7 +7,10 @@ export interface ItemCarrito {
   productoId: number;
   sku: string;
   nombre: string;
-  precioUnitario: number; // USD
+  precioUnitario: number; // USD (el que se cobra; detal o mayor)
+  precioDetal: number; // USD precio normal
+  precioMayorista: number | null; // USD precio al mayor (si el producto lo tiene)
+  esMayor: boolean; // true si se esta cobrando al mayor
   costoUnitario: number; // USD (para referencia)
   impuestoTasa: number;
   cantidad: number;
@@ -25,6 +28,8 @@ interface EstadoCarrito {
   cambiarCantidad: (productoId: number, cantidad: number) => void;
   cambiarPrecio: (productoId: number, precio: number) => void;
   cambiarDescuento: (productoId: number, descuento: number) => void;
+  alternarMayor: (productoId: number) => void;
+  aplicarMayorTodo: (activar: boolean) => void;
   quitar: (productoId: number) => void;
   fijarCliente: (id: number | null, nombre: string) => void;
   limpiar: () => void;
@@ -50,16 +55,20 @@ export const useCarrito = create<EstadoCarrito>()(
               ),
             };
           }
+          const mayor = p.precio_venta_mayorista != null ? Number(p.precio_venta_mayorista) : null;
           const item: ItemCarrito = {
             productoId: p.id,
             sku: p.sku,
             nombre: p.nombre,
             precioUnitario: Number(p.precio_venta),
+            precioDetal: Number(p.precio_venta),
+            precioMayorista: mayor,
+            esMayor: false,
             costoUnitario: Number(p.costo_promedio),
             impuestoTasa: Number(p.impuesto_tasa),
             cantidad,
             descuentoUnitario: 0,
-            esPesable: p.es_pesable === 1,
+            esPesable: Boolean(p.es_pesable),
             stock: Number(p.cantidad),
           };
           return { items: [...s.items, item] };
@@ -75,7 +84,7 @@ export const useCarrito = create<EstadoCarrito>()(
       cambiarPrecio: (id, precio) =>
         set((s) => ({
           items: s.items.map((i) =>
-            i.productoId === id ? { ...i, precioUnitario: Math.max(0, precio) } : i,
+            i.productoId === id ? { ...i, precioUnitario: Math.max(0, precio), esMayor: false } : i,
           ),
         })),
 
@@ -83,6 +92,26 @@ export const useCarrito = create<EstadoCarrito>()(
         set((s) => ({
           items: s.items.map((i) =>
             i.productoId === id ? { ...i, descuentoUnitario: Math.max(0, descuento) } : i,
+          ),
+        })),
+
+      // Alterna un renglon entre precio detal y precio al mayor (si el producto lo tiene).
+      alternarMayor: (id) =>
+        set((s) => ({
+          items: s.items.map((i) => {
+            if (i.productoId !== id || i.precioMayorista == null) return i;
+            const esMayor = !i.esMayor;
+            return { ...i, esMayor, precioUnitario: esMayor ? i.precioMayorista : i.precioDetal };
+          }),
+        })),
+
+      // Aplica (o quita) el precio al mayor a todos los renglones que lo tengan.
+      aplicarMayorTodo: (activar) =>
+        set((s) => ({
+          items: s.items.map((i) =>
+            i.precioMayorista == null
+              ? i
+              : { ...i, esMayor: activar, precioUnitario: activar ? i.precioMayorista : i.precioDetal },
           ),
         })),
 

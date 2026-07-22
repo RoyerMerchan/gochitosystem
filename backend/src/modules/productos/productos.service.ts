@@ -19,6 +19,7 @@ export interface ProductoListado {
   impuesto_tasa: DecimalSql;
   precio_venta: DecimalSql;
   precio_venta_bs?: DecimalSql;
+  precio_venta_mayorista: DecimalSql | null;
   costo_promedio: DecimalSql;
   es_precio_incluye_impuesto: boolean;
   es_pesable: boolean;
@@ -56,7 +57,7 @@ function conEquivalenteBs<T extends { precio_venta: DecimalSql }>(
 const SELECT_BASE = `
   SELECT p.id, p.sku, p.nombre, p.categoria_id, c.nombre AS categoria_nombre,
          um.codigo AS unidad_codigo, p.impuesto_id, i.tasa AS impuesto_tasa,
-         p.precio_venta, p.costo_promedio, p.es_precio_incluye_impuesto,
+         p.precio_venta, p.precio_venta_mayorista, p.costo_promedio, p.es_precio_incluye_impuesto,
          p.es_pesable, p.es_favorito_pos, p.imagen_ruta,
          COALESCE(ps.cantidad, 0) AS cantidad, COALESCE(ps.stock_minimo, 0) AS stock_minimo,
          p.esta_activo
@@ -125,18 +126,18 @@ export async function buscarPos(
   );
   if (porCodigo.length > 0) return conEquivalenteBs(porCodigo, tasa);
 
-  // 2) SKU exacto.
+  // 2) SKU exacto (insensible a mayus/minus).
   const porSku = await query<ProductoListado>(
-    `${SELECT_BASE} WHERE p.sku = ? AND p.eliminado_en IS NULL AND p.esta_activo = TRUE LIMIT 1`,
+    `${SELECT_BASE} WHERE p.sku ILIKE ? AND p.eliminado_en IS NULL AND p.esta_activo = TRUE LIMIT 1`,
     [sucursalId, term],
   );
   if (porSku.length > 0) return conEquivalenteBs(porSku, tasa);
 
-  // 3) Coincidencia por nombre o SKU.
+  // 3) Coincidencia parcial por nombre o SKU (insensible a mayus/minus).
   const like = `%${term}%`;
   const porNombre = await query<ProductoListado>(
     `${SELECT_BASE}
-     WHERE (p.nombre LIKE ? OR p.sku LIKE ?) AND p.eliminado_en IS NULL AND p.esta_activo = TRUE
+     WHERE (p.nombre ILIKE ? OR p.sku ILIKE ?) AND p.eliminado_en IS NULL AND p.esta_activo = TRUE
      ORDER BY p.es_favorito_pos DESC, p.nombre
      LIMIT ?`,
     [sucursalId, like, like, limite],
@@ -175,6 +176,7 @@ export interface EntradaProducto {
   unidadMedidaId: Id;
   impuestoId: Id;
   precioVenta: string;
+  precioMayorista?: string | null;
   costoInicial?: string;
   stockMinimo?: string;
   esPrecioIncluyeImpuesto?: boolean;
@@ -191,11 +193,12 @@ export async function crear(e: EntradaProducto, sucursalId: number, usuarioId: I
       id = await insertar(
         `INSERT INTO productos
           (sku, nombre, descripcion, categoria_id, unidad_medida_id, impuesto_id, precio_venta,
-           costo_promedio, ultimo_costo, es_precio_incluye_impuesto, es_pesable, es_favorito_pos, creado_por)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           precio_venta_mayorista, costo_promedio, ultimo_costo, es_precio_incluye_impuesto,
+           es_pesable, es_favorito_pos, creado_por)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           e.sku, e.nombre, e.descripcion ?? null, e.categoriaId, e.unidadMedidaId, e.impuestoId,
-          e.precioVenta, e.costoInicial ?? '0', e.costoInicial ?? '0',
+          e.precioVenta, e.precioMayorista || null, e.costoInicial ?? '0', e.costoInicial ?? '0',
           e.esPrecioIncluyeImpuesto ?? false, e.esPesable ?? false, e.esFavoritoPos ?? false, usuarioId,
         ],
         cx,
@@ -240,11 +243,12 @@ export async function actualizar(id: Id, e: EntradaProducto, sucursalId: number)
   try {
     await ejecutar(
       `UPDATE productos SET sku=?, nombre=?, descripcion=?, categoria_id=?, unidad_medida_id=?,
-              impuesto_id=?, precio_venta=?, es_precio_incluye_impuesto=?, es_pesable=?, es_favorito_pos=?
+              impuesto_id=?, precio_venta=?, precio_venta_mayorista=?, es_precio_incluye_impuesto=?,
+              es_pesable=?, es_favorito_pos=?
         WHERE id=?`,
       [
         e.sku, e.nombre, e.descripcion ?? null, e.categoriaId, e.unidadMedidaId, e.impuestoId,
-        e.precioVenta, e.esPrecioIncluyeImpuesto ?? false, e.esPesable ?? false, e.esFavoritoPos ?? false, id,
+        e.precioVenta, e.precioMayorista || null, e.esPrecioIncluyeImpuesto ?? false, e.esPesable ?? false, e.esFavoritoPos ?? false, id,
       ],
     );
   } catch (err) {

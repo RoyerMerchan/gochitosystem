@@ -116,6 +116,10 @@ const esquemaEnv = z.object({
     .pipe(z.number().int().min(1))
     .default('50'),
 
+  // Integraciones externas
+  COTIZAVE_API_KEY: z.string().trim().optional(),
+  COTIZAVE_URL: z.string().trim().url().default('https://api.cotizave.com/v1/fx/rates/reference'),
+
   // Logs
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   LOG_DIR: z.string().trim().min(1).default('./logs'),
@@ -196,6 +200,11 @@ export const env = {
     ivaDefecto: crudo.NEGOCIO_IVA_DEFECTO,
     decimales: crudo.NEGOCIO_DECIMALES,
     redondeoMultiplo: crudo.NEGOCIO_REDONDEO,
+  },
+
+  integraciones: {
+    cotizaveApiKey: crudo.COTIZAVE_API_KEY ?? null,
+    cotizaveUrl: crudo.COTIZAVE_URL,
   },
 
   logs: {

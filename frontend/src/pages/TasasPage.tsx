@@ -1,7 +1,7 @@
 /** Tasa del día: ver la vigente, registrarla e historial. */
 import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { TrendingUp, Save } from 'lucide-react';
+import { TrendingUp, Save, Download } from 'lucide-react';
 import { obtener, crear, obtenerPaginado } from '@/lib/axios';
 import { ErrorApi } from '@/lib/errores';
 import { Card, Cargando } from '@/components/ui/Feedback';
@@ -23,6 +23,9 @@ export default function TasasPage() {
   const qc = useQueryClient();
   const establecerTasa = useTasaStore((s) => s.establecer);
   const [valor, setValor] = useState('');
+  const [fuente, setFuente] = useState<'MANUAL' | 'BCV'>('MANUAL');
+  const [bcvInfo, setBcvInfo] = useState<string | null>(null);
+  const [trayendoBcv, setTrayendoBcv] = useState(false);
 
   const vigente = useQuery({
     queryKey: ['tasa', 'vigente'],
@@ -39,11 +42,11 @@ export default function TasasPage() {
   }, [vigente.data, establecerTasa]);
 
   const registrar = useMutation({
-    mutationFn: (tasa: string) => crear<TasaCambio>('/tasas-cambio', { tasa }),
+    mutationFn: (p: { tasa: string; fuente: string }) => crear<TasaCambio>('/tasas-cambio', p),
     onSuccess: (t) => {
       toast.exito(`Tasa registrada: Bs ${formatearNumero(t.tasa, 2)} / $`);
       establecerTasa(t);
-      setValor('');
+      setValor(''); setBcvInfo(null);
       qc.invalidateQueries({ queryKey: ['tasa'] });
     },
     onError: (e) => toast.error(e instanceof ErrorApi ? e.message : 'No se pudo registrar la tasa'),
@@ -51,11 +54,11 @@ export default function TasasPage() {
 
   /** Corrige la tasa de hoy (crea una corrección y reemplaza la vigente). */
   const corregir = useMutation({
-    mutationFn: (tasa: string) => crear<TasaCambio>(`/tasas-cambio/${vigente.data!.id}/corregir`, { tasa }),
+    mutationFn: (p: { tasa: string; fuente: string }) => crear<TasaCambio>(`/tasas-cambio/${vigente.data!.id}/corregir`, p),
     onSuccess: (t) => {
       toast.exito(`Tasa actualizada: Bs ${formatearNumero(t.tasa, 2)} / $`);
       establecerTasa(t);
-      setValor('');
+      setValor(''); setBcvInfo(null);
       qc.invalidateQueries({ queryKey: ['tasa'] });
     },
     onError: (e) => toast.error(e instanceof ErrorApi ? e.message : 'No se pudo actualizar la tasa'),
@@ -63,9 +66,28 @@ export default function TasasPage() {
 
   const guardando = registrar.isPending || corregir.isPending;
   const guardar = () => {
-    if (vigente.data) corregir.mutate(valor);
-    else registrar.mutate(valor);
+    const p = { tasa: valor, fuente };
+    if (vigente.data) corregir.mutate(p);
+    else registrar.mutate(p);
   };
+
+  /** Trae la tasa BCV del día desde Cotizave y la deja lista para guardar. */
+  const traerBcv = async () => {
+    setTrayendoBcv(true);
+    try {
+      const r = await obtener<{ tasa: string; actualizadoEn: string | null }>('/tasas-cambio/bcv');
+      setValor(r.tasa);
+      setFuente('BCV');
+      setBcvInfo(r.actualizadoEn ? `Publicada por BCV el ${formatearFecha(r.actualizadoEn)}` : 'Tasa BCV obtenida');
+      toast.info(`BCV hoy: Bs ${formatearNumero(r.tasa, 2)} / $`);
+    } catch (e) {
+      toast.error(e instanceof ErrorApi ? e.message : 'No se pudo traer la tasa BCV');
+    } finally {
+      setTrayendoBcv(false);
+    }
+  };
+
+  const editarManual = (v: string) => { setValor(v); setFuente('MANUAL'); setBcvInfo(null); };
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -98,14 +120,24 @@ export default function TasasPage() {
           <p className="text-xs uppercase tracking-wide text-gray-500">
             {vigente.data ? 'Actualizar tasa de hoy' : 'Registrar tasa de hoy'}
           </p>
-          <div className="mt-2 flex items-end gap-2">
+          <button
+            onClick={traerBcv}
+            disabled={trayendoBcv}
+            className="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border border-blue-500 bg-blue-50 px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-50 dark:bg-blue-900/20 dark:text-blue-300"
+          >
+            <Download className="h-4 w-4" />
+            {trayendoBcv ? 'Consultando BCV…' : 'Traer tasa BCV (Cotizave)'}
+          </button>
+          <p className="mt-1 text-xs text-gray-400">O escriba la tasa manual abajo. Usted elige cuál usar cada día.</p>
+
+          <div className="mt-3 flex items-end gap-2">
             <div className="flex-1">
-              <label className="text-xs text-gray-400">Bs por 1 USD</label>
+              <label className="text-xs text-gray-400">Bs por 1 USD · fuente: <span className={fuente === 'BCV' ? 'font-semibold text-blue-600' : 'font-semibold text-amber-600'}>{fuente}</span></label>
               <input
                 type="number"
                 step="0.01"
                 value={valor}
-                onChange={(e) => setValor(e.target.value)}
+                onChange={(e) => editarManual(e.target.value)}
                 placeholder={vigente.data ? `Actual: ${formatearNumero(vigente.data.tasa, 2)}` : '36.50'}
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-lg tabular-nums focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-200 dark:border-gray-600 dark:bg-gray-700"
               />
@@ -119,6 +151,7 @@ export default function TasasPage() {
               {vigente.data ? 'Actualizar' : 'Guardar'}
             </button>
           </div>
+          {bcvInfo && <p className="mt-1 text-xs text-blue-500">{bcvInfo}</p>}
         </Card>
       </div>
 
@@ -143,7 +176,7 @@ export default function TasasPage() {
                 <tr key={t.id} className="border-t border-gray-100 dark:border-gray-700">
                   <td className="p-3">{formatearFecha(t.fecha)}</td>
                   <td className="p-3 text-right font-medium tabular-nums">{formatearNumero(t.tasa, 2)}</td>
-                  <td className="p-3">{t.fuente}{t.es_correccion === 1 ? ' (corrección)' : ''}</td>
+                  <td className="p-3">{t.fuente}{t.es_correccion ? ' (corrección)' : ''}</td>
                   <td className="p-3 text-gray-500">{t.usuario_nombre}</td>
                 </tr>
               ))}

@@ -17,6 +17,7 @@ import {
   type Ejecutor,
 } from '../../database/pool';
 import { FUENTE_TASA, type FuenteTasa } from '../../config/constantes';
+import { env } from '../../config/env';
 import { aTasaCambio } from '../../utils/moneda';
 import type { Id, DecimalSql } from '../../tipos/comunes';
 
@@ -107,6 +108,7 @@ export async function corregir(
   nuevaTasa: string,
   usuarioId: Id,
   notas?: string,
+  fuente: FuenteTasa = FUENTE_TASA.MANUAL,
 ): Promise<TasaVigente> {
   if (aTasaCambio(nuevaTasa) <= 0n) throw new ReglaNegocio('TASA_INVALIDA');
 
@@ -124,12 +126,38 @@ export async function corregir(
     const id = await insertar(
       `INSERT INTO tasas_cambio (fecha, tasa, fuente, es_correccion, corrige_tasa_id, usuario_id, notas)
        VALUES (?, ?, ?, TRUE, ?, ?, ?)`,
-      [anterior.fecha, nuevaTasa, FUENTE_TASA.MANUAL, tasaId, usuarioId, notas ?? null],
+      [anterior.fecha, nuevaTasa, fuente, tasaId, usuarioId, notas ?? null],
       cx,
     );
 
     return { id, fecha: anterior.fecha, tasa: nuevaTasa };
   });
+}
+
+/**
+ * Obtiene la tasa BCV del día desde Cotizave (https://cotizave.com/api-bcv).
+ * Devuelve el valor sin registrarlo: el usuario decide si lo guarda.
+ */
+export async function obtenerTasaBcv(): Promise<{ tasa: string; actualizadoEn: string | null }> {
+  const apiKey = env.integraciones.cotizaveApiKey;
+  if (!apiKey) throw new ReglaNegocio('BCV_SIN_API_KEY');
+
+  let respuesta: Response;
+  try {
+    respuesta = await fetch(env.integraciones.cotizaveUrl, {
+      headers: { 'X-API-Key': apiKey, Accept: 'application/json' },
+      signal: AbortSignal.timeout(8000),
+    });
+  } catch (causa) {
+    throw new ReglaNegocio('BCV_NO_DISPONIBLE', { causa });
+  }
+  if (!respuesta.ok) throw new ReglaNegocio('BCV_NO_DISPONIBLE');
+
+  const datos = (await respuesta.json()) as { mid?: number; updated_at?: string };
+  if (typeof datos.mid !== 'number' || !(datos.mid > 0)) {
+    throw new ReglaNegocio('BCV_NO_DISPONIBLE');
+  }
+  return { tasa: String(datos.mid), actualizadoEn: datos.updated_at ?? null };
 }
 
 /** Historial de tasas paginado. */

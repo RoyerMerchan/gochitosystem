@@ -74,6 +74,13 @@ router.get('/kardex/:id', requierePermiso('inventario.ver'), validar({ params: e
   } catch (e) { next(e); }
 });
 
+/** Motivos de ajuste activos (para el selector de la pantalla de existencias). */
+router.get('/motivos', requierePermiso('inventario.ajustar', 'inventario.ver'), async (_req, res, next) => {
+  try {
+    enviarOk(res, await query(`SELECT id, codigo, nombre, signo FROM motivos_ajuste WHERE esta_activo = TRUE ORDER BY id`));
+  } catch (e) { next(e); }
+});
+
 /** Ajuste de inventario: fija la cantidad contada y genera el movimiento. */
 const esquemaAjuste = z.object({
   motivoId: z.coerce.number().int().positive(),

@@ -19,6 +19,11 @@ const esquemaProducto = z.object({
   unidadMedidaId: z.coerce.number().int().positive(),
   impuestoId: z.coerce.number().int().positive(),
   precioVenta: decimal,
+  precioMayorista: z.union([z.string(), z.number()]).transform(String)
+    .refine((v) => v === '' || /^\d+(\.\d+)?$/.test(v), 'Numero invalido')
+    .transform((v) => (v === '' ? null : v))
+    .nullable()
+    .optional(),
   costoInicial: decimal.optional(),
   stockMinimo: decimal.optional(),
   esPrecioIncluyeImpuesto: z.coerce.boolean().optional(),

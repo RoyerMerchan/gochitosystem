@@ -18,7 +18,7 @@ interface Imp { id: number; nombre: string; tasa: string; }
 
 const VACIO = {
   sku: '', nombre: '', descripcion: '', categoriaId: 0, unidadMedidaId: 0, impuestoId: 0,
-  precioVenta: '', costoInicial: '0', stockMinimo: '0', esPesable: false, esFavoritoPos: true, codigoBarras: '',
+  precioVenta: '', precioMayorista: '', costoInicial: '0', stockMinimo: '0', esPesable: false, esFavoritoPos: true, codigoBarras: '',
 };
 
 export default function ProductosPage() {
@@ -58,7 +58,7 @@ export default function ProductosPage() {
   };
   const abrirEditar = (p: Producto) => {
     setEditando(p.id);
-    setForm({ sku: p.sku, nombre: p.nombre, descripcion: '', categoriaId: p.categoria_id, unidadMedidaId: 0, impuestoId: p.impuesto_id, precioVenta: p.precio_venta, costoInicial: p.costo_promedio, stockMinimo: p.stock_minimo, esPesable: p.es_pesable === 1, esFavoritoPos: p.es_favorito_pos === 1, codigoBarras: '' });
+    setForm({ sku: p.sku, nombre: p.nombre, descripcion: '', categoriaId: p.categoria_id, unidadMedidaId: 0, impuestoId: p.impuesto_id, precioVenta: p.precio_venta, precioMayorista: p.precio_venta_mayorista ?? '', costoInicial: p.costo_promedio, stockMinimo: p.stock_minimo, esPesable: Boolean(p.es_pesable), esFavoritoPos: Boolean(p.es_favorito_pos), codigoBarras: '' });
     // La unidad no viene en el listado; se deja la primera si no se sabe.
     setForm((f) => ({ ...f, unidadMedidaId: unis.data?.[0]?.id ?? 0 }));
     setModal(true);
@@ -132,6 +132,7 @@ export default function ProductosPage() {
           <Campo label="Unidad"><select value={form.unidadMedidaId} onChange={(e) => setForm({ ...form, unidadMedidaId: Number(e.target.value) })} className={INP}>{(unis.data ?? []).map((u) => <option key={u.id} value={u.id}>{u.nombre}</option>)}</select></Campo>
           <Campo label="Impuesto"><select value={form.impuestoId} onChange={(e) => setForm({ ...form, impuestoId: Number(e.target.value) })} className={INP}>{(imps.data ?? []).map((i) => <option key={i.id} value={i.id}>{i.nombre}</option>)}</select></Campo>
           <Campo label="Precio de venta (USD) *"><input type="number" step="0.01" value={form.precioVenta} onChange={(e) => setForm({ ...form, precioVenta: e.target.value })} className={INP} /></Campo>
+          <Campo label="Precio al mayor (USD) — opcional"><input type="number" step="0.01" value={form.precioMayorista} onChange={(e) => setForm({ ...form, precioMayorista: e.target.value })} className={INP} placeholder="Sin precio al mayor" /></Campo>
           {!editando && <Campo label="Costo inicial (USD)"><input type="number" step="0.0001" value={form.costoInicial} onChange={(e) => setForm({ ...form, costoInicial: e.target.value })} className={INP} /></Campo>}
           <label className="col-span-2 flex items-center gap-4 text-sm">
             <span className="flex items-center gap-2"><input type="checkbox" checked={form.esFavoritoPos} onChange={(e) => setForm({ ...form, esFavoritoPos: e.target.checked })} /> Favorito en POS</span>
