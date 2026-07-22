@@ -271,11 +271,11 @@ export default function PosPage() {
                         </button>
                         <CantidadInput
                           value={i.cantidad}
-                          pesable={i.esPesable}
+                          max={i.stock > 0 ? i.stock : Infinity}
                           onChange={(n) => carrito.cambiarCantidad(i.productoId, n)}
                         />
                         <button
-                          onClick={() => carrito.cambiarCantidad(i.productoId, i.cantidad + 1)}
+                          onClick={() => carrito.cambiarCantidad(i.productoId, i.stock > 0 ? Math.min(i.cantidad + 1, i.stock) : i.cantidad + 1)}
                           className="rounded bg-gray-100 p-1 hover:bg-gray-200 dark:bg-gray-700"
                         >
                           <Plus className="h-3 w-3" />
@@ -391,36 +391,43 @@ export default function PosPage() {
 }
 
 /**
- * Input de cantidad que admite decimales (para productos por kg/litro). Acepta coma
- * o punto. Mientras se edita mantiene el texto local; commitea solo valores > 0 para
- * no borrar el renglón al escribir "0.".
+ * Input de cantidad del carrito. Admite decimales (coma o punto) para productos por
+ * kg/litro, y limita a la existencia disponible (`max`). Mientras se edita mantiene el
+ * texto local y commitea solo valores > 0 para no borrar el renglón al escribir "0.".
  */
-function CantidadInput({ value, pesable, onChange }: { value: number; pesable: boolean; onChange: (n: number) => void }) {
+function CantidadInput({ value, max, onChange }: { value: number; max: number; onChange: (n: number) => void }) {
   const [texto, setTexto] = useState(String(value));
   const [editando, setEditando] = useState(false);
+  const avisado = useRef(false);
 
   useEffect(() => {
     if (!editando) setTexto(String(value));
   }, [value, editando]);
 
+  const avisarTope = () => {
+    if (!avisado.current && Number.isFinite(max)) {
+      toast.info(`Solo hay ${formatearCantidad(String(max))} en existencia`);
+      avisado.current = true;
+    }
+  };
+
   return (
     <input
       inputMode="decimal"
       value={editando ? texto : String(value)}
-      onFocus={(e) => { setEditando(true); setTexto(String(value)); e.currentTarget.select(); }}
+      onFocus={(e) => { setEditando(true); setTexto(String(value)); avisado.current = false; e.currentTarget.select(); }}
       onChange={(e) => {
         const t = e.target.value.replace(',', '.');
-        // Pesable: admite decimales. No pesable: solo enteros.
-        const patron = pesable ? /^\d*\.?\d*$/ : /^\d*$/;
-        if (!patron.test(t)) return;
-        setTexto(t);
+        if (!/^\d*\.?\d*$/.test(t)) return; // dígitos y un solo punto decimal
         const n = Number(t);
+        if (n > max) { setTexto(String(max)); onChange(max); avisarTope(); return; }
+        setTexto(t);
         if (n > 0) onChange(n);
       }}
       onBlur={() => {
         setEditando(false);
         const n = Number(texto.replace(',', '.'));
-        onChange(n > 0 ? n : value);
+        onChange(n > 0 ? Math.min(n, max) : value);
       }}
       className="w-16 rounded border border-gray-200 px-1 py-0.5 text-center text-sm dark:border-gray-600 dark:bg-gray-700"
     />
