@@ -22,11 +22,22 @@ function componerMensaje(
   codigo: string,
   estadoHttp: number,
   requestId: string | null,
+  detalles?: unknown,
 ): string {
   const esTecnico = estadoHttp >= 500 || CODIGOS_TECNICOS.has(codigo);
   if (!esTecnico) return mensaje;
   const ref = requestId ? ` · ref: ${requestId.slice(0, 8)}` : '';
-  return `${mensaje} (${codigo}${ref})`;
+  // El backend adjunta la causa real de la BD en detalles (causa/sqlstate) para depurar.
+  let causa = '';
+  if (detalles && typeof detalles === 'object') {
+    const d = detalles as { causa?: unknown; sqlstate?: unknown; restriccion?: unknown };
+    if (typeof d.causa === 'string' && d.causa) {
+      const sqlstate = typeof d.sqlstate === 'string' ? ` [${d.sqlstate}]` : '';
+      const rest = typeof d.restriccion === 'string' ? ` {${d.restriccion}}` : '';
+      causa = ` — ${d.causa}${sqlstate}${rest}`;
+    }
+  }
+  return `${mensaje} (${codigo}${ref})${causa}`;
 }
 
 export class ErrorApi extends Error {
@@ -46,7 +57,7 @@ export class ErrorApi extends Error {
   }) {
     const estadoHttp = params.estadoHttp ?? 0;
     const requestId = params.requestId ?? null;
-    super(componerMensaje(params.mensaje, params.codigo, estadoHttp, requestId));
+    super(componerMensaje(params.mensaje, params.codigo, estadoHttp, requestId, params.detalles));
     this.name = 'ErrorApi';
     this.mensajeBase = params.mensaje;
     this.codigo = params.codigo;

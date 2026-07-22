@@ -84,7 +84,7 @@ export const manejadorErrores: ErrorRequestHandler = (err, req, res, _next) => {
   if (esAppError(err)) {
     appError = err;
   } else {
-    appError = traducirErrorPG(err) ?? new ErrorInterno({ causa: err });
+    appError = traducirErrorPG(err) ?? new ErrorInterno({ causa: err, detalles: diagnosticoError(err) });
   }
 
   // Log: los 5xx y los fallos no operacionales van como error; el resto como warn.
