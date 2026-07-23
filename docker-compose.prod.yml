@@ -5,8 +5,6 @@ services:
       dockerfile: Dockerfile
     container_name: gochito_backend
     restart: unless-stopped
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     ports:
       - "4555:4000"
     environment:
@@ -15,13 +13,19 @@ services:
       API_PORT: "4000"
       API_PREFIX: /api/v1
       CORS_ORIGINS: ${APP_URL:-http://localhost}
-      DB_HOST: host.docker.internal
-      DB_PORT: "5432"
-      DB_NAME: ${DB_NAME}
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
+      # Base de datos EXTERNA (proveedor gestionado). Usa DATABASE_URL con la
+      # cadena de conexion completa, o las DB_* discretas. DATABASE_URL manda.
+      DATABASE_URL: ${DATABASE_URL:-}
+      DB_HOST: ${DB_HOST:-}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_NAME: ${DB_NAME:-}
+      DB_USER: ${DB_USER:-}
+      DB_PASSWORD: ${DB_PASSWORD:-}
       DB_TIMEZONE: "-04:00"
       DB_CONNECTION_LIMIT: "10"
+      # SSL: los proveedores externos casi siempre lo exigen.
+      DB_SSL: ${DB_SSL:-true}
+      DB_SSL_REJECT_UNAUTHORIZED: ${DB_SSL_REJECT_UNAUTHORIZED:-false}
       TZ: America/Caracas
       JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRES_IN: 1d

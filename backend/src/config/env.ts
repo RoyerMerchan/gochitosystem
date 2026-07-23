@@ -46,6 +46,14 @@ const booleano = z
   .toLowerCase()
   .transform((v) => v === '1' || v === 'true' || v === 'si');
 
+/**
+ * Docker inyecta variables vacias ("") cuando no estan definidas en el .env.
+ * Para los campos opcionales tratamos "" como ausente, para que un DB_HOST vacio
+ * (cuando se usa DATABASE_URL) no dispare el error de "min(1)".
+ */
+const vacioComoUndef = (v: unknown) =>
+  typeof v === 'string' && v.trim() === '' ? undefined : v;
+
 const esquemaEnv = z.object({
   // Entorno
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -63,16 +71,28 @@ const esquemaEnv = z.object({
     .default('/api/v1'),
   CORS_ORIGINS: z.string().trim().min(1),
 
-  // Base de datos
-  DB_HOST: z.string().trim().min(1),
-  DB_PORT: entero('DB_PORT').pipe(z.number().int().min(1).max(65535)),
-  DB_NAME: z.string().trim().min(1),
-  DB_USER: z.string().trim().min(1),
-  DB_PASSWORD: z.string().min(1, 'DB_PASSWORD no puede estar vacia'),
+  // Base de datos.
+  // Se acepta una cadena de conexion completa (DATABASE_URL) de un proveedor
+  // externo/gestionado, o las variables discretas DB_*. Si DATABASE_URL esta
+  // presente, tiene prioridad sobre las discretas.
+  DATABASE_URL: z.preprocess(vacioComoUndef, z.string().trim().url().optional()),
+  DB_HOST: z.preprocess(vacioComoUndef, z.string().trim().min(1).optional()),
+  DB_PORT: z.preprocess(
+    vacioComoUndef,
+    entero('DB_PORT').pipe(z.number().int().min(1).max(65535)).default('5432'),
+  ),
+  DB_NAME: z.preprocess(vacioComoUndef, z.string().trim().min(1).optional()),
+  DB_USER: z.preprocess(vacioComoUndef, z.string().trim().min(1).optional()),
+  DB_PASSWORD: z.preprocess(vacioComoUndef, z.string().min(1).optional()),
   DB_CONNECTION_LIMIT: entero('DB_CONNECTION_LIMIT')
     .pipe(z.number().int().min(1).max(200))
     .default('10'),
   DB_TIMEZONE: z.string().trim().min(1).default('-04:00'),
+  // SSL para bases gestionadas (Neon, Supabase, RDS, Railway...). Off en local.
+  DB_SSL: booleano.default('false'),
+  // Muchos proveedores usan certificados que no validan contra una CA publica;
+  // por eso el rechazo de certificados no verificados va desactivado por defecto.
+  DB_SSL_REJECT_UNAUTHORIZED: booleano.default('false'),
 
   // Seguridad / autenticacion
   JWT_SECRET: z.string().min(32, 'JWT_SECRET debe tener al menos 32 caracteres'),
@@ -135,6 +155,25 @@ const esquemaEnv = z.object({
   BACKUP_RETENTION_DAYS: entero('BACKUP_RETENTION_DAYS')
     .pipe(z.number().int().min(1))
     .default('7'),
+}).superRefine((val, ctx) => {
+  // Sin DATABASE_URL, las variables discretas son obligatorias.
+  if (!val.DATABASE_URL) {
+    const requeridas: Array<'DB_HOST' | 'DB_NAME' | 'DB_USER' | 'DB_PASSWORD'> = [
+      'DB_HOST',
+      'DB_NAME',
+      'DB_USER',
+      'DB_PASSWORD',
+    ];
+    for (const campo of requeridas) {
+      if (!val[campo]) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [campo],
+          message: `Falta ${campo} (o define DATABASE_URL con la cadena de conexion completa)`,
+        });
+      }
+    }
+  }
 });
 
 const resultado = esquemaEnv.safeParse(process.env);
@@ -173,13 +212,17 @@ export const env = {
   },
 
   db: {
-    host: crudo.DB_HOST,
+    // Cadena de conexion completa (proveedor externo). Si existe, manda.
+    url: crudo.DATABASE_URL ?? null,
+    host: crudo.DB_HOST ?? null,
     puerto: crudo.DB_PORT,
-    nombre: crudo.DB_NAME,
-    usuario: crudo.DB_USER,
-    password: crudo.DB_PASSWORD,
+    nombre: crudo.DB_NAME ?? null,
+    usuario: crudo.DB_USER ?? null,
+    password: crudo.DB_PASSWORD ?? null,
     limiteConexiones: crudo.DB_CONNECTION_LIMIT,
     zonaHoraria: crudo.DB_TIMEZONE,
+    ssl: crudo.DB_SSL,
+    sslRechazarNoAutorizado: crudo.DB_SSL_REJECT_UNAUTHORIZED,
   },
 
   seguridad: {

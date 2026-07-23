@@ -10,12 +10,32 @@ import { logger, describirError } from '../utils/logger';
 const ERROR_SERIALIZATION = '40001';
 const ERROR_LOCK_TIMEOUT = '55P03';
 
+/**
+ * SSL para bases gestionadas externas. Muchos proveedores usan certificados que
+ * no validan contra una CA publica, de ahi que `rejectUnauthorized` sea
+ * configurable (por defecto off). En local, sin DB_SSL, no se usa SSL.
+ */
+const ssl: pg.PoolConfig['ssl'] = env.db.ssl
+  ? { rejectUnauthorized: env.db.sslRechazarNoAutorizado }
+  : undefined;
+
+/**
+ * Config base compartida por todos los pools: si hay DATABASE_URL (proveedor
+ * externo) se usa la cadena de conexion; si no, las variables discretas DB_*.
+ */
+const conexionBase: pg.PoolConfig = env.db.url
+  ? { connectionString: env.db.url, ssl }
+  : {
+      host: env.db.host ?? undefined,
+      port: env.db.puerto,
+      user: env.db.usuario ?? undefined,
+      password: env.db.password ?? undefined,
+      database: env.db.nombre ?? undefined,
+      ssl,
+    };
+
 const poolPrincipal: Pool = new pg.Pool({
-  host: env.db.host,
-  port: env.db.puerto,
-  user: env.db.usuario,
-  password: env.db.password,
-  database: env.db.nombre,
+  ...conexionBase,
   max: env.db.limiteConexiones,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
@@ -23,11 +43,7 @@ const poolPrincipal: Pool = new pg.Pool({
 });
 
 const poolReportes: Pool = new pg.Pool({
-  host: env.db.host,
-  port: env.db.puerto,
-  user: env.db.usuario,
-  password: env.db.password,
-  database: env.db.nombre,
+  ...conexionBase,
   max: Math.max(2, Math.floor(env.db.limiteConexiones / 2)),
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
