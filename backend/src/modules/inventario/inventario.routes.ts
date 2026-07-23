@@ -104,7 +104,7 @@ router.post('/ajustes', requierePermiso('inventario.ajustar'), validar({ body: e
       );
       let numero: number; let prefijo: string;
       if (!cons) { await insertar(`INSERT INTO consecutivos (sucursal_id, tipo_documento, anio, prefijo, ultimo_numero) VALUES (?,?,?,'AJ-',1)`, [u.sucursalId, TIPO_DOCUMENTO.AJUSTE, anio], cx); numero = 1; prefijo = 'AJ-'; }
-      else { numero = cons.ultimo_numero + 1; prefijo = cons.prefijo; await ejecutar(`UPDATE consecutivos SET ultimo_numero=? WHERE id=?`, [numero, cons.id], cx); }
+      else { numero = Number(cons.ultimo_numero) + 1; prefijo = cons.prefijo; await ejecutar(`UPDATE consecutivos SET ultimo_numero=? WHERE id=?`, [numero, cons.id], cx); }
 
       const ajusteId = await insertar(
         `INSERT INTO ajustes_inventario (sucursal_id, usuario_id, motivo_ajuste_id, prefijo, numero, anio, tipo, estado, observaciones)

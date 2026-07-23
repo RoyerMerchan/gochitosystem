@@ -200,7 +200,8 @@ async function siguienteConsecutivo(
     await insertar(`INSERT INTO consecutivos (sucursal_id, tipo_documento, anio, prefijo, ultimo_numero) VALUES (?, ?, ?, 'A-', 1)`, [sucursalId, tipo, anio], cx);
     return { numero: 1, prefijo: 'A-' };
   }
-  const nuevo = fila.ultimo_numero + 1;
+  // pg devuelve BIGINT como string: sin Number(), "1" + 1 concatenaria ("11").
+  const nuevo = Number(fila.ultimo_numero) + 1;
   await ejecutar(`UPDATE consecutivos SET ultimo_numero = ? WHERE id = ?`, [nuevo, fila.id], cx);
   return { numero: nuevo, prefijo: fila.prefijo };
 }
