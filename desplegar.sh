@@ -15,7 +15,7 @@ echo "== 1/3  Trayendo cambios (git pull) =="
 git pull --ff-only
 
 echo "== 2/3  Reconstruyendo y levantando (backend + web) =="
-docker compose -f docker-compose.prod.yml up -d --build backend web
+docker compose -f docker-compose.prod.yml --env-file .env.produccion up -d --build backend web
 
 echo "== 3/3  Logs del backend (migraciones + arranque) =="
 sleep 4
