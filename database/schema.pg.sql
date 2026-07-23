@@ -144,9 +144,9 @@ CREATE TABLE sucursales (
   telefono       VARCHAR(40),
   es_principal   BOOLEAN      NOT NULL DEFAULT FALSE,
   esta_activa    BOOLEAN      NOT NULL DEFAULT TRUE,
-  creado_en      TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  actualizado_en TIMESTAMP(3),
-  eliminado_en   TIMESTAMP(3),
+  creado_en      TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en TIMESTAMPTZ(3),
+  eliminado_en   TIMESTAMPTZ(3),
   PRIMARY KEY (id)
 );
 
@@ -159,9 +159,9 @@ CREATE TABLE roles (
   descripcion    VARCHAR(200),
   es_sistema     BOOLEAN      NOT NULL DEFAULT FALSE,
   esta_activo    BOOLEAN      NOT NULL DEFAULT TRUE,
-  creado_en      TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  actualizado_en TIMESTAMP(3),
-  eliminado_en   TIMESTAMP(3),
+  creado_en      TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en TIMESTAMPTZ(3),
+  eliminado_en   TIMESTAMPTZ(3),
   PRIMARY KEY (id)
 );
 
@@ -173,7 +173,7 @@ CREATE TABLE permisos (
   modulo      VARCHAR(40)  NOT NULL,
   accion      VARCHAR(40)  NOT NULL,
   descripcion VARCHAR(200),
-  creado_en   TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  creado_en   TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id)
 );
 
@@ -183,7 +183,7 @@ CREATE INDEX ix_permisos_modulo ON permisos (modulo);
 CREATE TABLE rol_permisos (
   rol_id     BIGINT NOT NULL,
   permiso_id BIGINT NOT NULL,
-  creado_en  TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  creado_en  TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (rol_id, permiso_id)
 );
 
@@ -202,13 +202,13 @@ CREATE TABLE usuarios (
   rol_id                     BIGINT NOT NULL,
   sucursal_predeterminada_id BIGINT,
   intentos_fallidos          INTEGER      NOT NULL DEFAULT 0 CHECK (intentos_fallidos >= 0),
-  bloqueado_hasta            TIMESTAMP(3),
-  ultimo_acceso_en           TIMESTAMP(3),
+  bloqueado_hasta            TIMESTAMPTZ(3),
+  ultimo_acceso_en           TIMESTAMPTZ(3),
   debe_cambiar_password      BOOLEAN      NOT NULL DEFAULT FALSE,
   esta_activo                BOOLEAN      NOT NULL DEFAULT TRUE,
-  creado_en                  TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  actualizado_en             TIMESTAMP(3),
-  eliminado_en               TIMESTAMP(3),
+  creado_en                  TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en             TIMESTAMPTZ(3),
+  eliminado_en               TIMESTAMPTZ(3),
   PRIMARY KEY (id)
 );
 
@@ -225,7 +225,7 @@ CREATE TABLE usuario_sucursales (
   usuario_id  BIGINT NOT NULL,
   sucursal_id BIGINT NOT NULL,
   rol_id      BIGINT NOT NULL,
-  creado_en   TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  creado_en   TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (usuario_id, sucursal_id)
 );
 
@@ -243,10 +243,10 @@ CREATE TABLE sesiones (
   reemplazada_por_id BIGINT,
   ip                 INET,
   user_agent         VARCHAR(255),
-  expira_en          TIMESTAMP(3) NOT NULL,
-  revocada_en        TIMESTAMP(3),
+  expira_en          TIMESTAMPTZ(3) NOT NULL,
+  revocada_en        TIMESTAMPTZ(3),
   motivo_revocacion  motivo_revocacion,
-  creado_en          TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  creado_en          TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id)
 );
 
@@ -267,9 +267,9 @@ CREATE TABLE unidades_medida (
   es_permite_fraccion BOOLEAN     NOT NULL DEFAULT FALSE,
   decimales           INTEGER     NOT NULL DEFAULT 0 CHECK (decimales >= 0),
   esta_activa         BOOLEAN     NOT NULL DEFAULT TRUE,
-  creado_en           TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  actualizado_en      TIMESTAMP(3),
-  eliminado_en        TIMESTAMP(3),
+  creado_en           TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en      TIMESTAMPTZ(3),
+  eliminado_en        TIMESTAMPTZ(3),
   PRIMARY KEY (id)
 );
 
@@ -285,9 +285,9 @@ CREATE TABLE impuestos (
   vigente_desde  DATE NOT NULL,
   vigente_hasta  DATE,
   esta_activo    BOOLEAN     NOT NULL DEFAULT TRUE,
-  creado_en      TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  actualizado_en TIMESTAMP(3),
-  eliminado_en   TIMESTAMP(3),
+  creado_en      TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en TIMESTAMPTZ(3),
+  eliminado_en   TIMESTAMPTZ(3),
   PRIMARY KEY (id)
 );
 
@@ -328,8 +328,8 @@ CREATE TABLE configuracion (
   dias_plazo_credito_defecto      INTEGER NOT NULL DEFAULT 30 CHECK (dias_plazo_credito_defecto >= 0),
   zona_horaria                    VARCHAR(40) NOT NULL DEFAULT 'America/Caracas',
   actualizado_por                 BIGINT,
-  creado_en                       TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  actualizado_en                  TIMESTAMP(3),
+  creado_en                       TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en                  TIMESTAMPTZ(3),
   PRIMARY KEY (id)
 );
 
@@ -345,8 +345,8 @@ CREATE TABLE parametros (
   descripcion     VARCHAR(200),
   es_editable     BOOLEAN      NOT NULL DEFAULT TRUE,
   actualizado_por BIGINT,
-  creado_en       TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  actualizado_en  TIMESTAMP(3),
+  creado_en       TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en  TIMESTAMPTZ(3),
   PRIMARY KEY (clave)
 );
 
@@ -363,9 +363,9 @@ CREATE TABLE tasas_cambio (
   corrige_tasa_id BIGINT,
   notas           VARCHAR(255),
   usuario_id      BIGINT NOT NULL,
-  creado_en       TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  actualizado_en  TIMESTAMP(3),
-  eliminado_en    TIMESTAMP(3),
+  creado_en       TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en  TIMESTAMPTZ(3),
+  eliminado_en    TIMESTAMPTZ(3),
   PRIMARY KEY (id)
 );
 
@@ -386,9 +386,9 @@ CREATE TABLE categorias (
   color_hex          CHAR(7),
   orden              INTEGER NOT NULL DEFAULT 0 CHECK (orden >= 0),
   esta_activa        BOOLEAN NOT NULL DEFAULT TRUE,
-  creado_en          TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  actualizado_en     TIMESTAMP(3),
-  eliminado_en       TIMESTAMP(3),
+  creado_en          TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en     TIMESTAMPTZ(3),
+  eliminado_en       TIMESTAMPTZ(3),
   PRIMARY KEY (id)
 );
 
@@ -412,9 +412,9 @@ CREATE TABLE proveedores (
   saldo_actual     DECIMAL(14,2) NOT NULL DEFAULT 0 CHECK (saldo_actual >= 0),
   notas            VARCHAR(255),
   esta_activo      BOOLEAN NOT NULL DEFAULT TRUE,
-  creado_en        TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  actualizado_en   TIMESTAMP(3),
-  eliminado_en     TIMESTAMP(3),
+  creado_en        TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en   TIMESTAMPTZ(3),
+  eliminado_en     TIMESTAMPTZ(3),
   PRIMARY KEY (id)
 );
 
@@ -440,9 +440,9 @@ CREATE TABLE clientes (
   motivo_bloqueo    VARCHAR(200),
   notas             VARCHAR(255),
   esta_activo       BOOLEAN NOT NULL DEFAULT TRUE,
-  creado_en         TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  actualizado_en    TIMESTAMP(3),
-  eliminado_en      TIMESTAMP(3),
+  creado_en         TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en    TIMESTAMPTZ(3),
+  eliminado_en      TIMESTAMPTZ(3),
   PRIMARY KEY (id)
 );
 
@@ -463,9 +463,9 @@ CREATE TABLE metodos_pago (
   comision_porcentaje  DECIMAL(6,3) NOT NULL DEFAULT 0 CHECK (comision_porcentaje >= 0),
   orden                INTEGER NOT NULL DEFAULT 0 CHECK (orden >= 0),
   esta_activo          BOOLEAN NOT NULL DEFAULT TRUE,
-  creado_en            TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  actualizado_en       TIMESTAMP(3),
-  eliminado_en         TIMESTAMP(3),
+  creado_en            TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en       TIMESTAMPTZ(3),
+  eliminado_en         TIMESTAMPTZ(3),
   PRIMARY KEY (id)
 );
 
@@ -480,8 +480,8 @@ CREATE TABLE motivos_ajuste (
   es_perdida               BOOLEAN NOT NULL DEFAULT TRUE,
   es_requiere_autorizacion BOOLEAN NOT NULL DEFAULT FALSE,
   esta_activo              BOOLEAN NOT NULL DEFAULT TRUE,
-  creado_en                TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  actualizado_en           TIMESTAMP(3),
+  creado_en                TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en           TIMESTAMPTZ(3),
   PRIMARY KEY (id)
 );
 
@@ -494,9 +494,9 @@ CREATE TABLE cajas (
   nombre           VARCHAR(80) NOT NULL,
   impresora_nombre VARCHAR(120),
   esta_activa      BOOLEAN NOT NULL DEFAULT TRUE,
-  creado_en        TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  actualizado_en   TIMESTAMP(3),
-  eliminado_en     TIMESTAMP(3),
+  creado_en        TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en   TIMESTAMPTZ(3),
+  eliminado_en     TIMESTAMPTZ(3),
   PRIMARY KEY (id)
 );
 
@@ -510,8 +510,8 @@ CREATE TABLE turnos_caja (
   sucursal_id               BIGINT NOT NULL,
   usuario_apertura_id       BIGINT NOT NULL,
   usuario_cierre_id         BIGINT,
-  abierto_en                TIMESTAMP(3) NOT NULL,
-  cerrado_en                TIMESTAMP(3),
+  abierto_en                TIMESTAMPTZ(3) NOT NULL,
+  cerrado_en                TIMESTAMPTZ(3),
   base_inicial_usd          DECIMAL(14,2) NOT NULL DEFAULT 0 CHECK (base_inicial_usd >= 0),
   base_inicial_bs           DECIMAL(18,2) NOT NULL DEFAULT 0 CHECK (base_inicial_bs >= 0),
   total_ventas_efectivo_usd DECIMAL(14,2) NOT NULL DEFAULT 0 CHECK (total_ventas_efectivo_usd >= 0),
@@ -538,8 +538,8 @@ CREATE TABLE turnos_caja (
   tasa_cierre               DECIMAL(18,6),
   observaciones             VARCHAR(255),
   estado                    estado_turno NOT NULL DEFAULT 'ABIERTO',
-  creado_en                 TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  actualizado_en            TIMESTAMP(3),
+  creado_en                 TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en            TIMESTAMPTZ(3),
   PRIMARY KEY (id)
 );
 
@@ -580,9 +580,9 @@ CREATE TABLE productos (
   imagen_ruta               VARCHAR(255),
   esta_activo               BOOLEAN NOT NULL DEFAULT TRUE,
   creado_por                BIGINT,
-  creado_en                 TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  actualizado_en            TIMESTAMP(3),
-  eliminado_en              TIMESTAMP(3),
+  creado_en                 TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en            TIMESTAMPTZ(3),
+  eliminado_en              TIMESTAMPTZ(3),
   PRIMARY KEY (id)
 );
 
@@ -608,9 +608,9 @@ CREATE TABLE producto_codigos (
   tipo              tipo_codigo_producto NOT NULL DEFAULT 'EAN13',
   factor_conversion DECIMAL(14,3) NOT NULL DEFAULT 1 CHECK (factor_conversion > 0),
   es_principal      BOOLEAN NOT NULL DEFAULT FALSE,
-  creado_en         TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  actualizado_en    TIMESTAMP(3),
-  eliminado_en      TIMESTAMP(3),
+  creado_en         TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en    TIMESTAMPTZ(3),
+  eliminado_en      TIMESTAMPTZ(3),
   PRIMARY KEY (id)
 );
 
@@ -627,9 +627,9 @@ CREATE TABLE producto_precios (
   costo_referencia        DECIMAL(14,4) NOT NULL DEFAULT 0 CHECK (costo_referencia >= 0),
   tasa_cambio_referencia  DECIMAL(18,6),
   motivo                  VARCHAR(200),
-  vigente_desde           TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  vigente_desde           TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   usuario_id              BIGINT NOT NULL,
-  creado_en               TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  creado_en               TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id)
 );
 
@@ -647,9 +647,9 @@ CREATE TABLE producto_stock (
   stock_maximo      DECIMAL(14,3) CHECK (stock_maximo IS NULL OR stock_maximo >= 0),
   costo_promedio    DECIMAL(14,4) NOT NULL DEFAULT 0 CHECK (costo_promedio >= 0),
   ubicacion         VARCHAR(60),
-  ultima_entrada_en TIMESTAMP(3),
-  ultima_salida_en  TIMESTAMP(3),
-  actualizado_en    TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  ultima_entrada_en TIMESTAMPTZ(3),
+  ultima_salida_en  TIMESTAMPTZ(3),
+  actualizado_en    TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (producto_id, sucursal_id)
 );
 
@@ -679,8 +679,8 @@ CREATE TABLE consecutivos (
   rango_hasta    BIGINT CHECK (rango_hasta IS NULL OR rango_hasta >= 0),
   vigente_hasta  DATE,
   esta_activo    BOOLEAN NOT NULL DEFAULT TRUE,
-  creado_en      TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  actualizado_en TIMESTAMP(3),
+  creado_en      TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en TIMESTAMPTZ(3),
   PRIMARY KEY (id)
 );
 
@@ -702,7 +702,7 @@ CREATE TABLE compras (
   anio                     INTEGER NOT NULL CHECK (anio >= 2000 AND anio <= 2100),
   numero_factura_proveedor VARCHAR(60),
   fecha_documento          DATE NOT NULL,
-  fecha_recepcion          TIMESTAMP(3) NOT NULL,
+  fecha_recepcion          TIMESTAMPTZ(3) NOT NULL,
   fecha_vencimiento        DATE,
   subtotal                 DECIMAL(14,2) NOT NULL DEFAULT 0 CHECK (subtotal >= 0),
   descuento_total          DECIMAL(14,2) NOT NULL DEFAULT 0 CHECK (descuento_total >= 0),
@@ -718,11 +718,11 @@ CREATE TABLE compras (
   estado                   estado_compra NOT NULL DEFAULT 'BORRADOR',
   observaciones            VARCHAR(255),
   clave_idempotencia       UUID,
-  anulada_en               TIMESTAMP(3),
+  anulada_en               TIMESTAMPTZ(3),
   anulada_por              BIGINT,
   motivo_anulacion         VARCHAR(200),
-  creado_en                TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  actualizado_en           TIMESTAMP(3),
+  creado_en                TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en           TIMESTAMPTZ(3),
   PRIMARY KEY (id)
 );
 
@@ -757,7 +757,7 @@ CREATE TABLE compra_detalle (
   total_linea         DECIMAL(14,2) NOT NULL CHECK (total_linea >= 0),
   lote_codigo         VARCHAR(40),
   fecha_vencimiento   DATE,
-  creado_en           TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  creado_en           TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id)
 );
 
@@ -783,7 +783,7 @@ CREATE TABLE ventas (
   prefijo             VARCHAR(8) NOT NULL DEFAULT '',
   numero              BIGINT NOT NULL CHECK (numero >= 0),
   anio                INTEGER NOT NULL CHECK (anio >= 2000 AND anio <= 2100),
-  fecha               TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  fecha               TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   subtotal_bruto      DECIMAL(14,2) NOT NULL DEFAULT 0 CHECK (subtotal_bruto >= 0),
   descuento_lineas    DECIMAL(14,2) NOT NULL DEFAULT 0 CHECK (descuento_lineas >= 0),
   descuento_documento DECIMAL(14,2) NOT NULL DEFAULT 0 CHECK (descuento_documento >= 0),
@@ -804,12 +804,12 @@ CREATE TABLE ventas (
   estado              estado_venta NOT NULL DEFAULT 'ABIERTA',
   clave_idempotencia  UUID,
   observaciones       VARCHAR(255),
-  anulada_en          TIMESTAMP(3),
+  anulada_en          TIMESTAMPTZ(3),
   anulada_por         BIGINT,
   autorizada_por      BIGINT,
   motivo_anulacion    VARCHAR(200),
-  creado_en           TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  actualizado_en      TIMESTAMP(3),
+  creado_en           TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en      TIMESTAMPTZ(3),
   PRIMARY KEY (id)
 );
 
@@ -854,7 +854,7 @@ CREATE TABLE venta_detalle (
   utilidad_total            DECIMAL(14,2) NOT NULL,
   total_linea               DECIMAL(14,2) NOT NULL CHECK (total_linea >= 0),
   cantidad_devuelta         DECIMAL(14,3) NOT NULL DEFAULT 0 CHECK (cantidad_devuelta >= 0),
-  creado_en                 TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  creado_en                 TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id)
 );
 
@@ -886,12 +886,12 @@ CREATE TABLE creditos (
   autorizado_por               BIGINT,
   usuario_id                   BIGINT NOT NULL,
   observaciones                VARCHAR(255),
-  pagado_en                    TIMESTAMP(3),
-  anulado_en                   TIMESTAMP(3),
+  pagado_en                    TIMESTAMPTZ(3),
+  anulado_en                   TIMESTAMPTZ(3),
   anulado_por                  BIGINT,
   motivo_anulacion             VARCHAR(200),
-  creado_en                    TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  actualizado_en               TIMESTAMP(3),
+  creado_en                    TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en               TIMESTAMPTZ(3),
   PRIMARY KEY (id)
 );
 
@@ -930,9 +930,9 @@ CREATE TABLE pagos (
   credito_id            BIGINT,
   estado                VARCHAR(10) NOT NULL DEFAULT 'APLICADO',
   usuario_id            BIGINT NOT NULL,
-  fecha                 TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  creado_en             TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  actualizado_en        TIMESTAMP(3),
+  fecha                 TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  creado_en             TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en        TIMESTAMPTZ(3),
   PRIMARY KEY (id)
 );
 
@@ -960,7 +960,7 @@ CREATE TABLE abonos (
   prefijo            VARCHAR(8) NOT NULL DEFAULT '',
   numero             BIGINT NOT NULL CHECK (numero >= 0),
   anio               INTEGER NOT NULL CHECK (anio >= 2000 AND anio <= 2100),
-  fecha              TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  fecha              TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   moneda             tipo_metodo_pago_moneda NOT NULL,
   monto_moneda       DECIMAL(18,4) NOT NULL CHECK (monto_moneda > 0),
   tasa_aplicada      DECIMAL(18,6) NOT NULL CHECK (tasa_aplicada > 0),
@@ -972,11 +972,11 @@ CREATE TABLE abonos (
   observaciones      VARCHAR(255),
   estado             estado_abono NOT NULL DEFAULT 'APLICADO',
   clave_idempotencia UUID,
-  anulado_en         TIMESTAMP(3),
+  anulado_en         TIMESTAMPTZ(3),
   anulado_por        BIGINT,
   motivo_anulacion   VARCHAR(200),
-  creado_en          TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  actualizado_en     TIMESTAMP(3),
+  creado_en          TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en     TIMESTAMPTZ(3),
   PRIMARY KEY (id)
 );
 
@@ -1002,7 +1002,7 @@ CREATE TABLE abono_aplicaciones (
   abono_id          BIGINT NOT NULL,
   credito_id        BIGINT NOT NULL,
   monto_aplicado_usd DECIMAL(14,2) NOT NULL CHECK (monto_aplicado_usd > 0),
-  creado_en         TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  creado_en         TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id)
 );
 
@@ -1028,18 +1028,18 @@ CREATE TABLE devoluciones (
   prefijo               VARCHAR(8) NOT NULL DEFAULT '',
   numero                BIGINT NOT NULL CHECK (numero >= 0),
   anio                  INTEGER NOT NULL CHECK (anio >= 2000 AND anio <= 2100),
-  fecha                 TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  fecha                 TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   forma_reintegro       forma_reintegro,
   motivo                VARCHAR(255) NOT NULL,
   subtotal              DECIMAL(14,2) NOT NULL DEFAULT 0 CHECK (subtotal >= 0),
   impuesto_total        DECIMAL(14,2) NOT NULL DEFAULT 0 CHECK (impuesto_total >= 0),
   total_usd             DECIMAL(14,2) NOT NULL DEFAULT 0 CHECK (total_usd >= 0),
   estado                estado_devolucion NOT NULL DEFAULT 'APLICADA',
-  anulada_en            TIMESTAMP(3),
+  anulada_en            TIMESTAMPTZ(3),
   anulada_por           BIGINT,
   motivo_anulacion      VARCHAR(200),
-  creado_en             TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  actualizado_en        TIMESTAMP(3),
+  creado_en             TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en        TIMESTAMPTZ(3),
   PRIMARY KEY (id)
 );
 
@@ -1074,7 +1074,7 @@ CREATE TABLE devolucion_detalle (
   impuesto_tasa     DECIMAL(6,3) NOT NULL DEFAULT 0,
   subtotal          DECIMAL(14,2) NOT NULL CHECK (subtotal >= 0),
   total_linea       DECIMAL(14,2) NOT NULL CHECK (total_linea >= 0),
-  creado_en         TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  creado_en         TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id)
 );
 
@@ -1100,15 +1100,15 @@ CREATE TABLE ajustes_inventario (
   prefijo           VARCHAR(8) NOT NULL DEFAULT '',
   numero            BIGINT NOT NULL CHECK (numero >= 0),
   anio              INTEGER NOT NULL CHECK (anio >= 2000 AND anio <= 2100),
-  fecha             TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  fecha             TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   observaciones     VARCHAR(255),
   estado            estado_ajuste NOT NULL DEFAULT 'BORRADOR',
-  aplicado_en       TIMESTAMP(3),
-  anulado_en        TIMESTAMP(3),
+  aplicado_en       TIMESTAMPTZ(3),
+  anulado_en        TIMESTAMPTZ(3),
   anulado_por       BIGINT,
   motivo_anulacion  VARCHAR(200),
-  creado_en         TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  actualizado_en    TIMESTAMP(3),
+  creado_en         TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  actualizado_en    TIMESTAMPTZ(3),
   PRIMARY KEY (id)
 );
 
@@ -1134,7 +1134,7 @@ CREATE TABLE ajuste_detalle (
   cantidad_fisica            DECIMAL(14,3) NOT NULL CHECK (cantidad_fisica >= 0),
   cantidad_diferencia        DECIMAL(14,3) NOT NULL,
   costo_total_diferencia     DECIMAL(14,2) NOT NULL,
-  creado_en                  TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  creado_en                  TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id)
 );
 
@@ -1168,7 +1168,7 @@ CREATE TABLE inventario_movimientos (
   motivo_id                 BIGINT,
   usuario_id                BIGINT NOT NULL,
   nota                      VARCHAR(255),
-  creado_en                 TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  creado_en                 TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id)
 );
 
@@ -1211,8 +1211,8 @@ CREATE TABLE movimientos_caja (
   documento_id      BIGINT,
   usuario_id        BIGINT NOT NULL,
   autorizado_por    BIGINT,
-  fecha             TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  creado_en         TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  fecha             TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  creado_en         TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id)
 );
 
@@ -1229,7 +1229,7 @@ ALTER TABLE movimientos_caja ADD CONSTRAINT fk_mc_autorizado FOREIGN KEY (autori
 
 CREATE TABLE auditoria (
   id            BIGINT GENERATED BY DEFAULT AS IDENTITY NOT NULL,
-  ocurrido_en   TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  ocurrido_en   TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   usuario_id    BIGINT,
   sucursal_id   BIGINT,
   accion        accion_auditoria NOT NULL,
@@ -1240,7 +1240,7 @@ CREATE TABLE auditoria (
   ip            INET,
   user_agent    VARCHAR(255),
   request_id    CHAR(26),
-  creado_en     TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  creado_en     TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id)
 );
 
@@ -1260,8 +1260,8 @@ CREATE TABLE idempotencia_solicitudes (
   respuesta_json  JSONB,
   recurso_tipo    VARCHAR(40),
   recurso_id      BIGINT,
-  creado_en       TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  expira_en       TIMESTAMP(3) NOT NULL,
+  creado_en       TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  expira_en       TIMESTAMPTZ(3) NOT NULL,
   PRIMARY KEY (clave)
 );
 
@@ -1286,7 +1286,7 @@ CREATE TABLE resumen_ventas_diario (
   utilidad_total_bs       DECIMAL(18,2) NOT NULL DEFAULT 0,
   numero_ventas           INTEGER NOT NULL DEFAULT 0 CHECK (numero_ventas >= 0),
   tasa_promedio_ponderada DECIMAL(18,6) NOT NULL DEFAULT 0 CHECK (tasa_promedio_ponderada >= 0),
-  calculado_en            TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  calculado_en            TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (fecha, sucursal_id, producto_id)
 );
 
@@ -1309,10 +1309,10 @@ CREATE TABLE trabajos_exportacion (
   archivo_bytes   BIGINT,
   filas_generadas INTEGER,
   error_mensaje   VARCHAR(500),
-  iniciado_en     TIMESTAMP(3),
-  finalizado_en   TIMESTAMP(3),
-  expira_en       TIMESTAMP(3),
-  creado_en       TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  iniciado_en     TIMESTAMPTZ(3),
+  finalizado_en   TIMESTAMPTZ(3),
+  expira_en       TIMESTAMPTZ(3),
+  creado_en       TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id)
 );
 
@@ -1326,7 +1326,7 @@ CREATE TABLE migraciones (
   version      VARCHAR(32) NOT NULL,
   nombre       VARCHAR(160) NOT NULL,
   checksum     CHAR(64) NOT NULL,
-  aplicada_en  TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  aplicada_en  TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   duracion_ms  INTEGER NOT NULL DEFAULT 0 CHECK (duracion_ms >= 0),
   aplicada_por VARCHAR(60),
   PRIMARY KEY (version)

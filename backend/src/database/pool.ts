@@ -20,11 +20,19 @@ const ssl: pg.PoolConfig['ssl'] = env.db.ssl
   : undefined;
 
 /**
+ * Zona horaria de la SESION de Postgres. Es clave: sin esto, NOW()/CURRENT_TIMESTAMP
+ * y las operaciones por fecha (agrupar ventas del dia, cierres de caja) usan la zona
+ * del servidor de BD —que en un proveedor externo suele ser UTC—, corriendo la hora.
+ * Se envia como parametro de arranque de la conexion (-c timezone=...).
+ */
+const opcionesSesion = `-c timezone=${env.zonaHoraria}`;
+
+/**
  * Config base compartida por todos los pools: si hay DATABASE_URL (proveedor
  * externo) se usa la cadena de conexion; si no, las variables discretas DB_*.
  */
 const conexionBase: pg.PoolConfig = env.db.url
-  ? { connectionString: env.db.url, ssl }
+  ? { connectionString: env.db.url, ssl, options: opcionesSesion }
   : {
       host: env.db.host ?? undefined,
       port: env.db.puerto,
@@ -32,6 +40,7 @@ const conexionBase: pg.PoolConfig = env.db.url
       password: env.db.password ?? undefined,
       database: env.db.nombre ?? undefined,
       ssl,
+      options: opcionesSesion,
     };
 
 const poolPrincipal: Pool = new pg.Pool({

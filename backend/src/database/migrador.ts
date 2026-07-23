@@ -43,7 +43,7 @@ export async function ejecutarMigracionesPendientes(dirConfigurado: string | nul
     version      VARCHAR(32)  PRIMARY KEY,
     nombre       VARCHAR(160) NOT NULL,
     checksum     CHAR(64)     NOT NULL,
-    aplicada_en  TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    aplicada_en  TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     duracion_ms  INTEGER      NOT NULL DEFAULT 0,
     aplicada_por VARCHAR(60)
   );`);
