@@ -12,6 +12,7 @@ import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
 import { env } from './config/env';
 import { requestId } from './middlewares/requestId';
+import { notificarCambiosRealtime } from './middlewares/realtime';
 import { rutaNoEncontrada, manejadorErrores } from './middlewares/manejadorErrores';
 import rutas from './routes/index';
 
@@ -53,6 +54,9 @@ export function crearApp(): Application {
       },
     }),
   );
+
+  // Tras cada mutacion exitosa, notifica a la sucursal por Socket.IO (tiempo real).
+  app.use(notificarCambiosRealtime);
 
   app.use(env.api.prefijo, rutas);
 

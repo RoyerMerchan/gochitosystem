@@ -36,13 +36,11 @@ services:
       TASA_BCV_API_KEY: ${TASA_BCV_API_KEY:-}
       TASA_BCV_URL: ${TASA_BCV_URL:-https://api.cotizave.com/v1/fx/rates/reference}
       TASA_BCV_AUTH_HEADER: ${TASA_BCV_AUTH_HEADER:-X-API-Key}
-      # Migraciones automáticas al arrancar (aplica las pendientes de /app/migraciones).
-      EJECUTAR_MIGRACIONES: "true"
-      MIGRACIONES_DIR: /app/migraciones
+      # Migraciones: ahora las gestiona Prisma (el contenedor corre `prisma migrate
+      # deploy` al arrancar, ver Dockerfile). El migrador SQL propio queda apagado.
+      EJECUTAR_MIGRACIONES: "false"
     volumes:
       - gochito_uploads:/app/uploads
-      # Monta las migraciones del repo (solo lectura) para que el backend las aplique al arrancar.
-      - ./database/migraciones:/app/migraciones:ro
     networks:
       - interna
 

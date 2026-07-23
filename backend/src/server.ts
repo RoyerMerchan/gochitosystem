@@ -5,6 +5,7 @@ import { crearApp } from './app';
 import { env } from './config/env';
 import { verificarConexion, cerrarPools } from './database/pool';
 import { ejecutarMigracionesPendientes } from './database/migrador';
+import { inicializarRealtime } from './realtime/io';
 import { logger, describirError } from './utils/logger';
 
 async function main(): Promise<void> {
@@ -36,6 +37,9 @@ async function main(): Promise<void> {
       entorno: env.entorno,
     });
   });
+
+  // Tiempo real: Socket.IO se monta sobre el mismo servidor HTTP.
+  inicializarRealtime(servidor);
 
   const apagar = (senal: string): void => {
     logger.info(`Senal ${senal} recibida. Apagando...`);

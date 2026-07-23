@@ -13,6 +13,7 @@ import { cn } from '@/lib/cn';
 import { TasaBadge } from './TasaBadge';
 import { ToggleTema, BotonInstalarApp } from './NavbarAcciones';
 import { useScannerGlobal } from '@/features/pos/useScannerGlobal';
+import { useRealtime } from '@/app/useRealtime';
 
 interface ItemNav {
   a: string;
@@ -69,6 +70,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const permisos = useAuthStore((s) => s.permisos);
   const navegar = useNavigate();
   useScannerGlobal();
+  useRealtime();
 
   const puede = (p?: string) => !p || permisos.includes(p);
 

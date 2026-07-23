@@ -62,11 +62,52 @@ Prisma Client** con tipos correctos y verificables.
 
 ---
 
+## ⚠️ Onboarding en el VPS — ORDEN EXACTO (hazlo UNA vez, antes del próximo deploy)
+
+El contenedor ya está configurado para correr `prisma migrate deploy` al arrancar
+(ver `backend/Dockerfile`) y el migrador SQL propio quedó apagado
+(`EJECUTAR_MIGRACIONES=false`). Pero la BD de prod **ya tiene el esquema**, así que
+primero hay que registrar un *baseline*, o `migrate deploy` intentaría recrear todo.
+
+Corre esto en el VPS, en `backend/`, con `DATABASE_URL` apuntando a la BD real:
+
+```bash
+cd backend
+npm install                       # instala prisma + @prisma/client
+
+# 1. Introspección: llena prisma/schema.prisma desde la BD real (estado ACTUAL:
+#    columnas todavía en `timestamp`, contadores como estén).
+npx prisma db pull
+
+# 2. Baseline: genera la migración inicial con el estado actual...
+mkdir -p prisma/migrations/0_init
+npx prisma migrate diff \
+  --from-empty \
+  --to-schema-datamodel prisma/schema.prisma \
+  --script > prisma/migrations/0_init/migration.sql
+
+# 3. ...y márcala como YA aplicada (no la ejecuta: el esquema ya existe).
+npx prisma migrate resolve --applied 0_init
+
+# 4. Aplica las migraciones pendientes. La primera es `20260723090000_timestamptz`
+#    (ya está en el repo): convierte todo a timestamptz y arregla la hora.
+npx prisma migrate deploy
+
+# 5. Refresca el schema introspectado (ahora ya en timestamptz) y haz commit.
+npx prisma db pull
+git add prisma/ && git commit -m "prisma: baseline + timestamptz" && git push
+```
+
+> Importante: el `0_init/migration.sql` se genera **en el VPS** (refleja tus ~100
+> tablas reales). No lo escribo yo a mano para no arriesgar un desajuste con la BD.
+
+Después de esto, cada deploy del contenedor aplica solo lo pendiente con Prisma.
+
 ## Flujo de cambios futuros (una vez adoptado)
 
 - Editas `prisma/schema.prisma`.
 - `npx prisma migrate dev --name descripcion` (local) → crea la migración.
-- En prod: `npx prisma migrate deploy` (o el arranque del backend lo hace).
+- En prod: el arranque del contenedor corre `prisma migrate deploy` automáticamente.
 
 ## Qué queda en SQL crudo (a propósito)
 

@@ -1,21 +1,13 @@
--- ============================================================================
--- 0002_timestamptz.sql
---
 -- Convierte todas las columnas `timestamp without time zone` a `timestamptz`.
 --
 -- Por que: las columnas sin zona guardan una hora "suelta" (sin offset). Mientras
--- la BD vivio en la maquina local (zona America/Caracas) coincidia, pero al mover
--- la BD a un proveedor externo (que corre en UTC) la hora se desfasa. `timestamptz`
--- guarda un INSTANTE absoluto: NOW() queda correcto sin importar donde corra la BD,
--- y el frontend lo muestra en America/Caracas.
+-- la BD vivio en la maquina local (America/Caracas) coincidia, pero al mover la BD
+-- a un proveedor externo (que corre en UTC) la hora se desfasa. `timestamptz` guarda
+-- un INSTANTE absoluto: NOW() queda correcto sin importar donde corra la BD, y el
+-- frontend lo muestra en America/Caracas.
 --
--- Los valores existentes se interpretan como UTC (que es como los guarda el
--- servidor externo actual). Si alguna fila de prueba quedara corrida unas horas,
--- es data de prueba y no afecta la operacion real futura.
---
--- Idempotente: si una columna ya es timestamptz, se omite. Atomica: el migrador
--- ejecuta el archivo como un solo lote; si algo falla, revierte todo.
--- ============================================================================
+-- Los valores existentes se interpretan como UTC (como los guarda el servidor externo
+-- actual). Idempotente: si una columna ya es timestamptz, se omite.
 
 DO $$
 DECLARE
