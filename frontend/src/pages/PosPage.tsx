@@ -249,8 +249,8 @@ export default function PosPage() {
                 <tr>
                   <th className="p-3 text-left">Producto</th>
                   <th className="p-3 text-center">Cant.</th>
-                  <th className="p-3 text-right">Precio</th>
-                  <th className="p-3 text-right">Total</th>
+                  <th className="p-3 text-right">Precio $ / Bs</th>
+                  <th className="p-3 text-right">Total $ / Bs</th>
                   <th className="p-3"></th>
                 </tr>
               </thead>
@@ -284,6 +284,7 @@ export default function PosPage() {
                     </td>
                     <td className="p-3 text-right tabular-nums">
                       <div>{formatearUSD(i.precioUnitario)}</div>
+                      <div className="text-xs text-gray-400">{formatearBs(i.precioUnitario * tasaNum)}</div>
                       {i.precioMayorista != null && (
                         <button
                           onClick={() => carrito.alternarMayor(i.productoId)}
@@ -296,6 +297,9 @@ export default function PosPage() {
                     </td>
                     <td className="p-3 text-right font-semibold tabular-nums">
                       {formatearUSD((i.precioUnitario - i.descuentoUnitario) * i.cantidad)}
+                      <span className="block text-xs font-normal text-gray-400">
+                        {formatearBs((i.precioUnitario - i.descuentoUnitario) * i.cantidad * tasaNum)}
+                      </span>
                     </td>
                     <td className="p-3">
                       <button

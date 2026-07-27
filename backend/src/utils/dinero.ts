@@ -109,6 +109,18 @@ export function dividirRedondeando(numerador: bigint, denominador: bigint): bigi
   return negativo ? -ajustado : ajustado;
 }
 
+/**
+ * Division entera truncando hacia cero (SIN redondeo).
+ *
+ * Se usa cuando redondear hacia arriba inventaria dinero: al convertir un cobro en Bs
+ * a USD, el half-up puede acreditar un centavo que el cliente no entrego (y disparar
+ * "el abono supera el saldo"). Con piso nunca se acredita mas de lo recibido.
+ */
+export function dividirTruncando(numerador: bigint, denominador: bigint): bigint {
+  if (denominador === 0n) throw new Error('Division por cero en calculo monetario');
+  return numerador / denominador; // bigint trunca hacia cero
+}
+
 /** Multiplica un valor escalado por una cantidad escalada y devuelve escala `escalaSalida`. */
 export function multiplicarPorCantidad(
   valorUnitario: bigint,

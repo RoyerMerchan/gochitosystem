@@ -10,7 +10,7 @@ import { FiltroPeriodo } from '@/components/ui/FiltroPeriodo';
 import { toast } from '@/store/toastStore';
 import { useAuthStore } from '@/store/authStore';
 import { METODOS_PAGO } from '@/features/pos/metodosPago';
-import { formatearUSD, formatearBs, formatearFechaHora } from '@/lib/formato';
+import { formatearUSD, formatearBs, formatearFechaHora, aNumero } from '@/lib/formato';
 
 interface VentaFila {
   id: number; numero: string; fecha: string; total_usd: string; total_bs: string;
@@ -186,18 +186,26 @@ export default function VentasPage() {
                 <thead className="bg-gray-50 text-xs uppercase text-gray-500 dark:bg-gray-700/50">
                   <tr>
                     <th className="p-2 text-left">Producto</th><th className="p-2 text-right">Cant.</th>
-                    <th className="p-2 text-right">Precio</th><th className="p-2 text-right">Total</th>
+                    <th className="p-2 text-right">Precio $</th><th className="p-2 text-right">Precio Bs</th><th className="p-2 text-right">Total</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {detalle.data.renglones.map((r) => (
-                    <tr key={r.linea} className="border-t border-gray-100 dark:border-gray-700">
-                      <td className="p-2 font-medium">{r.descripcion}</td>
-                      <td className="p-2 text-right tabular-nums">{r.cantidad}</td>
-                      <td className="p-2 text-right tabular-nums">{formatearUSD(r.precio_venta_unitario)}</td>
-                      <td className="p-2 text-right tabular-nums font-medium">{formatearUSD(r.total_linea)}</td>
-                    </tr>
-                  ))}
+                  {/* Bs con la tasa congelada de la venta, nunca la de hoy (ADR del modelo bimonetario). */}
+                  {detalle.data.renglones.map((r) => {
+                    const tasaVenta = aNumero(detalle.data!.venta.tasa_cambio);
+                    return (
+                      <tr key={r.linea} className="border-t border-gray-100 dark:border-gray-700">
+                        <td className="p-2 font-medium">{r.descripcion}</td>
+                        <td className="p-2 text-right tabular-nums">{r.cantidad}</td>
+                        <td className="p-2 text-right tabular-nums">{formatearUSD(r.precio_venta_unitario)}</td>
+                        <td className="p-2 text-right tabular-nums text-gray-500">{formatearBs(aNumero(r.precio_venta_unitario) * tasaVenta)}</td>
+                        <td className="p-2 text-right tabular-nums font-medium">
+                          {formatearUSD(r.total_linea)}
+                          <span className="block text-xs font-normal text-gray-400">{formatearBs(aNumero(r.total_linea) * tasaVenta)}</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

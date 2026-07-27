@@ -14,7 +14,7 @@
  *   - MontoMoneda escala 4              -> ESCALA.MONTO_MONEDA
  */
 import { ESCALA, MONEDA, type Moneda } from '../config/constantes';
-import { aEntero, aDecimalSql, dividirRedondeando } from './dinero';
+import { aEntero, aDecimalSql, dividirRedondeando, dividirTruncando } from './dinero';
 import type { DecimalSql } from '../tipos/comunes';
 
 /** Tasa de cambio a bigint escalado (Bs por 1 USD). */
@@ -76,6 +76,24 @@ export function montoMonedaAUsd(
   // VES: monto(4) -> Bs(2) y luego a USD
   const bs = dividirRedondeando(montoEscala4, 100n);
   return bsAUsd(bs, tasaEscalada);
+}
+
+/**
+ * Igual que `montoMonedaAUsd` pero truncando (piso) en vez de redondear.
+ *
+ * Para COBROS: 3.132,00 Bs a la tasa 743 son 4,2153... USD. Con half-up se acreditarian
+ * 4,22 USD —un centavo que el cliente no pago— y un cliente con 4,21 de saldo recibiria
+ * "el abono supera el saldo pendiente". Con piso se acreditan 4,21.
+ */
+export function montoMonedaAUsdPiso(
+  montoEscala4: bigint,
+  moneda: Moneda,
+  tasaEscalada: bigint,
+): bigint {
+  if (moneda === MONEDA.USD) return dividirTruncando(montoEscala4, 100n);
+  if (tasaEscalada <= 0n) throw new Error('La tasa de cambio debe ser mayor que cero');
+  const bs = dividirTruncando(montoEscala4, 100n); // escala 4 -> 2
+  return dividirTruncando(bs * 10n ** BigInt(ESCALA.TASA_CAMBIO), tasaEscalada);
 }
 
 /**

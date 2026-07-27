@@ -34,6 +34,8 @@ const esquemaAbono = z.object({
   metodoPagoId: z.coerce.number().int().positive(),
   moneda: z.enum(['USD', 'VES']),
   montoMoneda: decimal.refine((v) => Number(v) > 0, 'El monto debe ser mayor que cero'),
+  // Facturas marcadas en pantalla; vacio = aplicar a toda la deuda en FIFO.
+  creditoIds: z.array(z.coerce.number().int().positive()).max(200).optional(),
   referencia: z.string().trim().max(60).optional(),
   observaciones: z.string().trim().max(255).optional(),
 });

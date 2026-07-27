@@ -8,7 +8,7 @@ import {
   query, queryOne, ejecutar, insertar, withTransaction, type Ejecutor,
 } from '../../database/pool';
 import { aCentavos, centavosASql, dividirRedondeando } from '../../utils/dinero';
-import { aTasaCambio, montoMonedaAUsd, aMontoMoneda, montoMonedaASql } from '../../utils/moneda';
+import { aTasaCambio, montoMonedaAUsdPiso, aMontoMoneda, montoMonedaASql } from '../../utils/moneda';
 import { ESTADO_CREDITO, ESTADO_ABONO, TIPO_DOCUMENTO } from '../../config/constantes';
 import { registrarMovimiento, turnoActivoDeUsuario } from '../caja/caja.service';
 import type { Id, UsuarioAutenticado } from '../../tipos/comunes';
@@ -64,16 +64,32 @@ export interface AbonoEntrada {
   metodoPagoId: Id;
   moneda: 'USD' | 'VES';
   montoMoneda: string;
+  /**
+   * Facturas a las que se aplica el abono (las que el cliente marco como "pago esto").
+   * Vacio o ausente = toda la deuda, FIFO.
+   */
+  creditoIds?: Id[];
   referencia?: string;
   observaciones?: string;
 }
+
+/**
+ * Tolerancia de cierre: 1 centavo de USD.
+ *
+ * Pagando en Bs la division por la tasa casi nunca cae exacta sobre el saldo en USD
+ * (3.132,00 Bs / 743 = 4,2153...). Sin tolerancia el cliente que quiere quedar en cero
+ * o recibe "el abono supera el saldo" por un centavo, o queda con una deuda fantasma de
+ * 0,01 imposible de pagar. Si el abono cae a un centavo del saldo objetivo se toma como
+ * pago exacto de ese saldo.
+ */
+const TOLERANCIA_CIERRE = 1n;
 
 /** Registra un abono y lo aplica FIFO a los creditos pendientes del cliente. */
 export async function registrarAbono(
   entrada: AbonoEntrada,
   usuario: UsuarioAutenticado,
   idempotencyKey: string | null,
-): Promise<{ id: Id; numero: string; monto_usd: string; saldo_restante: string }> {
+): Promise<{ id: Id; numero: string; monto_usd: string; aplicado_usd: string; saldo_restante: string }> {
   return withTransaction(async (cx) => {
     // Tasa del dia del abono.
     const tasaFila = await queryOne<{ tasa: string }>(
@@ -91,7 +107,8 @@ export async function registrarAbono(
     if (metodo.requiere_referencia && !entrada.referencia?.trim()) throw new ReglaNegocio('REFERENCIA_REQUERIDA');
 
     const montoMonedaEsc = aMontoMoneda(entrada.montoMoneda);
-    const montoUsd = montoMonedaAUsd(montoMonedaEsc, entrada.moneda, tasaEsc);
+    // Piso, no half-up: jamas se acreditan mas dolares de los que cubren los Bs recibidos.
+    let montoUsd = montoMonedaAUsdPiso(montoMonedaEsc, entrada.moneda, tasaEsc);
     if (montoUsd <= 0n) throw new ReglaNegocio('MONTO_INVALIDO');
 
     // Cliente y su saldo (bloqueado).
@@ -100,8 +117,19 @@ export async function registrarAbono(
       [entrada.clienteId], cx,
     );
     if (!cliente) throw new NoEncontrado('CLIENTE_NO_ENCONTRADO');
-    const saldoCliente = aCentavos(cliente.saldo_actual);
-    if (montoUsd > saldoCliente) throw new ReglaNegocio('ABONO_MAYOR_A_SALDO');
+
+    // Facturas objetivo: las marcadas por el usuario, o toda la deuda en FIFO.
+    const seleccion = [...new Set((entrada.creditoIds ?? []).map(Number).filter((n) => n > 0))];
+    const creditos = await creditosObjetivo(cx, entrada.clienteId, seleccion);
+    if (creditos.length === 0) throw new ReglaNegocio('CREDITO_YA_PAGADO');
+
+    const saldoObjetivo = creditos.reduce((acc, cr) => acc + aCentavos(cr.saldo_usd), 0n);
+    if (montoUsd > saldoObjetivo) {
+      if (montoUsd - saldoObjetivo > TOLERANCIA_CIERRE) throw new ReglaNegocio('ABONO_MAYOR_A_SALDO');
+      montoUsd = saldoObjetivo; // diferencia de redondeo de la tasa: se toma como pago exacto
+    } else if (saldoObjetivo - montoUsd <= TOLERANCIA_CIERRE) {
+      montoUsd = saldoObjetivo; // cierra la factura en vez de dejar 0,01 de deuda fantasma
+    }
 
     // Turno de caja (para el movimiento de efectivo).
     const turno = await turnoActivoDeUsuario(usuario.id, usuario.sucursalId);
@@ -125,14 +153,7 @@ export async function registrarAbono(
       cx,
     );
 
-    // Aplicacion FIFO a los creditos pendientes (mas antiguos primero).
-    const creditos = await query<{ id: number; saldo_usd: string; monto_original_usd: string }>(
-      `SELECT id, saldo_usd, monto_original_usd FROM creditos
-        WHERE cliente_id = ? AND estado IN ('PENDIENTE','PARCIAL','VENCIDO')
-        ORDER BY fecha_emision, id FOR UPDATE`,
-      [entrada.clienteId], cx,
-    );
-
+    // Aplicacion FIFO sobre las facturas objetivo (mas antiguas primero).
     let restante = montoUsd;
     for (const cr of creditos) {
       if (restante <= 0n) break;
@@ -185,8 +206,36 @@ export async function registrarAbono(
     }
 
     const saldoRestante = await queryOne<{ saldo_actual: string }>(`SELECT saldo_actual FROM clientes WHERE id = ?`, [entrada.clienteId], cx);
-    return { id: abonoId, numero: `${prefijo}${numero}`, monto_usd: centavosASql(montoUsd), saldo_restante: saldoRestante?.saldo_actual ?? '0' };
+    return {
+      id: abonoId, numero: `${prefijo}${numero}`,
+      monto_usd: centavosASql(montoUsd), aplicado_usd: centavosASql(aplicado),
+      saldo_restante: saldoRestante?.saldo_actual ?? '0',
+    };
   });
+}
+
+/**
+ * Creditos vivos a los que se aplicara el abono, bloqueados y en orden FIFO.
+ * Con `ids` se restringe a las facturas que el usuario marco; sin ids, toda la deuda.
+ */
+async function creditosObjetivo(
+  cx: Ejecutor, clienteId: Id, ids: number[],
+): Promise<Array<{ id: number; saldo_usd: string }>> {
+  const base = `SELECT id, saldo_usd FROM creditos
+                 WHERE cliente_id = ? AND estado IN ('PENDIENTE','PARCIAL','VENCIDO')`;
+  const orden = 'ORDER BY fecha_emision, id FOR UPDATE';
+
+  if (ids.length === 0) {
+    return query(`${base} ${orden}`, [clienteId], cx);
+  }
+  const marcas = ids.map(() => '?').join(',');
+  const filas = await query<{ id: number; saldo_usd: string }>(
+    `${base} AND id IN (${marcas}) ${orden}`, [clienteId, ...ids], cx,
+  );
+  // Una factura marcada que ya no esta pendiente (o no es de este cliente) es un
+  // dato viejo en pantalla: mejor fallar que cobrar sobre otra cosa.
+  if (filas.length !== ids.length) throw new NoEncontrado('CREDITO_NO_ENCONTRADO');
+  return filas;
 }
 
 async function siguienteConsecutivo(

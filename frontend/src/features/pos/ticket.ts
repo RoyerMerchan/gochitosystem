@@ -40,6 +40,10 @@ export function imprimirTicket(d: DatosTicket): void {
       <tr class="det">
         <td>${formatearNumero(i.cantidad, i.cantidad % 1 === 0 ? 0 : 3)} x ${formatearUSD(i.precioUnitario)}</td>
         <td class="r">${formatearUSD(i.total)}</td>
+      </tr>
+      <tr class="det">
+        <td>${formatearBs(i.precioUnitario * d.tasa)} c/u</td>
+        <td class="r">${formatearBs(i.total * d.tasa)}</td>
       </tr>`,
     )
     .join('');
