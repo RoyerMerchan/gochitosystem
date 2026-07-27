@@ -2,7 +2,7 @@
  * Modal de cobro bimonetario. El cajero agrega lineas de pago (cada metodo tiene
  * su moneda); se calcula en vivo lo pagado en USD, el faltante y las vueltas.
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Plus, Trash2, Banknote } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
 import { formatearUSD, formatearBs, aNumero } from '@/lib/formato';
@@ -39,6 +39,21 @@ function lineaEnUsd(l: LineaPago, tasa: number): number {
 export function ModalCobro({ abierto, totalUsd, tasa, onCerrar, onConfirmar, procesando }: Props) {
   const [lineas, setLineas] = useState<LineaPago[]>([]);
   const [monedaVuelto, setMonedaVuelto] = useState<'USD' | 'VES'>('VES');
+
+  /**
+   * Cada apertura arranca en cero.
+   *
+   * El componente nunca se desmonta (el padre solo cambia `abierto`), y tras una
+   * venta exitosa el POS cierra el modal sin pasar por `reiniciar()`. Sin esto,
+   * las lineas de pago de la venta anterior reaparecen en la venta siguiente y el
+   * cajero cobra el monto viejo.
+   */
+  useEffect(() => {
+    if (abierto) {
+      setLineas([]);
+      setMonedaVuelto('VES');
+    }
+  }, [abierto]);
 
   const pagadoUsd = useMemo(
     () => lineas.filter((l) => !l.metodo.esCredito).reduce((a, l) => a + lineaEnUsd(l, tasa), 0),

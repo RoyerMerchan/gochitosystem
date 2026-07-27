@@ -1,14 +1,14 @@
 /** Cartera: clientes con deuda, antigüedad de saldos y registro de abonos. */
 import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { CreditCard, HandCoins } from 'lucide-react';
+import { CreditCard, HandCoins, Eye } from 'lucide-react';
 import { obtener, crear } from '@/lib/axios';
 import { ErrorApi } from '@/lib/errores';
 import { Card, Cargando, EmptyState, Badge } from '@/components/ui/Feedback';
 import { Modal } from '@/components/ui/Modal';
 import { toast } from '@/store/toastStore';
 import { useTasaStore } from '@/store/tasaStore';
-import { formatearUSD, formatearBs, formatearFecha, aNumero } from '@/lib/formato';
+import { formatearUSD, formatearBs, formatearFecha, formatearCantidad, aNumero } from '@/lib/formato';
 import { METODOS_PAGO } from '@/features/pos/metodosPago';
 
 interface FilaCartera {
@@ -17,11 +17,20 @@ interface FilaCartera {
 }
 
 interface Deuda {
-  id: number; documento: string | null; fecha_emision: string; fecha_vencimiento: string;
+  id: number; venta_id: number | null; documento: string | null;
+  fecha_emision: string; fecha_vencimiento: string;
   monto_original_usd: string; saldo_usd: string; estado: string; dias_mora: number;
 }
 
 interface EstadoCuenta { creditos: Deuda[] }
+
+interface DetalleVenta {
+  venta: { numero: string; fecha: string; total_usd: string; tasa_cambio: string };
+  renglones: Array<{
+    linea: number; descripcion: string; cantidad: string;
+    precio_venta_unitario: string; total_linea: string;
+  }>;
+}
 
 const ESTADOS_VIVOS = ['PENDIENTE', 'PARCIAL', 'VENCIDO'];
 
@@ -47,6 +56,8 @@ export default function CreditosPage() {
    * sistema registra los Bs que entran de verdad.
    */
   const [monedaEntrada, setMonedaEntrada] = useState<'USD' | 'VES'>('VES');
+  /** Deuda cuyo detalle de productos está desplegado. */
+  const [verProductos, setVerProductos] = useState<number | null>(null);
   const [referencia, setReferencia] = useState('');
 
   const cartera = useQuery({
@@ -111,7 +122,7 @@ export default function CreditosPage() {
 
   const abrir = (c: FilaCartera) => {
     setAbonar(c); setSeleccion([]); setMontoManual(null); setReferencia('');
-    setMonedaEntrada(metodo.moneda);
+    setMonedaEntrada(metodo.moneda); setVerProductos(null);
   };
   const alternar = (id: number) => {
     setMontoManual(null); // el monto vuelve a seguir la selección
@@ -229,36 +240,49 @@ export default function CreditosPage() {
             {cuenta.isLoading ? <Cargando /> : deudas.length === 0 ? (
               <p className="rounded-lg border border-dashed border-gray-300 p-3 text-center text-sm text-gray-400 dark:border-gray-600">Sin facturas pendientes</p>
             ) : (
-              <div className="max-h-56 space-y-1 overflow-y-auto rounded-lg border border-gray-200 p-1 dark:border-gray-700">
+              <div className="max-h-72 space-y-1 overflow-y-auto rounded-lg border border-gray-200 p-1 dark:border-gray-700">
                 {deudas.map((d) => {
                   const marcada = seleccion.includes(d.id);
                   const aplica = aplicacion.get(d.id) ?? 0;
                   const saldo = aNumero(d.saldo_usd);
                   const queda = saldo - aplica;
+                  const abierta = verProductos === d.id;
                   return (
-                    <label key={d.id}
-                      className={`flex cursor-pointer items-center gap-3 rounded-lg p-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-700/50 ${marcada ? 'bg-amber-50 dark:bg-amber-900/20' : ''}`}>
-                      <input type="checkbox" checked={marcada} onChange={() => alternar(d.id)}
-                        className="h-4 w-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500" />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate font-medium">{d.documento ?? `Crédito #${d.id}`}</p>
-                        <p className="text-xs text-gray-400">
-                          Vence {formatearFecha(d.fecha_vencimiento)}
-                          {d.dias_mora > 0 && <span className="ml-1 text-red-500">· {d.dias_mora} d. de mora</span>}
-                        </p>
+                    <div key={d.id} className={`rounded-lg ${marcada ? 'bg-amber-50 dark:bg-amber-900/20' : ''}`}>
+                      <div className="flex items-center gap-3 p-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                        {/* El label envuelve solo lo que debe marcar el checkbox, no el botón de ver. */}
+                        <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
+                          <input type="checkbox" checked={marcada} onChange={() => alternar(d.id)}
+                            className="h-4 w-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500" />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate font-medium">{d.documento ?? `Crédito #${d.id}`}</p>
+                            <p className="text-xs text-gray-400">
+                              Vence {formatearFecha(d.fecha_vencimiento)}
+                              {d.dias_mora > 0 && <span className="ml-1 text-red-500">· {d.dias_mora} d. de mora</span>}
+                            </p>
+                          </div>
+                        </label>
+                        {d.venta_id != null && (
+                          <button onClick={() => setVerProductos(abierta ? null : d.id)}
+                            title="Ver qué productos se llevó en esta factura"
+                            className={`rounded-lg p-1.5 ${abierta ? 'bg-amber-500 text-white' : 'text-gray-400 hover:bg-gray-100 hover:text-amber-600 dark:hover:bg-gray-700'}`}>
+                            <Eye className="h-4 w-4" />
+                          </button>
+                        )}
+                        <div className="text-right tabular-nums">
+                          <p className="font-semibold">{formatearUSD(saldo)}</p>
+                          <p className="text-xs text-gray-400">{formatearBs(saldo * tasaNum)}</p>
+                        </div>
+                        <div className="w-24 text-right">
+                          {aplica > 0 ? (
+                            queda <= 0
+                              ? <Badge color="verde">Se paga</Badge>
+                              : <span className="text-xs text-amber-600">Abona {formatearUSD(aplica)}<br />queda {formatearUSD(queda)}</span>
+                          ) : <span className="text-xs text-gray-300 dark:text-gray-600">—</span>}
+                        </div>
                       </div>
-                      <div className="text-right tabular-nums">
-                        <p className="font-semibold">{formatearUSD(saldo)}</p>
-                        <p className="text-xs text-gray-400">{formatearBs(saldo * tasaNum)}</p>
-                      </div>
-                      <div className="w-24 text-right">
-                        {aplica > 0 ? (
-                          queda <= 0
-                            ? <Badge color="verde">Se paga</Badge>
-                            : <span className="text-xs text-amber-600">Abona {formatearUSD(aplica)}<br />queda {formatearUSD(queda)}</span>
-                        ) : <span className="text-xs text-gray-300 dark:text-gray-600">—</span>}
-                      </div>
-                    </label>
+                      {abierta && <ProductosDeVenta ventaId={d.venta_id!} tasaHoy={tasaNum} />}
+                    </div>
                   );
                 })}
               </div>
@@ -340,6 +364,63 @@ export default function CreditosPage() {
           )}
         </div>
       </Modal>
+    </div>
+  );
+}
+
+/**
+ * Productos que se llevó el cliente en la factura de esa deuda.
+ * Los Bs van con la tasa CONGELADA de la venta (`tasa_cambio`), no con la de hoy:
+ * es lo que costó ese día. La tasa de hoy solo se muestra si el documento no la trae.
+ */
+function ProductosDeVenta({ ventaId, tasaHoy }: { ventaId: number; tasaHoy: number }) {
+  const venta = useQuery({
+    queryKey: ['venta-detalle', ventaId],
+    queryFn: () => obtener<DetalleVenta>(`/ventas/${ventaId}`),
+  });
+
+  if (venta.isLoading) return <div className="px-2 pb-2"><Cargando /></div>;
+  if (venta.isError) {
+    return (
+      <p className="px-4 pb-2 text-xs text-gray-400">
+        No se pudo cargar el detalle de la factura (¿permiso para ver ventas?).
+      </p>
+    );
+  }
+  if (!venta.data) return null;
+
+  const tasa = aNumero(venta.data.venta.tasa_cambio) || tasaHoy;
+
+  return (
+    <div className="mx-2 mb-2 rounded-lg bg-gray-50 p-2 dark:bg-gray-900/40">
+      <p className="mb-1 text-[11px] uppercase tracking-wide text-gray-400">
+        Factura {venta.data.venta.numero} · {formatearFecha(venta.data.venta.fecha)}
+      </p>
+      <table className="w-full text-xs">
+        <tbody>
+          {venta.data.renglones.map((r) => (
+            <tr key={r.linea} className="border-t border-gray-200 first:border-0 dark:border-gray-700">
+              <td className="py-1 pr-2">
+                <span className="font-medium">{r.descripcion}</span>
+                <span className="ml-1 text-gray-400">
+                  {formatearCantidad(r.cantidad)} × {formatearUSD(r.precio_venta_unitario)}
+                </span>
+              </td>
+              <td className="py-1 text-right tabular-nums">
+                {formatearUSD(r.total_linea)}
+                <span className="block text-[11px] text-gray-400">{formatearBs(aNumero(r.total_linea) * tasa)}</span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="mt-1 flex justify-between border-t border-gray-200 pt-1 text-xs font-bold dark:border-gray-700">
+        <span>Total de la factura</span>
+        <span className="tabular-nums">
+          {formatearUSD(venta.data.venta.total_usd)}
+          <span className="ml-1 font-normal text-gray-400">{formatearBs(aNumero(venta.data.venta.total_usd) * tasa)}</span>
+        </span>
+      </div>
     </div>
   );
 }

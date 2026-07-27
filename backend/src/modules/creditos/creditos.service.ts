@@ -42,7 +42,7 @@ export async function estadoCuenta(clienteId: Id): Promise<unknown> {
   if (!cliente) throw new NoEncontrado('CLIENTE_NO_ENCONTRADO');
 
   const creditos = await query(
-    `SELECT cr.id, v.prefijo || v.numero AS documento, cr.fecha_emision, cr.fecha_vencimiento,
+    `SELECT cr.id, cr.venta_id, v.prefijo || v.numero AS documento, cr.fecha_emision, cr.fecha_vencimiento,
             cr.monto_original_usd, cr.saldo_usd, cr.estado, (CURRENT_DATE - cr.fecha_vencimiento) AS dias_mora
        FROM creditos cr LEFT JOIN ventas v ON v.id = cr.venta_id
       WHERE cr.cliente_id = ? AND cr.estado <> 'ANULADO'
