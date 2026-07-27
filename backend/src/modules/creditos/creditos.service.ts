@@ -9,6 +9,7 @@ import {
 } from '../../database/pool';
 import { aCentavos, centavosASql, dividirRedondeando } from '../../utils/dinero';
 import { aTasaCambio, montoMonedaAUsdPiso, aMontoMoneda, montoMonedaASql } from '../../utils/moneda';
+import { siguienteConsecutivo } from '../../utils/consecutivos';
 import { ESTADO_CREDITO, ESTADO_ABONO, TIPO_DOCUMENTO } from '../../config/constantes';
 import { registrarMovimiento, turnoActivoDeUsuario } from '../caja/caja.service';
 import type { Id, UsuarioAutenticado } from '../../tipos/comunes';
@@ -238,19 +239,3 @@ async function creditosObjetivo(
   return filas;
 }
 
-async function siguienteConsecutivo(
-  cx: Ejecutor, sucursalId: number, tipo: string, anio: number,
-): Promise<{ numero: number; prefijo: string }> {
-  const fila = await queryOne<{ id: number; ultimo_numero: number; prefijo: string }>(
-    `SELECT id, ultimo_numero, prefijo FROM consecutivos WHERE sucursal_id = ? AND tipo_documento = ? AND anio = ? LIMIT 1 FOR UPDATE`,
-    [sucursalId, tipo, anio], cx,
-  );
-  if (!fila) {
-    await insertar(`INSERT INTO consecutivos (sucursal_id, tipo_documento, anio, prefijo, ultimo_numero) VALUES (?, ?, ?, 'A-', 1)`, [sucursalId, tipo, anio], cx);
-    return { numero: 1, prefijo: 'A-' };
-  }
-  // pg devuelve BIGINT como string: sin Number(), "1" + 1 concatenaria ("11").
-  const nuevo = Number(fila.ultimo_numero) + 1;
-  await ejecutar(`UPDATE consecutivos SET ultimo_numero = ? WHERE id = ?`, [nuevo, fila.id], cx);
-  return { numero: nuevo, prefijo: fila.prefijo };
-}

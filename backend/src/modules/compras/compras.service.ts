@@ -16,6 +16,7 @@ import {
   multiplicarPorCantidad, dividirRedondeando, sumar, aTasa,
 } from '../../utils/dinero';
 import { aTasaCambio, usdABs, bsASql } from '../../utils/moneda';
+import { siguienteConsecutivo } from '../../utils/consecutivos';
 import {
   TIPO_MOVIMIENTO_INVENTARIO, DOCUMENTO_TIPO_MOVIMIENTO, SIGNO_MOVIMIENTO_INVENTARIO,
   ESTADO_COMPRA, CONDICION_PAGO, TIPO_DOCUMENTO,
@@ -208,26 +209,6 @@ function tasaMilesimasASql(tasaMilesimas: bigint): string {
   return `${tasaMilesimas / 1000n}.${(tasaMilesimas % 1000n).toString().padStart(3, '0')}`;
 }
 
-async function siguienteConsecutivo(
-  cx: Ejecutor, sucursalId: number, tipo: string, anio: number,
-): Promise<{ numero: number; prefijo: string }> {
-  const fila = await queryOne<{ id: number; ultimo_numero: number; prefijo: string }>(
-    `SELECT id, ultimo_numero, prefijo FROM consecutivos
-      WHERE sucursal_id = ? AND tipo_documento = ? AND anio = ? LIMIT 1 FOR UPDATE`,
-    [sucursalId, tipo, anio], cx,
-  );
-  if (!fila) {
-    await insertar(
-      `INSERT INTO consecutivos (sucursal_id, tipo_documento, anio, prefijo, ultimo_numero) VALUES (?, ?, ?, 'C-', 1)`,
-      [sucursalId, tipo, anio], cx,
-    );
-    return { numero: 1, prefijo: 'C-' };
-  }
-  // pg devuelve BIGINT como string: sin Number(), "1" + 1 concatenaria ("11").
-  const nuevo = Number(fila.ultimo_numero) + 1;
-  await ejecutar(`UPDATE consecutivos SET ultimo_numero = ? WHERE id = ?`, [nuevo, fila.id], cx);
-  return { numero: nuevo, prefijo: fila.prefijo };
-}
 
 export async function listar(
   sucursalId: number, desplazamiento: number, limite: number,

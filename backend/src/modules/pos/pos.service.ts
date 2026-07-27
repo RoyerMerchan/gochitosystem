@@ -54,6 +54,7 @@ import {
   ORIGEN_CREDITO,
   TIPO_DOCUMENTO,
 } from '../../config/constantes';
+import { siguienteConsecutivo } from '../../utils/consecutivos';
 import { exigirTasaDeHoy } from '../tasas/tasas.service';
 import { turnoActivoDeUsuario, registrarMovimiento } from '../caja/caja.service';
 import type { Id } from '../../tipos/comunes';
@@ -311,34 +312,6 @@ function tasaMilesimasASql(tasaMilesimas: bigint): string {
   return `${entero}.${dec}`;
 }
 
-/** Entrega el siguiente numero de un consecutivo, con bloqueo. */
-async function siguienteConsecutivo(
-  cx: Ejecutor,
-  sucursalId: number,
-  tipo: string,
-  anio: number,
-): Promise<{ numero: number; prefijo: string }> {
-  const fila = await queryOne<{ id: number; ultimo_numero: number; prefijo: string }>(
-    `SELECT id, ultimo_numero, prefijo FROM consecutivos
-      WHERE sucursal_id = ? AND tipo_documento = ? AND anio = ? LIMIT 1 FOR UPDATE`,
-    [sucursalId, tipo, anio],
-    cx,
-  );
-  if (!fila) {
-    // Crea el consecutivo del anio si no existe.
-    await insertar(
-      `INSERT INTO consecutivos (sucursal_id, tipo_documento, anio, prefijo, ultimo_numero)
-       VALUES (?, ?, ?, '', 1)`,
-      [sucursalId, tipo, anio],
-      cx,
-    );
-    return { numero: 1, prefijo: '' };
-  }
-  // pg devuelve BIGINT como string: sin Number(), "1" + 1 concatenaria ("11").
-  const nuevo = Number(fila.ultimo_numero) + 1;
-  await ejecutar(`UPDATE consecutivos SET ultimo_numero = ? WHERE id = ?`, [nuevo, fila.id], cx);
-  return { numero: nuevo, prefijo: fila.prefijo };
-}
 
 /** Bloquea cada producto, toma el snapshot de costo y calcula el renglon. */
 async function calcularRenglones(
