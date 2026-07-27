@@ -85,6 +85,7 @@ const esquemaListadoVentas = esquemaPaginacion.extend({
   hasta: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   metodoPagoId: z.coerce.number().int().positive().optional(),
   estado: z.enum(['ABIERTA', 'CERRADA', 'ANULADA']).optional(),
+  busqueda: z.string().trim().max(120).optional(),
 });
 
 rutasVentas.get(
@@ -98,7 +99,7 @@ rutasVentas.get(
       const u = usuarioActual(req);
       const { datos, total } = await pos.listarVentas(u.sucursalId, {
         desde: q.desde, hasta: q.hasta, metodoPagoId: q.metodoPagoId, estado: q.estado,
-        desplazamiento: p.desplazamiento, limite: p.limite,
+        busqueda: q.busqueda, desplazamiento: p.desplazamiento, limite: p.limite,
       });
       enviarOk(res, datos, construirMeta(p, total));
     } catch (e) {

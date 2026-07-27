@@ -1,12 +1,13 @@
 /** Historial de ventas con método de pago, filtros y anulación. */
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Receipt, Ban, Filter, X, Eye } from 'lucide-react';
+import { Receipt, Ban, Filter, X, Eye, Search } from 'lucide-react';
 import { obtenerPaginado, obtener, crear } from '@/lib/axios';
 import { ErrorApi } from '@/lib/errores';
 import { Card, Cargando, Badge, EmptyState } from '@/components/ui/Feedback';
 import { Modal } from '@/components/ui/Modal';
 import { FiltroPeriodo } from '@/components/ui/FiltroPeriodo';
+import { useDebounce } from '@/hooks/useDebounce';
 import { toast } from '@/store/toastStore';
 import { useAuthStore } from '@/store/authStore';
 import { METODOS_PAGO } from '@/features/pos/metodosPago';
@@ -14,13 +15,14 @@ import { formatearUSD, formatearBs, formatearFechaHora, aNumero } from '@/lib/fo
 
 interface VentaFila {
   id: number; numero: string; fecha: string; total_usd: string; total_bs: string;
-  utilidad_total: string; estado: string; es_credito: number; cliente: string; cajero: string;
+  utilidad_total: string; estado: string; es_credito: boolean; cliente: string; cajero: string;
   metodos_pago: string | null;
 }
 interface DetalleVenta {
   venta: {
     numero: string; fecha: string; cliente_nombre: string; cajero: string; estado: string;
     total_usd: string; total_bs: string; tasa_cambio: string; impuesto_total: string;
+    es_credito: boolean; total_credito: string;
   };
   renglones: Array<{
     linea: number; descripcion: string; cantidad: string;
@@ -44,14 +46,17 @@ export default function VentasPage() {
   const [desde, setDesde] = useState('');
   const [hasta, setHasta] = useState('');
   const [metodoPagoId, setMetodoPagoId] = useState('');
+  const [busqueda, setBusqueda] = useState('');
+  const q = useDebounce(busqueda.trim(), 300);
 
   const params = new URLSearchParams({ limite: '100' });
   if (desde) params.set('desde', desde);
   if (hasta) params.set('hasta', hasta);
   if (metodoPagoId) params.set('metodoPagoId', metodoPagoId);
+  if (q) params.set('busqueda', q);
 
   const ventas = useQuery({
-    queryKey: ['ventas', 'lista', desde, hasta, metodoPagoId],
+    queryKey: ['ventas', 'lista', desde, hasta, metodoPagoId, q],
     queryFn: () => obtenerPaginado<VentaFila>(`/ventas?${params.toString()}`),
   });
 
@@ -65,8 +70,8 @@ export default function VentasPage() {
     onError: (e) => toast.error(e instanceof ErrorApi ? e.message : 'No se pudo anular'),
   });
 
-  const limpiarFiltros = () => { setDesde(''); setHasta(''); setMetodoPagoId(''); };
-  const hayFiltros = desde || hasta || metodoPagoId;
+  const limpiarFiltros = () => { setDesde(''); setHasta(''); setMetodoPagoId(''); setBusqueda(''); };
+  const hayFiltros = desde || hasta || metodoPagoId || q;
   const filas = ventas.data?.datos ?? [];
 
   return (
@@ -80,6 +85,15 @@ export default function VentasPage() {
       <Card>
         <FiltroPeriodo desde={desde} hasta={hasta} onCambiar={(d, h) => { setDesde(d); setHasta(h); }} />
         <div className="mt-3 flex flex-wrap items-end gap-3">
+          <div className="min-w-[16rem] flex-1">
+            <label className="mb-1 block text-xs font-medium text-gray-500">Cliente o n.º de venta</label>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+              <input value={busqueda} onChange={(e) => setBusqueda(e.target.value)}
+                placeholder="Buscar por cliente, cédula/RIF o n.º…"
+                className={`${INP} w-full pl-9`} />
+            </div>
+          </div>
           <div>
             <label className="mb-1 flex items-center gap-1 text-xs font-medium text-gray-500"><Filter className="h-3.5 w-3.5" /> Desde</label>
             <input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className={INP} />
@@ -123,13 +137,19 @@ export default function VentasPage() {
                     <td className="p-3 font-medium">{v.numero}</td>
                     <td className="p-3 text-gray-500">{formatearFechaHora(v.fecha)}</td>
                     <td className="p-3">{v.cliente}</td>
-                    <td className="p-3 text-gray-600 dark:text-gray-300">{v.metodos_pago ?? (v.es_credito === 1 ? 'Crédito' : '—')}</td>
+                    {/* Una venta a crédito puede llevar abono inicial: se listan los dos. */}
+                    <td className="p-3 text-gray-600 dark:text-gray-300">
+                      {v.es_credito
+                        ? (v.metodos_pago ? `${v.metodos_pago} + Crédito` : 'Crédito')
+                        : (v.metodos_pago ?? '—')}
+                    </td>
                     <td className="p-3 text-right tabular-nums">{formatearUSD(v.total_usd)}</td>
                     <td className="p-3 text-right tabular-nums text-gray-500">{formatearBs(v.total_bs)}</td>
                     <td className="p-3 text-right tabular-nums text-green-600">{formatearUSD(v.utilidad_total)}</td>
                     <td className="p-3 text-center">
+                      {/* es_credito llega como boolean de Postgres: nunca comparar contra 1. */}
                       {v.estado === 'ANULADA' ? <Badge color="rojo">Anulada</Badge>
-                        : v.es_credito === 1 ? <Badge color="amarillo">Crédito</Badge>
+                        : v.es_credito ? <Badge color="amarillo">Crédito</Badge>
                         : <Badge color="verde">Pagada</Badge>}
                     </td>
                     <td className="p-3 text-right">
@@ -178,7 +198,12 @@ export default function VentasPage() {
               <div><span className="text-gray-500">Fecha:</span> <span className="font-medium">{formatearFechaHora(detalle.data.venta.fecha)}</span></div>
               <div><span className="text-gray-500">Cliente:</span> <span className="font-medium">{detalle.data.venta.cliente_nombre}</span></div>
               <div><span className="text-gray-500">Cajero:</span> <span className="font-medium">{detalle.data.venta.cajero}</span></div>
-              <div><span className="text-gray-500">Estado:</span> <span className="font-medium">{detalle.data.venta.estado}</span></div>
+              <div>
+                <span className="text-gray-500">Estado:</span>{' '}
+                {detalle.data.venta.estado === 'ANULADA' ? <Badge color="rojo">Anulada</Badge>
+                  : detalle.data.venta.es_credito ? <Badge color="amarillo">Crédito</Badge>
+                  : <Badge color="verde">Pagada</Badge>}
+              </div>
             </div>
 
             <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
@@ -224,6 +249,14 @@ export default function VentasPage() {
                     <span className="tabular-nums">{p.moneda === 'VES' ? formatearBs(p.monto_moneda) : formatearUSD(p.monto_moneda)} ({formatearUSD(p.monto_usd)})</span>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* Monto financiado al emitir la venta; el saldo vivo se ve en Créditos. */}
+            {detalle.data.venta.es_credito && (
+              <div className="flex justify-between rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-medium text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
+                <span>Quedó a crédito</span>
+                <span className="tabular-nums">{formatearUSD(detalle.data.venta.total_credito)}</span>
               </div>
             )}
           </div>

@@ -656,6 +656,7 @@ export interface FiltrosVentas {
   hasta?: string;
   metodoPagoId?: number;
   estado?: string;
+  busqueda?: string;
   desplazamiento: number;
   limite: number;
 }
@@ -673,6 +674,17 @@ export async function listarVentas(
   if (filtros.metodoPagoId) {
     cond.push('EXISTS (SELECT 1 FROM pagos pg WHERE pg.venta_id = v.id AND pg.metodo_pago_id = ?)');
     params.push(filtros.metodoPagoId);
+  }
+  // Busca por cliente (nombre o documento) o por numero de documento de la venta.
+  // Se usa EXISTS y no el JOIN para que la condicion sirva igual en el COUNT.
+  if (filtros.busqueda) {
+    cond.push(
+      `(EXISTS (SELECT 1 FROM clientes cb
+                 WHERE cb.id = v.cliente_id AND (cb.nombre ILIKE ? OR cb.documento ILIKE ?))
+        OR (v.prefijo || v.numero) ILIKE ?)`,
+    );
+    const like = `%${filtros.busqueda}%`;
+    params.push(like, like, like);
   }
   const where = `WHERE ${cond.join(' AND ')}`;
 

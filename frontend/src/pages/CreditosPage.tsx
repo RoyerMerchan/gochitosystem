@@ -1,7 +1,7 @@
 /** Cartera: clientes con deuda, antigüedad de saldos y registro de abonos. */
 import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { CreditCard, HandCoins, Eye } from 'lucide-react';
+import { CreditCard, HandCoins, Eye, Search } from 'lucide-react';
 import { obtener, crear } from '@/lib/axios';
 import { ErrorApi } from '@/lib/errores';
 import { Card, Cargando, EmptyState, Badge } from '@/components/ui/Feedback';
@@ -59,6 +59,7 @@ export default function CreditosPage() {
   /** Deuda cuyo detalle de productos está desplegado. */
   const [verProductos, setVerProductos] = useState<number | null>(null);
   const [referencia, setReferencia] = useState('');
+  const [busqueda, setBusqueda] = useState('');
 
   const cartera = useQuery({
     queryKey: ['cartera'],
@@ -149,6 +150,15 @@ export default function CreditosPage() {
     onError: (e) => toast.error(e instanceof ErrorApi ? e.message : 'No se pudo registrar el abono'),
   });
 
+  // La cartera llega completa del backend: el filtro por cliente es local.
+  const filasCartera = useMemo(() => {
+    const q = busqueda.trim().toLowerCase();
+    if (!q) return cartera.data ?? [];
+    return (cartera.data ?? []).filter(
+      (c) => c.nombre.toLowerCase().includes(q) || (c.documento ?? '').toLowerCase().includes(q),
+    );
+  }, [cartera.data, busqueda]);
+
   const totalCartera = (cartera.data ?? []).reduce((a, c) => a + Number(c.saldo_usd), 0);
   const puedeRegistrar = montoUsd > 0 && !excede && !registrarAbono.isPending
     && (!metodo.requiereReferencia || Boolean(referencia))
@@ -162,11 +172,19 @@ export default function CreditosPage() {
           <h1 className="text-2xl font-bold">Créditos y cartera</h1>
           <p className="text-sm text-gray-500">Deuda total: {formatearUSD(totalCartera)} · {formatearBs(totalCartera * tasaNum)}</p>
         </div>
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+          <input value={busqueda} onChange={(e) => setBusqueda(e.target.value)}
+            placeholder="Buscar cliente o cédula/RIF…"
+            className="w-64 rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm focus:border-amber-500 focus:outline-none dark:border-gray-600 dark:bg-gray-800" />
+        </div>
       </div>
 
       <Card padding={false}>
-        {cartera.isLoading ? <Cargando /> : (cartera.data ?? []).length === 0 ? (
-          <EmptyState titulo="Sin cartera pendiente" descripcion="Ningún cliente tiene deuda." icono={<CreditCard className="h-12 w-12" />} />
+        {cartera.isLoading ? <Cargando /> : filasCartera.length === 0 ? (
+          <EmptyState titulo={busqueda ? 'Sin resultados' : 'Sin cartera pendiente'}
+            descripcion={busqueda ? 'Ningún cliente con deuda coincide con la búsqueda.' : 'Ningún cliente tiene deuda.'}
+            icono={<CreditCard className="h-12 w-12" />} />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -183,9 +201,12 @@ export default function CreditosPage() {
                 </tr>
               </thead>
               <tbody>
-                {cartera.data!.map((c) => (
+                {filasCartera.map((c) => (
                   <tr key={c.cliente_id} className="border-t border-gray-100 dark:border-gray-700">
-                    <td className="p-3 font-medium">{c.nombre}</td>
+                    <td className="p-3 font-medium">
+                      {c.nombre}
+                      {c.documento && <span className="block text-xs font-normal text-gray-400">{c.documento}</span>}
+                    </td>
                     <td className="p-3 text-right tabular-nums text-gray-500">{formatearUSD(c.por_vencer, false)}</td>
                     <td className="p-3 text-right tabular-nums">{formatearUSD(c.d1_30, false)}</td>
                     <td className="p-3 text-right tabular-nums text-amber-600">{formatearUSD(c.d31_60, false)}</td>
