@@ -41,6 +41,12 @@ export default function CreditosPage() {
   const [seleccion, setSeleccion] = useState<number[]>([]);
   /** null = el monto lo manda la selección; string = el usuario escribió otro monto. */
   const [montoManual, setMontoManual] = useState<string | null>(null);
+  /**
+   * Moneda en la que el cajero ESCRIBE el monto. Puede no ser la del método: el
+   * cliente dice "te pago 2 dólares" y paga por Pago Móvil; se escribe en $ y el
+   * sistema registra los Bs que entran de verdad.
+   */
+  const [monedaEntrada, setMonedaEntrada] = useState<'USD' | 'VES'>('VES');
   const [referencia, setReferencia] = useState('');
 
   const cartera = useQuery({
@@ -55,7 +61,7 @@ export default function CreditosPage() {
   });
 
   const metodo = METODOS_PAGO.find((m) => m.id === metodoId)!;
-  const enBs = metodo.moneda === 'VES';
+  const enBs = monedaEntrada === 'VES';
 
   // Deudas vivas, más antiguas primero (el backend ya las devuelve por fecha_emision).
   const deudas = useMemo(
@@ -77,7 +83,17 @@ export default function CreditosPage() {
     ? (tasaNum > 0 ? pisoCentavos(aNumero(monto) / tasaNum) : 0)
     : pisoCentavos(aNumero(monto));
   const montoUsd = Math.abs(montoUsdCrudo - saldoObjetivo) <= 0.01 ? saldoObjetivo : montoUsdCrudo;
+  const montoBs = montoUsd * tasaNum;
   const excede = montoUsd > saldoObjetivo;
+
+  /**
+   * Lo que se envía al backend va SIEMPRE en la moneda del método de pago (es la
+   * plata que entra a caja). Si se escribió en la otra moneda, se convierte acá.
+   */
+  const montoEnvio = metodo.moneda === 'VES'
+    ? (enBs ? monto : techoCentavos(montoUsd * tasaNum).toFixed(2))
+    : (enBs ? montoUsd.toFixed(2) : monto);
+  const monedaDistinta = metodo.moneda !== monedaEntrada;
 
   // Previsualización: cómo caería el abono factura por factura (FIFO).
   const aplicacion = useMemo(() => {
@@ -95,6 +111,7 @@ export default function CreditosPage() {
 
   const abrir = (c: FilaCartera) => {
     setAbonar(c); setSeleccion([]); setMontoManual(null); setReferencia('');
+    setMonedaEntrada(metodo.moneda);
   };
   const alternar = (id: number) => {
     setMontoManual(null); // el monto vuelve a seguir la selección
@@ -108,7 +125,7 @@ export default function CreditosPage() {
   const registrarAbono = useMutation({
     mutationFn: () => crear('/abonos', {
       clienteId: abonar!.cliente_id, metodoPagoId: metodoId, moneda: metodo.moneda,
-      montoMoneda: monto,
+      montoMoneda: montoEnvio,
       creditoIds: seleccion.length > 0 ? seleccion : undefined,
       referencia: referencia || undefined,
     }),
@@ -124,7 +141,8 @@ export default function CreditosPage() {
   const totalCartera = (cartera.data ?? []).reduce((a, c) => a + Number(c.saldo_usd), 0);
   const puedeRegistrar = montoUsd > 0 && !excede && !registrarAbono.isPending
     && (!metodo.requiereReferencia || Boolean(referencia))
-    && !(enBs && tasaNum <= 0);
+    // Sin tasa del día no hay conversión posible en ninguno de los dos sentidos.
+    && !((enBs || metodo.moneda === 'VES') && tasaNum <= 0);
 
   return (
     <div className="space-y-4">
@@ -250,26 +268,50 @@ export default function CreditosPage() {
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <label className="mb-1 block text-xs font-medium text-gray-500">Método de pago</label>
-              <select value={metodoId} onChange={(e) => { setMetodoId(Number(e.target.value)); setMontoManual(null); }} className={INP}>
+              <select value={metodoId}
+                onChange={(e) => {
+                  const id = Number(e.target.value);
+                  setMetodoId(id);
+                  // El monto se escribe por defecto en la moneda del método elegido.
+                  setMonedaEntrada(METODOS_PAGO.find((m) => m.id === id)?.moneda ?? 'VES');
+                  setMontoManual(null);
+                }} className={INP}>
                 {METODOS_PAGO.filter((m) => !m.esCredito).map((m) => <option key={m.id} value={m.id}>{m.nombre} ({m.moneda})</option>)}
               </select>
             </div>
             <div>
               <label className="mb-1 flex items-center justify-between text-xs font-medium text-gray-500">
-                <span>Monto en {enBs ? 'bolívares' : 'dólares'}</span>
+                <span>Monto</span>
                 {montoManual !== null && (
                   <button onClick={() => setMontoManual(null)} className="text-amber-600 hover:underline">Pagar completo</button>
                 )}
               </label>
-              <input type="number" step="0.01" min="0" value={monto}
-                onChange={(e) => setMontoManual(e.target.value)}
-                onFocus={(e) => e.currentTarget.select()}
-                className={INP} placeholder="0.00" />
+              <div className="flex gap-2">
+                {/* Se puede escribir en $ o en Bs; abajo se ve siempre la conversión. */}
+                <div className="flex overflow-hidden rounded-lg border border-gray-300 dark:border-gray-600">
+                  {(['USD', 'VES'] as const).map((m) => (
+                    <button key={m} onClick={() => { setMonedaEntrada(m); setMontoManual(null); }}
+                      disabled={m === 'VES' && tasaNum <= 0}
+                      className={`px-3 py-2 text-sm font-bold disabled:opacity-40 ${monedaEntrada === m ? 'bg-amber-500 text-white' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700'}`}>
+                      {m === 'USD' ? '$' : 'Bs'}
+                    </button>
+                  ))}
+                </div>
+                <input type="number" step="0.01" min="0" value={monto}
+                  onChange={(e) => setMontoManual(e.target.value)}
+                  onFocus={(e) => e.currentTarget.select()}
+                  className={INP} placeholder="0.00" />
+              </div>
               <p className="mt-1 text-xs text-gray-400">
-                {enBs
-                  ? (tasaNum > 0 ? `≈ ${formatearUSD(montoUsd)} a la tasa de hoy (${formatearBs(tasaNum)}/$)` : 'No hay tasa registrada hoy')
-                  : `≈ ${formatearBs(montoUsd * tasaNum)}`}
+                {tasaNum > 0
+                  ? `${formatearUSD(montoUsd)} · ${formatearBs(montoBs)} (tasa ${formatearBs(tasaNum)}/$)`
+                  : 'No hay tasa registrada hoy'}
               </p>
+              {monedaDistinta && tasaNum > 0 && montoUsd > 0 && (
+                <p className="mt-1 text-xs text-amber-600">
+                  Entra por {metodo.nombre}: se registra {metodo.moneda === 'VES' ? formatearBs(montoEnvio) : formatearUSD(montoEnvio)}
+                </p>
+              )}
             </div>
           </div>
 
