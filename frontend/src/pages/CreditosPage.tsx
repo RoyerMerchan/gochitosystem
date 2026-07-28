@@ -170,7 +170,7 @@ export default function CreditosPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold">Créditos y cartera</h1>
           <p className="text-sm text-gray-500">Deuda total: {formatearUSD(totalCartera)} · {formatearBs(totalCartera * tasaNum)}</p>
@@ -179,7 +179,7 @@ export default function CreditosPage() {
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
           <input value={busqueda} onChange={(e) => setBusqueda(e.target.value)}
             placeholder="Buscar cliente o cédula/RIF…"
-            className="w-64 rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm focus:border-amber-500 focus:outline-none dark:border-gray-600 dark:bg-gray-800" />
+            className="w-full rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm focus:border-amber-500 focus:outline-none dark:border-gray-600 dark:bg-gray-800 sm:w-64" />
         </div>
       </div>
 
@@ -189,7 +189,43 @@ export default function CreditosPage() {
             descripcion={busqueda ? 'Ningún cliente con deuda coincide con la búsqueda.' : 'Ningún cliente tiene deuda.'}
             icono={<CreditCard className="h-12 w-12" />} />
         ) : (
-          <div className="overflow-x-auto">
+          <>
+            {/* Teléfono: tarjeta por cliente. La antigüedad va en dos filas de chips. */}
+            <ul className="divide-y divide-gray-100 md:hidden dark:divide-gray-700">
+              {filasCartera.map((c) => (
+                <li key={c.cliente_id} className="space-y-2 p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">{c.nombre}</p>
+                      {c.documento && <p className="text-xs text-gray-400">{c.documento}</p>}
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <p className="font-bold tabular-nums">{formatearUSD(c.saldo_usd)}</p>
+                      <p className="text-xs tabular-nums text-gray-400">{formatearBs(aNumero(c.saldo_usd) * tasaNum)}</p>
+                    </div>
+                  </div>
+                  {/* Solo los tramos con deuda: ahorra espacio y resalta la mora. */}
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                    {([
+                      ['Por vencer', c.por_vencer, 'text-gray-500'],
+                      ['1-30', c.d1_30, 'text-gray-600 dark:text-gray-300'],
+                      ['31-60', c.d31_60, 'text-amber-600'],
+                      ['61-90', c.d61_90, 'text-orange-600'],
+                      ['+90', c.d90_mas, 'text-red-600 font-semibold'],
+                    ] as const).filter(([, monto]) => aNumero(monto) > 0).map(([etiqueta, monto, color]) => (
+                      <span key={etiqueta} className={color}>
+                        {etiqueta}: <span className="tabular-nums">{formatearUSD(monto, false)}</span>
+                      </span>
+                    ))}
+                  </div>
+                  <button onClick={() => abrir(c)} className="flex w-full items-center justify-center gap-1 rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold text-white active:bg-green-700">
+                    <HandCoins className="h-4 w-4" /> Abonar
+                  </button>
+                </li>
+              ))}
+            </ul>
+
+            <div className="hidden overflow-x-auto md:block">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 text-xs uppercase text-gray-500 dark:bg-gray-700/50">
                 <tr>
@@ -228,13 +264,14 @@ export default function CreditosPage() {
                 ))}
               </tbody>
             </table>
-          </div>
+            </div>
+          </>
         )}
       </Card>
 
       <Modal abierto={Boolean(abonar)} onCerrar={() => setAbonar(null)} titulo={`Abono de ${abonar?.nombre ?? ''}`} ancho="lg"
         pie={
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-sm">
               <span className="text-gray-500">
                 {seleccion.length > 0 ? `${seleccion.length} factura(s) marcada(s):` : 'Toda la deuda:'}
@@ -243,7 +280,7 @@ export default function CreditosPage() {
               {excede && <p className="text-xs font-medium text-red-500">El monto supera lo que se va a pagar</p>}
             </div>
             <button onClick={() => registrarAbono.mutate()} disabled={!puedeRegistrar}
-              className="rounded-lg bg-green-600 px-5 py-2 font-semibold text-white hover:bg-green-700 disabled:opacity-50">
+              className="w-full shrink-0 rounded-lg bg-green-600 px-5 py-2 font-semibold text-white hover:bg-green-700 disabled:opacity-50 sm:w-auto">
               {registrarAbono.isPending ? 'Registrando…' : `Abonar ${formatearUSD(montoUsd)}`}
             </button>
           </div>
@@ -273,7 +310,7 @@ export default function CreditosPage() {
                   const abierta = verProductos === d.id;
                   return (
                     <div key={d.id} className={`rounded-lg ${marcada ? 'bg-amber-50 dark:bg-amber-900/20' : ''}`}>
-                      <div className="flex items-center gap-3 p-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 p-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-700/50">
                         {/* El label envuelve solo lo que debe marcar el checkbox, no el botón de ver. */}
                         <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
                           <input type="checkbox" checked={marcada} onChange={() => alternar(d.id)}
@@ -297,7 +334,8 @@ export default function CreditosPage() {
                           <p className="font-semibold">{formatearUSD(saldo)}</p>
                           <p className="text-xs text-gray-400">{formatearBs(saldo * tasaNum)}</p>
                         </div>
-                        <div className="w-24 text-right">
+                        {/* En teléfono baja a su propia línea en vez de apretar la fila. */}
+                        <div className="w-full text-right sm:w-24">
                           {aplica > 0 ? (
                             queda <= 0
                               ? <Badge color="verde">Se paga</Badge>
@@ -348,7 +386,7 @@ export default function CreditosPage() {
                 <input type="number" step="0.01" min="0" value={monto}
                   onChange={(e) => setMontoManual(e.target.value)}
                   onFocus={(e) => e.currentTarget.select()}
-                  className={INP} placeholder="0.00" />
+                  className={`${INP} min-w-0 flex-1`} placeholder="0.00" />
               </div>
               <p className="mt-1 text-xs text-gray-400">
                 {tasaNum > 0

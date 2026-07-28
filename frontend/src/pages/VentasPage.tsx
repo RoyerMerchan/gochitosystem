@@ -89,8 +89,9 @@ export default function VentasPage() {
       {/* Filtros */}
       <Card>
         <FiltroPeriodo desde={desde} hasta={hasta} onCambiar={(d, h) => { setDesde(d); setHasta(h); }} />
-        <div className="mt-3 flex flex-wrap items-end gap-3">
-          <div className="min-w-[16rem] flex-1">
+        {/* Grilla: 1 columna en teléfono, 2 en tablet, 4 en escritorio. */}
+        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="sm:col-span-2 lg:col-span-4">
             <label className="mb-1 block text-xs font-medium text-gray-500">Cliente o n.º de venta</label>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
@@ -101,21 +102,21 @@ export default function VentasPage() {
           </div>
           <div>
             <label className="mb-1 flex items-center gap-1 text-xs font-medium text-gray-500"><Filter className="h-3.5 w-3.5" /> Desde</label>
-            <input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className={INP} />
+            <input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className={`${INP} w-full`} />
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-500">Hasta</label>
-            <input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} className={INP} />
+            <input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} className={`${INP} w-full`} />
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-500">Método de pago</label>
-            <select value={metodoPagoId} onChange={(e) => setMetodoPagoId(e.target.value)} className={INP}>
+            <select value={metodoPagoId} onChange={(e) => setMetodoPagoId(e.target.value)} className={`${INP} w-full`}>
               <option value="">Todos</option>
               {METODOS_PAGO.map((m) => <option key={m.id} value={m.id}>{m.nombre}</option>)}
             </select>
           </div>
           {hayFiltros && (
-            <button onClick={limpiarFiltros} className="flex items-center gap-1 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-600 hover:bg-gray-100 dark:border-gray-600 dark:hover:bg-gray-700">
+            <button onClick={limpiarFiltros} className="flex items-center justify-center gap-1 self-end rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-600 hover:bg-gray-100 dark:border-gray-600 dark:hover:bg-gray-700">
               <X className="h-4 w-4" /> Limpiar
             </button>
           )}
@@ -126,54 +127,80 @@ export default function VentasPage() {
         {ventas.isLoading ? <Cargando /> : filas.length === 0 ? (
           <EmptyState titulo="Sin ventas" descripcion={hayFiltros ? 'Ninguna venta coincide con los filtros.' : 'Aún no hay ventas.'} icono={<Receipt className="h-12 w-12" />} />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-xs uppercase text-gray-500 dark:bg-gray-700/50">
-                <tr>
-                  <th className="p-3 text-left">N.º</th><th className="p-3 text-left">Fecha</th>
-                  <th className="p-3 text-left">Cliente</th><th className="p-3 text-left">Método de pago</th>
-                  <th className="p-3 text-right">Total USD</th><th className="p-3 text-right">Total Bs</th>
-                  <th className="p-3 text-right">Utilidad</th><th className="p-3 text-center">Estado</th><th className="p-3"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {filas.map((v) => (
-                  <tr key={v.id} className="border-t border-gray-100 dark:border-gray-700">
-                    <td className="p-3 font-medium">{v.numero}</td>
-                    <td className="p-3 text-gray-500">{formatearFechaHora(v.fecha)}</td>
-                    <td className="p-3">{v.cliente}</td>
-                    {/* Una venta a crédito puede llevar abono inicial: se listan los dos. */}
-                    <td className="p-3 text-gray-600 dark:text-gray-300">
-                      {v.es_credito
-                        ? (v.metodos_pago ? `${v.metodos_pago} + Crédito` : 'Crédito')
-                        : (v.metodos_pago ?? '—')}
-                    </td>
-                    <td className="p-3 text-right tabular-nums">{formatearUSD(v.total_usd)}</td>
-                    <td className="p-3 text-right tabular-nums text-gray-500">{formatearBs(v.total_bs)}</td>
-                    <td className="p-3 text-right tabular-nums text-green-600">{formatearUSD(v.utilidad_total)}</td>
-                    <td className="p-3 text-center">
-                      {/* estado_pago lo calcula el backend contra el saldo vivo del crédito. */}
-                      {v.estado_pago === 'ANULADA' ? <Badge color="rojo">Anulada</Badge>
-                        : v.estado_pago === 'CREDITO' ? <Badge color="amarillo">Crédito</Badge>
-                        : <Badge color="verde">Pagada</Badge>}
-                    </td>
-                    <td className="p-3 text-right">
-                      <div className="flex justify-end gap-2">
-                        <button onClick={() => setVerId(v.id)} className="text-gray-400 hover:text-amber-600" title="Ver detalle">
-                          <Eye className="h-4 w-4" />
+          <>
+            {/* Teléfono: una tarjeta por venta. La tabla de 9 columnas no cabe. */}
+            <ul className="divide-y divide-gray-100 md:hidden dark:divide-gray-700">
+              {filas.map((v) => (
+                <li key={v.id} className="space-y-2 p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">{v.cliente}</p>
+                      <p className="text-xs text-gray-500">{v.numero} · {formatearFechaHora(v.fecha)}</p>
+                    </div>
+                    <BadgeEstado estado={v.estado_pago} />
+                  </div>
+                  <p className="truncate text-xs text-gray-600 dark:text-gray-300">{metodoTexto(v)}</p>
+                  <div className="flex items-end justify-between gap-2">
+                    <div>
+                      <p className="font-semibold tabular-nums">{formatearUSD(v.total_usd)}</p>
+                      <p className="text-xs tabular-nums text-gray-500">{formatearBs(v.total_bs)}</p>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="mr-1 text-xs tabular-nums text-green-600">Ut. {formatearUSD(v.utilidad_total)}</span>
+                      {/* p-2: área táctil mínima cómoda en pantalla pequeña. */}
+                      <button onClick={() => setVerId(v.id)} className="p-2 text-gray-400 active:text-amber-600" title="Ver detalle">
+                        <Eye className="h-5 w-5" />
+                      </button>
+                      {puedeAnular && v.estado !== 'ANULADA' && (
+                        <button onClick={() => { setAnular(v); setMotivo(''); }} className="p-2 text-gray-400 active:text-red-500" title="Anular venta">
+                          <Ban className="h-5 w-5" />
                         </button>
-                        {puedeAnular && v.estado !== 'ANULADA' && (
-                          <button onClick={() => { setAnular(v); setMotivo(''); }} className="text-gray-400 hover:text-red-500" title="Anular venta">
-                            <Ban className="h-4 w-4" />
-                          </button>
-                        )}
-                      </div>
-                    </td>
+                      )}
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+
+            <div className="hidden overflow-x-auto md:block">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 text-xs uppercase text-gray-500 dark:bg-gray-700/50">
+                  <tr>
+                    <th className="p-3 text-left">N.º</th><th className="p-3 text-left">Fecha</th>
+                    <th className="p-3 text-left">Cliente</th><th className="p-3 text-left">Método de pago</th>
+                    <th className="p-3 text-right">Total USD</th><th className="p-3 text-right">Total Bs</th>
+                    <th className="p-3 text-right">Utilidad</th><th className="p-3 text-center">Estado</th><th className="p-3"></th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {filas.map((v) => (
+                    <tr key={v.id} className="border-t border-gray-100 dark:border-gray-700">
+                      <td className="p-3 font-medium">{v.numero}</td>
+                      <td className="whitespace-nowrap p-3 text-gray-500">{formatearFechaHora(v.fecha)}</td>
+                      <td className="p-3">{v.cliente}</td>
+                      <td className="p-3 text-gray-600 dark:text-gray-300">{metodoTexto(v)}</td>
+                      <td className="p-3 text-right tabular-nums">{formatearUSD(v.total_usd)}</td>
+                      <td className="p-3 text-right tabular-nums text-gray-500">{formatearBs(v.total_bs)}</td>
+                      <td className="p-3 text-right tabular-nums text-green-600">{formatearUSD(v.utilidad_total)}</td>
+                      <td className="p-3 text-center"><BadgeEstado estado={v.estado_pago} /></td>
+                      <td className="p-3 text-right">
+                        <div className="flex justify-end gap-2">
+                          <button onClick={() => setVerId(v.id)} className="text-gray-400 hover:text-amber-600" title="Ver detalle">
+                            <Eye className="h-4 w-4" />
+                          </button>
+                          {puedeAnular && v.estado !== 'ANULADA' && (
+                            <button onClick={() => { setAnular(v); setMotivo(''); }} className="text-gray-400 hover:text-red-500" title="Anular venta">
+                              <Ban className="h-4 w-4" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </Card>
 
@@ -205,9 +232,7 @@ export default function VentasPage() {
               <div><span className="text-gray-500">Cajero:</span> <span className="font-medium">{detalle.data.venta.cajero}</span></div>
               <div>
                 <span className="text-gray-500">Estado:</span>{' '}
-                {detalle.data.venta.estado_pago === 'ANULADA' ? <Badge color="rojo">Anulada</Badge>
-                  : detalle.data.venta.estado_pago === 'CREDITO' ? <Badge color="amarillo">Crédito</Badge>
-                  : <Badge color="verde">Pagada</Badge>}
+                <BadgeEstado estado={detalle.data.venta.estado_pago} />
               </div>
             </div>
 
@@ -283,3 +308,16 @@ export default function VentasPage() {
   );
 }
 const INP = 'rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none dark:border-gray-600 dark:bg-gray-700';
+
+/** estado_pago lo calcula el backend contra el saldo vivo del crédito, no contra es_credito. */
+function BadgeEstado({ estado }: { estado: VentaFila['estado_pago'] }) {
+  if (estado === 'ANULADA') return <Badge color="rojo">Anulada</Badge>;
+  if (estado === 'CREDITO') return <Badge color="amarillo">Crédito</Badge>;
+  return <Badge color="verde">Pagada</Badge>;
+}
+
+/** Una venta a crédito puede llevar abono inicial: se listan los dos métodos. */
+function metodoTexto(v: VentaFila): string {
+  if (v.es_credito) return v.metodos_pago ? `${v.metodos_pago} + Crédito` : 'Crédito';
+  return v.metodos_pago ?? '—';
+}

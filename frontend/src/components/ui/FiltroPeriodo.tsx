@@ -28,7 +28,8 @@ export function FiltroPeriodo({ desde, hasta, onCambiar }: Props) {
   })?.clave ?? (!desde && !hasta ? 'todo' : '');
 
   return (
-    <div className="inline-flex rounded-lg border border-gray-200 bg-white p-0.5 dark:border-gray-700 dark:bg-gray-800">
+    // flex-wrap y no inline-flex: con 4 botones no cabe en el ancho de un teléfono.
+    <div className="flex flex-wrap gap-0.5 rounded-lg border border-gray-200 bg-white p-0.5 dark:border-gray-700 dark:bg-gray-800 sm:inline-flex">
       {PRESETS.map((p) => (
         <button
           key={p.clave}
@@ -37,7 +38,7 @@ export function FiltroPeriodo({ desde, hasta, onCambiar }: Props) {
             onCambiar(d, h);
           }}
           className={cn(
-            'rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+            'flex-1 whitespace-nowrap rounded-md px-2.5 py-1.5 text-sm font-medium transition-colors sm:flex-none sm:px-3',
             activo === p.clave
               ? 'bg-amber-500 text-white shadow-sm'
               : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700',

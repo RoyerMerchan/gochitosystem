@@ -65,7 +65,13 @@ const NAV: { seccion: string; items: ItemNav[] }[] = [
 ];
 
 export function AppLayout({ children }: { children: ReactNode }) {
-  const [abierto, setAbierto] = useState(true);
+  /**
+   * En teléfono el sidebar es un panel encima del contenido y arranca CERRADO:
+   * abierto se comía 256px de una pantalla de 375px y no cabía ninguna tabla.
+   * De `md` para arriba se comporta como siempre (empuja el contenido).
+   */
+  const [abierto, setAbierto] = useState(() => window.innerWidth >= 768);
+  const esMovil = () => window.innerWidth < 768;
   const usuario = useAuthStore((s) => s.usuario);
   const permisos = useAuthStore((s) => s.permisos);
   const navegar = useNavigate();
@@ -81,11 +87,20 @@ export function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex h-screen overflow-hidden bg-gray-50 dark:bg-gray-900">
+      {/* Fondo oscuro para cerrar tocando fuera; solo en teléfono. */}
+      {abierto && (
+        <div onClick={() => setAbierto(false)} className="fixed inset-0 z-30 bg-black/50 md:hidden" />
+      )}
+
       {/* Sidebar */}
       <aside
         className={cn(
-          'flex flex-col border-r border-gray-200 bg-white transition-all dark:border-gray-700 dark:bg-gray-800',
-          abierto ? 'w-64' : 'w-0 overflow-hidden',
+          'fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-gray-200 bg-white',
+          'transition-transform dark:border-gray-700 dark:bg-gray-800',
+          abierto ? 'translate-x-0' : '-translate-x-full',
+          // De md en adelante vuelve al flujo: sin overlay, colapsa por ancho.
+          'md:static md:translate-x-0 md:transition-all',
+          abierto ? 'md:w-64' : 'md:w-0 md:overflow-hidden',
         )}
       >
         <div className="flex items-center gap-2 border-b border-gray-200 p-4 dark:border-gray-700">
@@ -113,6 +128,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
                       key={item.a}
                       to={item.a}
                       end={item.a === '/'}
+                      // En teléfono el panel tapa el contenido: al navegar se cierra.
+                      onClick={() => { if (esMovil()) setAbierto(false); }}
                       className={({ isActive }) =>
                         cn(
                           'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
