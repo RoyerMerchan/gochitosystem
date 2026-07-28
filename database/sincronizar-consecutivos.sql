@@ -32,6 +32,9 @@ WITH usados AS (
   UNION ALL
   SELECT 'ABONO',  sucursal_id, anio, prefijo, MAX(numero)
     FROM abonos   GROUP BY sucursal_id, anio, prefijo
+  UNION ALL
+  SELECT 'AJUSTE', sucursal_id, anio, prefijo, MAX(numero)
+    FROM ajustes_inventario GROUP BY sucursal_id, anio, prefijo
 )
 UPDATE consecutivos c
    SET ultimo_numero = GREATEST(c.ultimo_numero, u.maximo)

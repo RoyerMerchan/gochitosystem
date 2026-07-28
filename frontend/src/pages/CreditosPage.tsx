@@ -145,6 +145,9 @@ export default function CreditosPage() {
       toast.exito('Abono registrado');
       qc.invalidateQueries({ queryKey: ['cartera'] });
       qc.invalidateQueries({ queryKey: ['estado-cuenta'] });
+      // El abono puede saldar la venta: su badge en Ventas pasa a "Pagada".
+      qc.invalidateQueries({ queryKey: ['ventas'] });
+      qc.invalidateQueries({ queryKey: ['venta-detalle'] });
       setAbonar(null); setSeleccion([]); setMontoManual(null); setReferencia('');
     },
     onError: (e) => toast.error(e instanceof ErrorApi ? e.message : 'No se pudo registrar el abono'),

@@ -17,12 +17,15 @@ interface VentaFila {
   id: number; numero: string; fecha: string; total_usd: string; total_bs: string;
   utilidad_total: string; estado: string; es_credito: boolean; cliente: string; cajero: string;
   metodos_pago: string | null;
+  /** Estado de cobro derivado del saldo del crédito: ANULADA | CREDITO | PAGADA. */
+  estado_pago: 'ANULADA' | 'CREDITO' | 'PAGADA';
 }
 interface DetalleVenta {
   venta: {
     numero: string; fecha: string; cliente_nombre: string; cajero: string; estado: string;
     total_usd: string; total_bs: string; tasa_cambio: string; impuesto_total: string;
-    es_credito: boolean; total_credito: string;
+    es_credito: boolean; total_credito: string; saldo_credito: string;
+    estado_pago: 'ANULADA' | 'CREDITO' | 'PAGADA';
   };
   renglones: Array<{
     linea: number; descripcion: string; cantidad: string;
@@ -65,6 +68,8 @@ export default function VentasPage() {
     onSuccess: () => {
       toast.exito('Venta anulada · stock reingresado');
       qc.invalidateQueries({ queryKey: ['ventas'] });
+      // Anular revierte la deuda: la cartera queda desactualizada si no se refresca.
+      qc.invalidateQueries({ queryKey: ['cartera'] });
       setAnular(null); setMotivo('');
     },
     onError: (e) => toast.error(e instanceof ErrorApi ? e.message : 'No se pudo anular'),
@@ -147,9 +152,9 @@ export default function VentasPage() {
                     <td className="p-3 text-right tabular-nums text-gray-500">{formatearBs(v.total_bs)}</td>
                     <td className="p-3 text-right tabular-nums text-green-600">{formatearUSD(v.utilidad_total)}</td>
                     <td className="p-3 text-center">
-                      {/* es_credito llega como boolean de Postgres: nunca comparar contra 1. */}
-                      {v.estado === 'ANULADA' ? <Badge color="rojo">Anulada</Badge>
-                        : v.es_credito ? <Badge color="amarillo">Crédito</Badge>
+                      {/* estado_pago lo calcula el backend contra el saldo vivo del crédito. */}
+                      {v.estado_pago === 'ANULADA' ? <Badge color="rojo">Anulada</Badge>
+                        : v.estado_pago === 'CREDITO' ? <Badge color="amarillo">Crédito</Badge>
                         : <Badge color="verde">Pagada</Badge>}
                     </td>
                     <td className="p-3 text-right">
@@ -200,8 +205,8 @@ export default function VentasPage() {
               <div><span className="text-gray-500">Cajero:</span> <span className="font-medium">{detalle.data.venta.cajero}</span></div>
               <div>
                 <span className="text-gray-500">Estado:</span>{' '}
-                {detalle.data.venta.estado === 'ANULADA' ? <Badge color="rojo">Anulada</Badge>
-                  : detalle.data.venta.es_credito ? <Badge color="amarillo">Crédito</Badge>
+                {detalle.data.venta.estado_pago === 'ANULADA' ? <Badge color="rojo">Anulada</Badge>
+                  : detalle.data.venta.estado_pago === 'CREDITO' ? <Badge color="amarillo">Crédito</Badge>
                   : <Badge color="verde">Pagada</Badge>}
               </div>
             </div>
@@ -252,13 +257,25 @@ export default function VentasPage() {
               </div>
             )}
 
-            {/* Monto financiado al emitir la venta; el saldo vivo se ve en Créditos. */}
-            {detalle.data.venta.es_credito && (
-              <div className="flex justify-between rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm font-medium text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
-                <span>Quedó a crédito</span>
-                <span className="tabular-nums">{formatearUSD(detalle.data.venta.total_credito)}</span>
-              </div>
-            )}
+            {/* Lo financiado al emitir la venta, y lo que aún se debe hoy. */}
+            {detalle.data.venta.es_credito && (() => {
+              const saldo = aNumero(detalle.data!.venta.saldo_credito);
+              const saldado = saldo <= 0;
+              return (
+                <div className={`space-y-1 rounded-lg border p-3 text-sm ${saldado
+                  ? 'border-green-300 bg-green-50 text-green-800 dark:border-green-700 dark:bg-green-900/20 dark:text-green-300'
+                  : 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-300'}`}>
+                  <div className="flex justify-between">
+                    <span>Quedó a crédito</span>
+                    <span className="tabular-nums">{formatearUSD(detalle.data!.venta.total_credito)}</span>
+                  </div>
+                  <div className="flex justify-between font-semibold">
+                    <span>{saldado ? 'Crédito saldado' : 'Saldo pendiente'}</span>
+                    <span className="tabular-nums">{saldado ? '—' : formatearUSD(saldo)}</span>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
       </Modal>

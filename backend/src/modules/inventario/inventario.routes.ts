@@ -9,6 +9,7 @@ import { NoEncontrado } from '../../errores/AppError';
 import { query, queryOne, ejecutar, insertar, withTransaction } from '../../database/pool';
 import { esquemaPaginacion, normalizarPaginacion, construirMeta } from '../../utils/paginacion';
 import { aCantidad, aUnitario, cantidadASql, unitarioASql, centavosASql, multiplicarPorCantidad } from '../../utils/dinero';
+import { siguienteConsecutivo } from '../../utils/consecutivos';
 import { TIPO_MOVIMIENTO_INVENTARIO, DOCUMENTO_TIPO_MOVIMIENTO, TIPO_DOCUMENTO } from '../../config/constantes';
 
 const router = Router();
@@ -97,14 +98,9 @@ router.post('/ajustes', requierePermiso('inventario.ajustar'), validar({ body: e
     const u = usuarioActual(req);
     const resultado = await withTransaction(async (cx) => {
       const anio = new Date().getFullYear();
-      // Consecutivo de ajuste.
-      let cons = await queryOne<{ id: number; ultimo_numero: number; prefijo: string }>(
-        `SELECT id, ultimo_numero, prefijo FROM consecutivos WHERE sucursal_id=? AND tipo_documento=? AND anio=? FOR UPDATE`,
-        [u.sucursalId, TIPO_DOCUMENTO.AJUSTE, anio], cx,
-      );
-      let numero: number; let prefijo: string;
-      if (!cons) { await insertar(`INSERT INTO consecutivos (sucursal_id, tipo_documento, anio, prefijo, ultimo_numero) VALUES (?,?,?,'AJ-',1)`, [u.sucursalId, TIPO_DOCUMENTO.AJUSTE, anio], cx); numero = 1; prefijo = 'AJ-'; }
-      else { numero = Number(cons.ultimo_numero) + 1; prefijo = cons.prefijo; await ejecutar(`UPDATE consecutivos SET ultimo_numero=? WHERE id=?`, [numero, cons.id], cx); }
+      // Consecutivo compartido con ventas/compras/abonos: se autorepara si el
+      // contador quedo por debajo del numero mas alto ya usado por un ajuste.
+      const { numero, prefijo } = await siguienteConsecutivo(cx, u.sucursalId, TIPO_DOCUMENTO.AJUSTE, anio);
 
       const ajusteId = await insertar(
         `INSERT INTO ajustes_inventario (sucursal_id, usuario_id, motivo_ajuste_id, prefijo, numero, anio, tipo, estado, observaciones)

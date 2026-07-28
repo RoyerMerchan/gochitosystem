@@ -691,6 +691,16 @@ export async function listarVentas(
   const datos = await query(
     `SELECT v.id, v.prefijo || v.numero AS numero, v.fecha, v.total_usd, v.total_bs,
             v.tasa_cambio, v.utilidad_total, v.estado, v.es_credito,
+            -- Estado de cobro, no de documento: una venta a credito ya saldada con
+            -- abonos queda PAGADA. Se deriva del saldo vivo, no de un campo aparte.
+            CASE
+              WHEN v.estado = 'ANULADA' THEN 'ANULADA'
+              WHEN v.es_credito AND EXISTS (
+                     SELECT 1 FROM creditos cr
+                      WHERE cr.venta_id = v.id AND cr.estado <> 'ANULADO' AND cr.saldo_usd > 0
+                   ) THEN 'CREDITO'
+              ELSE 'PAGADA'
+            END AS estado_pago,
             COALESCE(c.nombre, 'CONSUMIDOR FINAL') AS cliente, u.nombre_completo AS cajero,
             (SELECT STRING_AGG(DISTINCT mp.nombre, ', ')
                FROM pagos pg JOIN metodos_pago mp ON mp.id = pg.metodo_pago_id
@@ -793,7 +803,18 @@ export async function anularVenta(
 export async function detalleVenta(ventaId: number, sucursalId: number): Promise<unknown> {
   const venta = await queryOne(
     `SELECT v.*, COALESCE(c.nombre,'CONSUMIDOR FINAL') AS cliente_nombre,
-            u.nombre_completo AS cajero
+            u.nombre_completo AS cajero,
+            -- Saldo que aun se debe de esta venta (0 si ya se abono todo).
+            COALESCE((SELECT SUM(cr.saldo_usd) FROM creditos cr
+                       WHERE cr.venta_id = v.id AND cr.estado <> 'ANULADO'), 0) AS saldo_credito,
+            CASE
+              WHEN v.estado = 'ANULADA' THEN 'ANULADA'
+              WHEN v.es_credito AND EXISTS (
+                     SELECT 1 FROM creditos cr
+                      WHERE cr.venta_id = v.id AND cr.estado <> 'ANULADO' AND cr.saldo_usd > 0
+                   ) THEN 'CREDITO'
+              ELSE 'PAGADA'
+            END AS estado_pago
        FROM ventas v LEFT JOIN clientes c ON c.id = v.cliente_id
        JOIN usuarios u ON u.id = v.usuario_id
       WHERE v.id = ? AND v.sucursal_id = ? LIMIT 1`,

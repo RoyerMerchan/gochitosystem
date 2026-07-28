@@ -27,6 +27,7 @@ const DOCUMENTO: Record<string, { tabla: string; prefijo: string }> = {
   [TIPO_DOCUMENTO.ABONO]: { tabla: 'abonos', prefijo: 'A-' },
   [TIPO_DOCUMENTO.DEVOLUCION_VENTA]: { tabla: 'devoluciones', prefijo: 'DV-' },
   [TIPO_DOCUMENTO.DEVOLUCION_COMPRA]: { tabla: 'devoluciones', prefijo: 'DC-' },
+  [TIPO_DOCUMENTO.AJUSTE]: { tabla: 'ajustes_inventario', prefijo: 'AJ-' },
 };
 
 /** Numero mas alto ya usado por ese documento (0 si no hay ninguno). */
