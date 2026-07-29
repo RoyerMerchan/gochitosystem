@@ -175,7 +175,13 @@ export default function CreditosPage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold">Créditos y cartera</h1>
-          <p className="text-sm text-gray-500">Deuda total: {formatearUSD(totalCartera)} · {formatearBs(totalCartera * tasaNum)}</p>
+          {/* La deuda se valora a la tasa de HOY, no a la del día en que se fió. */}
+          <p className="text-sm text-gray-500">
+            Deuda total: {formatearUSD(totalCartera)}
+            {tasaNum > 0
+              ? <> · {formatearBs(usdABs(totalCartera, tasaNum))} <span className="text-xs text-gray-400">a la tasa de hoy</span></>
+              : <span className="font-medium text-red-500"> · sin tasa de hoy, no se puede valorar en Bs</span>}
+          </p>
         </div>
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
@@ -203,7 +209,7 @@ export default function CreditosPage() {
                     </div>
                     <div className="shrink-0 text-right">
                       <p className="font-bold tabular-nums">{formatearUSD(c.saldo_usd)}</p>
-                      <p className="text-xs tabular-nums text-gray-400">{formatearBs(aNumero(c.saldo_usd) * tasaNum)}</p>
+                      <p className="text-xs tabular-nums text-gray-400">{tasaNum > 0 ? formatearBs(usdABs(c.saldo_usd, tasaNum)) : '—'}</p>
                     </div>
                   </div>
                   {/* Solo los tramos con deuda: ahorra espacio y resalta la mora. */}
@@ -255,7 +261,7 @@ export default function CreditosPage() {
                     <td className="p-3 text-right tabular-nums font-semibold text-red-600">{formatearUSD(c.d90_mas, false)}</td>
                     <td className="p-3 text-right tabular-nums font-bold">
                       {formatearUSD(c.saldo_usd)}
-                      <span className="block text-xs font-normal text-gray-400">{formatearBs(aNumero(c.saldo_usd) * tasaNum)}</span>
+                      <span className="block text-xs font-normal text-gray-400">{tasaNum > 0 ? formatearBs(usdABs(c.saldo_usd, tasaNum)) : '—'}</span>
                     </td>
                     <td className="p-3 text-right">
                       <button onClick={() => abrir(c)} className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-1 text-xs font-semibold text-white hover:bg-green-700">
@@ -334,7 +340,7 @@ export default function CreditosPage() {
                         )}
                         <div className="text-right tabular-nums">
                           <p className="font-semibold">{formatearUSD(saldo)}</p>
-                          <p className="text-xs text-gray-400">{formatearBs(saldo * tasaNum)}</p>
+                          <p className="text-xs text-gray-400">{tasaNum > 0 ? formatearBs(usdABs(saldo, tasaNum)) : '—'}</p>
                         </div>
                         {/* En teléfono baja a su propia línea en vez de apretar la fila. */}
                         <div className="w-full text-right sm:w-24">

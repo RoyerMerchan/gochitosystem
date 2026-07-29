@@ -13,7 +13,7 @@ import { useAuthStore } from '@/store/authStore';
 import { useTasaStore } from '@/store/tasaStore';
 import {
   formatearUSD, formatearBs, formatearFechaHora, formatearNumero, formatearPorcentaje,
-  calcularMargen, aNumero,
+  calcularMargen, aNumero, usdABs,
 } from '@/lib/formato';
 
 interface VentaResumen {
@@ -70,6 +70,7 @@ const ACCESOS = [
 export default function DashboardPage() {
   const usuario = useAuthStore((s) => s.usuario);
   const tasa = useTasaStore((s) => s.tasa);
+  const tasaNum = tasa ? Number(tasa.tasa) : 0;
 
   const [periodo, setPeriodo] = useState<Periodo>('dia');
   const [verCuentas, setVerCuentas] = useState(false);
@@ -142,6 +143,16 @@ export default function DashboardPage() {
                   <CreditCard className="h-3.5 w-3.5" /> Te deben en total
                 </p>
                 <p className="mt-1 text-3xl font-bold tabular-nums text-amber-600">{formatearUSD(deuda)}</p>
+                {/* La deuda se valora SIEMPRE a la tasa de HOY: es un pago futuro,
+                    no un hecho pasado. La tasa congelada es solo para lo ya ocurrido. */}
+                {tasaNum > 0 ? (
+                  <p className="text-sm tabular-nums text-gray-500">
+                    {formatearBs(usdABs(deuda, tasaNum))}
+                    <span className="ml-1 text-xs text-gray-400">a la tasa de hoy</span>
+                  </p>
+                ) : (
+                  <p className="text-xs font-medium text-red-500">Sin tasa de hoy: no se puede valorar en Bs</p>
+                )}
                 <p className="text-xs text-gray-400">
                   {formatearNumero(aNumero(c?.clientes ?? 0), 0)} cliente(s) ·{' '}
                   {formatearNumero(aNumero(c?.documentos ?? 0), 0)} factura(s) sin saldar
