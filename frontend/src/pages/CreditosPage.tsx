@@ -148,6 +148,8 @@ export default function CreditosPage() {
       // El abono puede saldar la venta: su badge en Ventas pasa a "Pagada".
       qc.invalidateQueries({ queryKey: ['ventas'] });
       qc.invalidateQueries({ queryKey: ['venta-detalle'] });
+      // Baja el contador de "te deben" y sube lo cobrado del día en el dashboard.
+      qc.invalidateQueries({ queryKey: ['dashboard'] });
       setAbonar(null); setSeleccion([]); setMontoManual(null); setReferencia('');
     },
     onError: (e) => toast.error(e instanceof ErrorApi ? e.message : 'No se pudo registrar el abono'),

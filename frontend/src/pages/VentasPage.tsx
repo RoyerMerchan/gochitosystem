@@ -70,6 +70,7 @@ export default function VentasPage() {
       qc.invalidateQueries({ queryKey: ['ventas'] });
       // Anular revierte la deuda: la cartera queda desactualizada si no se refresca.
       qc.invalidateQueries({ queryKey: ['cartera'] });
+      qc.invalidateQueries({ queryKey: ['dashboard'] });
       setAnular(null); setMotivo('');
     },
     onError: (e) => toast.error(e instanceof ErrorApi ? e.message : 'No se pudo anular'),

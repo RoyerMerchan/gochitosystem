@@ -368,6 +368,46 @@ router.get('/dashboard/ventas', requierePermiso('dashboard.ver'), validar({ quer
   } catch (e) { next(e); }
 });
 
+/**
+ * Cartera viva: cuanto te deben AHORA. Es un saldo, no un flujo, asi que no
+ * depende del periodo del dashboard: baja sola con cada abono.
+ *
+ * La fuente es `creditos.saldo_usd` (el libro documento por documento), no
+ * `clientes.saldo_actual`, que es un acumulado desnormalizado y se actualiza con
+ * GREATEST(0, ...): si alguna vez se desincroniza, se queda corto en silencio.
+ * Se traen los dos para poder avisar cuando no coinciden.
+ */
+router.get('/dashboard/cartera', requierePermiso('dashboard.ver'), async (req, res, next) => {
+  try {
+    const u = usuarioActual(req);
+    const cartera = await queryReporte<Record<string, string>>(
+      `SELECT COALESCE(SUM(cr.saldo_usd), 0) AS deuda_usd,
+              COUNT(DISTINCT cr.cliente_id) AS clientes,
+              COUNT(*) AS documentos,
+              COALESCE(SUM(cr.saldo_usd) FILTER (WHERE cr.fecha_vencimiento < CURRENT_DATE), 0) AS vencido_usd,
+              COUNT(*) FILTER (WHERE cr.fecha_vencimiento < CURRENT_DATE) AS documentos_vencidos
+         FROM creditos cr
+        WHERE cr.sucursal_id = ? AND cr.estado <> 'ANULADO' AND cr.saldo_usd > 0`,
+      [u.sucursalId],
+    );
+    const hoy = await queryReporte<Record<string, string>>(
+      `SELECT COALESCE(SUM(a.monto_usd - a.saldo_a_favor_usd), 0) AS abonado_hoy_usd,
+              COUNT(*) AS abonos_hoy
+         FROM abonos a
+        WHERE a.sucursal_id = ? AND a.estado = 'APLICADO' AND DATE(a.fecha) = CURRENT_DATE`,
+      [u.sucursalId],
+    );
+    const espejo = await queryReporte<{ saldo_clientes: string }>(
+      `SELECT COALESCE(SUM(saldo_actual), 0) AS saldo_clientes
+         FROM clientes WHERE eliminado_en IS NULL`,
+    );
+    enviarOk(res, {
+      ...cartera[0], ...hoy[0],
+      saldo_clientes_usd: espejo[0]?.saldo_clientes ?? '0',
+    });
+  } catch (e) { next(e); }
+});
+
 // ---------------------------------------------------------------------------
 // DASHBOARD: un solo endpoint agregado
 // ---------------------------------------------------------------------------
