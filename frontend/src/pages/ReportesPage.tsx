@@ -3,23 +3,37 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { BarChart3, Download, FileText } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { formatearFechaHora } from '@/lib/formato';
 import { obtener } from '@/lib/axios';
 import { Card, Cargando, EmptyState } from '@/components/ui/Feedback';
 import { FiltroPeriodo } from '@/components/ui/FiltroPeriodo';
-import { formatearUSD, formatearBs, formatearCantidad } from '@/lib/formato';
+import { formatearUSD, formatearBs, formatearCantidad, formatearFecha, formatearFechaHora, aNumero } from '@/lib/formato';
+
+type TipoCol = 'usd' | 'bs' | 'cant' | 'texto' | 'fecha' | 'dia';
 
 interface DefReporte {
   clave: string;
   titulo: string;
   url: string;
-  columnas: { campo: string; etiqueta: string; tipo?: 'usd' | 'bs' | 'cant' | 'texto' }[];
+  columnas: { campo: string; etiqueta: string; tipo?: TipoCol }[];
 }
+
+/** Columnas que se suman en la fila de totales. */
+const SUMABLES: TipoCol[] = ['usd', 'bs', 'cant'];
 
 const REPORTES: { grupo: string; items: DefReporte[] }[] = [
   {
     grupo: 'Ventas',
     items: [
+      { clave: 'pordia', titulo: 'Ventas por día', url: '/reportes/ventas/por-dia', columnas: [
+        { campo: 'dia', etiqueta: 'Día', tipo: 'dia' }, { campo: 'ventas', etiqueta: 'N.º ventas', tipo: 'cant' },
+        { campo: 'total_usd', etiqueta: 'Total USD', tipo: 'usd' }, { campo: 'total_bs', etiqueta: 'Total Bs', tipo: 'bs' },
+        { campo: 'utilidad_usd', etiqueta: 'Utilidad USD', tipo: 'usd' }, { campo: 'credito_usd', etiqueta: 'A crédito USD', tipo: 'usd' }] },
+      { clave: 'detalle', titulo: 'Detalle de ventas', url: '/reportes/ventas/detalle', columnas: [
+        { campo: 'fecha', etiqueta: 'Fecha', tipo: 'fecha' }, { campo: 'numero', etiqueta: 'N.º' },
+        { campo: 'cliente', etiqueta: 'Cliente' }, { campo: 'cajero', etiqueta: 'Cajero' },
+        { campo: 'metodo', etiqueta: 'Método de pago' },
+        { campo: 'total_usd', etiqueta: 'Total USD', tipo: 'usd' }, { campo: 'total_bs', etiqueta: 'Total Bs', tipo: 'bs' },
+        { campo: 'utilidad_usd', etiqueta: 'Utilidad USD', tipo: 'usd' }] },
       { clave: 'mas', titulo: 'Más vendidos', url: '/reportes/ventas/mas-vendidos', columnas: [
         { campo: 'producto', etiqueta: 'Producto' }, { campo: 'cantidad', etiqueta: 'Cantidad', tipo: 'cant' },
         { campo: 'venta_usd', etiqueta: 'Venta USD', tipo: 'usd' }, { campo: 'utilidad_usd', etiqueta: 'Utilidad USD', tipo: 'usd' }] },
@@ -72,19 +86,46 @@ export default function ReportesPage() {
     queryFn: () => obtener<Record<string, unknown>[]>(urlConRango()),
   });
 
-  const formatear = (valor: unknown, tipo?: string) => {
+  const formatear = (valor: unknown, tipo?: TipoCol) => {
     if (tipo === 'usd') return formatearUSD(valor);
     if (tipo === 'bs') return formatearBs(valor);
     if (tipo === 'cant') return formatearCantidad(valor);
+    if (tipo === 'fecha') return formatearFechaHora(valor as string);
+    if (tipo === 'dia') return formatearFecha(valor as string);
     return String(valor ?? '—');
   };
+
+  /**
+   * Totales del pie. Es lo que se usa para cuadrar el día: sin esto habría que
+   * sumar a mano las filas o exportar a Excel solo para ver el total.
+   */
+  const totales = (() => {
+    const filas = datos.data ?? [];
+    if (filas.length === 0) return null;
+    const acc: Record<string, number> = {};
+    for (const c of sel.columnas) {
+      if (!c.tipo || !SUMABLES.includes(c.tipo)) continue;
+      acc[c.campo] = filas.reduce((a, f) => a + aNumero(f[c.campo] as string), 0);
+    }
+    return acc;
+  })();
 
   const exportarExcel = () => {
     const filas = (datos.data ?? []).map((f) => {
       const obj: Record<string, unknown> = {};
-      sel.columnas.forEach((c) => { obj[c.etiqueta] = f[c.campo]; });
+      // Números crudos, no formateados: en Excel deben poder sumarse.
+      sel.columnas.forEach((c) => {
+        obj[c.etiqueta] = c.tipo && SUMABLES.includes(c.tipo) ? aNumero(f[c.campo] as string) : f[c.campo];
+      });
       return obj;
     });
+    if (totales) {
+      const fila: Record<string, unknown> = {};
+      sel.columnas.forEach((c, i) => {
+        fila[c.etiqueta] = c.campo in totales ? totales[c.campo] : i === 0 ? 'TOTAL' : '';
+      });
+      filas.push(fila);
+    }
     const ws = XLSX.utils.json_to_sheet(filas);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, sel.titulo.slice(0, 31));
@@ -96,6 +137,11 @@ export default function ReportesPage() {
     const trs = (datos.data ?? []).map((f) =>
       `<tr>${sel.columnas.map((c) => `<td style="text-align:${c.tipo && c.tipo !== 'texto' ? 'right' : 'left'}">${formatear(f[c.campo], c.tipo)}</td>`).join('')}</tr>`,
     ).join('');
+    const tfoot = totales
+      ? `<tfoot><tr>${sel.columnas.map((c, i) => `<td style="text-align:${c.tipo && c.tipo !== 'texto' ? 'right' : 'left'};font-weight:bold;border-top:2px solid #999">${
+          c.campo in totales ? formatear(totales[c.campo], c.tipo) : i === 0 ? 'TOTAL' : ''
+        }</td>`).join('')}</tr></tfoot>`
+      : '';
     const html = `<!doctype html><html><head><meta charset="utf-8"><title>${sel.titulo}</title>
     <style>
       body{font-family:Arial,sans-serif;font-size:12px;color:#111;padding:24px;}
@@ -105,7 +151,7 @@ export default function ReportesPage() {
     </style></head><body>
       <h1>Mini Market Los Gochitos</h1>
       <div class="sub">${sel.titulo} · Generado ${formatearFechaHora(new Date())}</div>
-      <table><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>
+      <table><thead><tr>${th}</tr></thead><tbody>${trs}</tbody>${tfoot}</table>
       <script>window.onload=function(){window.print();};</script>
     </body></html>`;
     const win = window.open('', '_blank', 'width=800,height=600');
@@ -178,6 +224,19 @@ export default function ReportesPage() {
                     </tr>
                   ))}
                 </tbody>
+                {totales && (
+                  <tfoot className="border-t-2 border-gray-300 bg-gray-50 font-bold dark:border-gray-600 dark:bg-gray-700/50">
+                    <tr>
+                      {sel.columnas.map((c, i) => (
+                        <td key={c.campo} className={`p-3 ${c.tipo && c.tipo !== 'texto' ? 'text-right tabular-nums' : ''}`}>
+                          {c.campo in totales
+                            ? formatear(totales[c.campo], c.tipo)
+                            : i === 0 ? `TOTAL · ${datos.data!.length} fila(s)` : ''}
+                        </td>
+                      ))}
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </div>
           )}

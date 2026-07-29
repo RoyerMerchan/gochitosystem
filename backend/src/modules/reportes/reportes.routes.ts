@@ -22,6 +22,14 @@ const esquemaRango = z.object({
 });
 type Rango = z.infer<typeof esquemaRango>;
 
+/**
+ * Los reportes de detalle listan una fila por documento, no un top-N: con el
+ * limite de 20 del esquema normal se cortaria el dia a la mitad sin avisar.
+ */
+const esquemaRangoDetalle = esquemaRango.extend({
+  limite: z.coerce.number().int().min(1).max(5000).optional().default(1000),
+});
+
 /** WHERE de rango de fechas sobre ventas cerradas. */
 function rangoVentas(q: Rango, sucursalId: number): { where: string; params: (string | number)[] } {
   const cond = ["v.estado = 'CERRADA'", 'v.sucursal_id = ?'];
@@ -49,6 +57,57 @@ async function masVendidos(q: Rango, sucursalId: number, orden: 'DESC' | 'ASC') 
     [...params, q.limite],
   );
 }
+
+/**
+ * Cierre diario: una fila por dia con lo que produjo. Sin rango devuelve todo el
+ * historial, por eso el limite. Bs de v.total_bs (tasa congelada de cada venta).
+ */
+router.get('/ventas/por-dia', requierePermiso('reportes.ver'), validar({ query: esquemaRangoDetalle }), async (req, res, next) => {
+  try {
+    const q = datosQuery<Rango>(req);
+    const { where, params } = rangoVentas(q, usuarioActual(req).sucursalId);
+    enviarOk(res, await queryReporte(
+      // TO_CHAR y no DATE(): un date de pg viaja como Date de JS y al pasar por
+      // JSON se vuelve UTC, corriendo el dia si el navegador esta en otra zona.
+      `SELECT TO_CHAR(DATE(v.fecha), 'YYYY-MM-DD') AS dia, COUNT(*) AS ventas,
+              COALESCE(SUM(v.total_usd), 0) AS total_usd,
+              COALESCE(SUM(v.total_bs), 0) AS total_bs,
+              COALESCE(SUM(v.utilidad_total), 0) AS utilidad_usd,
+              COALESCE(SUM(v.total_credito), 0) AS credito_usd
+         FROM ventas v WHERE ${where}
+        GROUP BY 1 ORDER BY dia DESC LIMIT ?`,
+      [...params, q.limite],
+    ));
+  } catch (e) { next(e); }
+});
+
+/** Detalle venta por venta del rango: lo que se saca para cuadrar el dia. */
+router.get('/ventas/detalle', requierePermiso('reportes.ver'), validar({ query: esquemaRangoDetalle }), async (req, res, next) => {
+  try {
+    const q = datosQuery<Rango>(req);
+    const { where, params } = rangoVentas(q, usuarioActual(req).sucursalId);
+    enviarOk(res, await queryReporte(
+      `SELECT v.fecha, v.prefijo || v.numero AS numero,
+              COALESCE(c.nombre, 'CONSUMIDOR FINAL') AS cliente,
+              u.nombre_completo AS cajero,
+              COALESCE((SELECT STRING_AGG(DISTINCT mp.nombre, ', ')
+                          FROM pagos pg JOIN metodos_pago mp ON mp.id = pg.metodo_pago_id
+                         WHERE pg.venta_id = v.id), '') ||
+                CASE WHEN v.es_credito THEN
+                  CASE WHEN EXISTS (SELECT 1 FROM pagos pg2 WHERE pg2.venta_id = v.id)
+                       THEN ' + Credito' ELSE 'Credito' END
+                ELSE '' END AS metodo,
+              v.total_usd, v.total_bs, v.utilidad_total AS utilidad_usd,
+              v.total_credito AS credito_usd
+         FROM ventas v
+         LEFT JOIN clientes c ON c.id = v.cliente_id
+         JOIN usuarios u ON u.id = v.usuario_id
+        WHERE ${where}
+        ORDER BY v.fecha DESC LIMIT ?`,
+      [...params, q.limite],
+    ));
+  } catch (e) { next(e); }
+});
 
 router.get('/ventas/mas-vendidos', requierePermiso('reportes.ver'), validar({ query: esquemaRango }), async (req, res, next) => {
   try { enviarOk(res, await masVendidos(datosQuery(req), usuarioActual(req).sucursalId, 'DESC')); } catch (e) { next(e); }
@@ -178,6 +237,52 @@ router.get('/inventario/movimientos', requierePermiso('reportes.ver'), validar({
       params,
     );
     enviarOk(res, datos);
+  } catch (e) { next(e); }
+});
+
+// ---------------------------------------------------------------------------
+// DASHBOARD: totales de venta por periodo
+// ---------------------------------------------------------------------------
+const esquemaPeriodo = z.object({
+  periodo: z.enum(['dia', 'semana', 'mes', 'total']).optional().default('dia'),
+});
+type Periodo = z.infer<typeof esquemaPeriodo>['periodo'];
+
+/**
+ * Corte de fecha de cada periodo. CURRENT_DATE sale en la zona local porque el
+ * pool abre la sesion con `-c timezone=...`; si no, una venta de las 11 PM
+ * caeria en el dia siguiente y el total de "hoy" saldria mal.
+ */
+const FILTRO_PERIODO: Record<Periodo, string> = {
+  dia: 'AND DATE(v.fecha) = CURRENT_DATE',
+  semana: "AND v.fecha >= CURRENT_DATE - INTERVAL '6 days'",
+  mes: "AND v.fecha >= CURRENT_DATE - INTERVAL '29 days'",
+  total: '',
+};
+
+/**
+ * Totales de venta del periodo. Excluye las ANULADAS: una venta revertida no es
+ * dinero que entro. Los Bs salen de v.total_bs (tasa congelada de cada venta),
+ * nunca de convertir el total USD con la tasa de hoy.
+ */
+router.get('/dashboard/ventas', requierePermiso('dashboard.ver'), validar({ query: esquemaPeriodo }), async (req, res, next) => {
+  try {
+    const { periodo } = datosQuery<{ periodo: Periodo }>(req);
+    const u = usuarioActual(req);
+    const filas = await queryReporte<{
+      tickets: string; ventas_usd: string; ventas_bs: string;
+      utilidad_usd: string; credito_usd: string;
+    }>(
+      `SELECT COUNT(*) AS tickets,
+              COALESCE(SUM(v.total_usd), 0) AS ventas_usd,
+              COALESCE(SUM(v.total_bs), 0) AS ventas_bs,
+              COALESCE(SUM(v.utilidad_total), 0) AS utilidad_usd,
+              COALESCE(SUM(v.total_credito), 0) AS credito_usd
+         FROM ventas v
+        WHERE v.sucursal_id = ? AND v.estado = 'CERRADA' ${FILTRO_PERIODO[periodo]}`,
+      [u.sucursalId],
+    );
+    enviarOk(res, { periodo, ...filas[0] });
   } catch (e) { next(e); }
 });
 

@@ -1,12 +1,14 @@
-/** Dashboard: KPIs del día y accesos rápidos. */
+/** Dashboard: totales de venta por período, KPIs y accesos rápidos. */
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ShoppingCart, Package, TrendingUp, Receipt } from 'lucide-react';
-import { obtenerPaginado } from '@/lib/axios';
+import { obtenerPaginado, obtener } from '@/lib/axios';
 import { Card } from '@/components/ui/Feedback';
+import { cn } from '@/lib/cn';
 import { useAuthStore } from '@/store/authStore';
 import { useTasaStore } from '@/store/tasaStore';
-import { formatearUSD, formatearBs, formatearFechaHora, formatearNumero } from '@/lib/formato';
+import { formatearUSD, formatearBs, formatearFechaHora, formatearNumero, aNumero } from '@/lib/formato';
 
 interface VentaResumen {
   id: number;
@@ -17,6 +19,23 @@ interface VentaResumen {
   cliente: string;
   cajero: string;
 }
+
+type Periodo = 'dia' | 'semana' | 'mes' | 'total';
+
+interface TotalesVenta {
+  tickets: string;
+  ventas_usd: string;
+  ventas_bs: string;
+  utilidad_usd: string;
+  credito_usd: string;
+}
+
+const PERIODOS: { clave: Periodo; etiqueta: string; leyenda: string }[] = [
+  { clave: 'dia', etiqueta: 'Hoy', leyenda: 'de hoy' },
+  { clave: 'semana', etiqueta: '7 días', leyenda: 'de los últimos 7 días' },
+  { clave: 'mes', etiqueta: '30 días', leyenda: 'de los últimos 30 días' },
+  { clave: 'total', etiqueta: 'Todo', leyenda: 'históricas' },
+];
 
 const ACCESOS = [
   { a: '/pos', etiqueta: 'Punto de venta', icono: ShoppingCart, color: 'bg-green-500' },
@@ -29,12 +48,28 @@ export default function DashboardPage() {
   const usuario = useAuthStore((s) => s.usuario);
   const tasa = useTasaStore((s) => s.tasa);
 
+  const [periodo, setPeriodo] = useState<Periodo>('dia');
+
   const ventas = useQuery({
     queryKey: ['ventas', 'recientes'],
     queryFn: () => obtenerPaginado<VentaResumen>('/ventas?limite=8'),
   });
 
-  const totalDia = (ventas.data?.datos ?? []).reduce((a, v) => a + Number(v.total_usd), 0);
+  /**
+   * Los totales los suma el backend en SQL sobre TODAS las ventas del período.
+   * Antes se sumaban las 8 filas de "últimas ventas", así que el monto y el
+   * conteo hablaban de universos distintos.
+   */
+  const totales = useQuery({
+    queryKey: ['dashboard', 'totales', periodo],
+    queryFn: () => obtener<TotalesVenta>(`/reportes/dashboard/ventas?periodo=${periodo}`),
+  });
+
+  const t = totales.data;
+  const tickets = aNumero(t?.tickets ?? 0);
+  const vendido = aNumero(t?.ventas_usd ?? 0);
+  const promedio = tickets > 0 ? vendido / tickets : 0;
+  const leyenda = PERIODOS.find((p) => p.clave === periodo)!.leyenda;
 
   return (
     <div className="space-y-6">
@@ -43,16 +78,40 @@ export default function DashboardPage() {
         <p className="text-sm text-gray-500">Resumen de Mini Market Los Gochitos</p>
       </div>
 
+      {/* Período de los KPIs */}
+      <div className="flex flex-wrap gap-0.5 rounded-lg border border-gray-200 bg-white p-0.5 dark:border-gray-700 dark:bg-gray-800 sm:inline-flex">
+        {PERIODOS.map((p) => (
+          <button key={p.clave} onClick={() => setPeriodo(p.clave)}
+            className={cn(
+              'flex-1 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition-colors sm:flex-none',
+              periodo === p.clave
+                ? 'bg-amber-500 text-white shadow-sm'
+                : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700',
+            )}>
+            {p.etiqueta}
+          </button>
+        ))}
+      </div>
+
       {/* KPIs */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className={cn('grid gap-4 sm:grid-cols-2 lg:grid-cols-4', totales.isFetching && 'opacity-60')}>
         <Card>
-          <p className="text-xs uppercase tracking-wide text-gray-500">Ventas recientes (USD)</p>
-          <p className="mt-1 text-2xl font-bold tabular-nums">{formatearUSD(totalDia)}</p>
-          <p className="text-xs text-gray-400">{formatearBs(totalDia * (tasa ? Number(tasa.tasa) : 0))}</p>
+          <p className="text-xs uppercase tracking-wide text-gray-500">Total vendido {leyenda}</p>
+          <p className="mt-1 text-2xl font-bold tabular-nums">{formatearUSD(vendido)}</p>
+          {/* Bs con la tasa congelada de cada venta, no con la de hoy. */}
+          <p className="text-xs text-gray-400">{formatearBs(t?.ventas_bs ?? 0)}</p>
         </Card>
         <Card>
           <p className="text-xs uppercase tracking-wide text-gray-500">N.º de ventas</p>
-          <p className="mt-1 text-2xl font-bold tabular-nums">{ventas.data?.meta.total ?? 0}</p>
+          <p className="mt-1 text-2xl font-bold tabular-nums">{formatearNumero(tickets, 0)}</p>
+          <p className="text-xs text-gray-400">Ticket promedio {formatearUSD(promedio)}</p>
+        </Card>
+        <Card>
+          <p className="text-xs uppercase tracking-wide text-gray-500">Utilidad</p>
+          <p className="mt-1 text-2xl font-bold tabular-nums text-green-600">{formatearUSD(t?.utilidad_usd ?? 0)}</p>
+          {aNumero(t?.credito_usd ?? 0) > 0 && (
+            <p className="text-xs text-amber-600">{formatearUSD(t!.credito_usd)} salió a crédito</p>
+          )}
         </Card>
         <Card>
           <p className="text-xs uppercase tracking-wide text-gray-500">Tasa del día</p>
@@ -61,10 +120,6 @@ export default function DashboardPage() {
           ) : (
             <p className="mt-1 text-sm font-medium text-red-500">Sin registrar</p>
           )}
-        </Card>
-        <Card>
-          <p className="text-xs uppercase tracking-wide text-gray-500">Tu rol</p>
-          <p className="mt-1 text-2xl font-bold">{usuario?.rolCodigo}</p>
         </Card>
       </div>
 
@@ -92,6 +147,7 @@ export default function DashboardPage() {
         {(ventas.data?.datos ?? []).length === 0 ? (
           <p className="p-8 text-center text-sm text-gray-400">Aún no hay ventas registradas.</p>
         ) : (
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-xs uppercase text-gray-500 dark:bg-gray-700/50">
               <tr>
@@ -114,6 +170,7 @@ export default function DashboardPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </Card>
     </div>
