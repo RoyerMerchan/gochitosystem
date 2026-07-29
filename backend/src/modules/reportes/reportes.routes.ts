@@ -39,6 +39,15 @@ function rangoVentas(q: Rango, sucursalId: number): { where: string; params: (st
   return { where: cond.join(' AND '), params };
 }
 
+/** Mismo rango, sobre abonos aplicados (lo cobrado de la cartera). */
+function rangoAbonos(q: Rango, sucursalId: number): { where: string; params: (string | number)[] } {
+  const cond = ["a.estado = 'APLICADO'", 'a.sucursal_id = ?'];
+  const params: (string | number)[] = [sucursalId];
+  if (q.desde) { cond.push('a.fecha >= ?'); params.push(`${q.desde} 00:00:00`); }
+  if (q.hasta) { cond.push('a.fecha <= ?'); params.push(`${q.hasta} 23:59:59`); }
+  return { where: cond.join(' AND '), params };
+}
+
 // ---------------------------------------------------------------------------
 // VENTAS: mas vendidos / menos vendidos
 // ---------------------------------------------------------------------------
@@ -59,23 +68,68 @@ async function masVendidos(q: Rango, sucursalId: number, orden: 'DESC' | 'ASC') 
 }
 
 /**
- * Cierre diario: una fila por dia con lo que produjo. Sin rango devuelve todo el
- * historial, por eso el limite. Bs de v.total_bs (tasa congelada de cada venta).
+ * Cierre diario en base COBRADA: por cada dia, lo que entro de contado en las
+ * ventas de ese dia mas los abonos recibidos ese dia. El credito otorgado va en
+ * su columna, informativo, sin sumar a lo cobrado.
+ *
+ * FULL JOIN porque un dia puede tener solo abonos (nadie compro, pero pagaron
+ * fiado) o solo ventas; con un JOIN normal ese dia se perderia del reporte.
  */
 router.get('/ventas/por-dia', requierePermiso('reportes.ver'), validar({ query: esquemaRangoDetalle }), async (req, res, next) => {
   try {
     const q = datosQuery<Rango>(req);
-    const { where, params } = rangoVentas(q, usuarioActual(req).sucursalId);
+    const suc = usuarioActual(req).sucursalId;
+    const { where, params } = rangoVentas(q, suc);
+    const { where: whereAb, params: paramsAb } = rangoAbonos(q, suc);
     enviarOk(res, await queryReporte(
       // TO_CHAR y no DATE(): un date de pg viaja como Date de JS y al pasar por
       // JSON se vuelve UTC, corriendo el dia si el navegador esta en otra zona.
-      `SELECT TO_CHAR(DATE(v.fecha), 'YYYY-MM-DD') AS dia, COUNT(*) AS ventas,
-              COALESCE(SUM(v.total_usd), 0) AS total_usd,
-              COALESCE(SUM(v.total_bs), 0) AS total_bs,
-              COALESCE(SUM(v.utilidad_total), 0) AS utilidad_usd,
-              COALESCE(SUM(v.total_credito), 0) AS credito_usd
-         FROM ventas v WHERE ${where}
-        GROUP BY 1 ORDER BY dia DESC LIMIT ?`,
+      `WITH dias_venta AS (
+         SELECT TO_CHAR(DATE(v.fecha), 'YYYY-MM-DD') AS dia, COUNT(*) AS ventas,
+                SUM(v.total_usd) AS facturado_usd,
+                SUM(v.total_usd - v.total_credito) AS contado_usd,
+                SUM(ROUND((v.total_usd - v.total_credito) * v.tasa_cambio, 2)) AS contado_bs,
+                SUM(v.total_credito) AS credito_usd,
+                SUM(v.utilidad_total) AS utilidad_usd
+           FROM ventas v WHERE ${where} GROUP BY 1
+       ), dias_abono AS (
+         SELECT TO_CHAR(DATE(a.fecha), 'YYYY-MM-DD') AS dia,
+                SUM(a.monto_usd - a.saldo_a_favor_usd) AS abonos_usd,
+                SUM(ROUND((a.monto_usd - a.saldo_a_favor_usd) * a.tasa_aplicada, 2)) AS abonos_bs
+           FROM abonos a WHERE ${whereAb} GROUP BY 1
+       )
+       SELECT COALESCE(dv.dia, da.dia) AS dia,
+              COALESCE(dv.ventas, 0) AS ventas,
+              COALESCE(dv.contado_usd, 0) AS contado_usd,
+              COALESCE(da.abonos_usd, 0) AS abonos_usd,
+              COALESCE(dv.contado_usd, 0) + COALESCE(da.abonos_usd, 0) AS cobrado_usd,
+              COALESCE(dv.contado_bs, 0) + COALESCE(da.abonos_bs, 0) AS cobrado_bs,
+              COALESCE(dv.credito_usd, 0) AS credito_usd,
+              COALESCE(dv.facturado_usd, 0) AS facturado_usd,
+              COALESCE(dv.utilidad_usd, 0) AS utilidad_usd
+         FROM dias_venta dv FULL JOIN dias_abono da ON da.dia = dv.dia
+        ORDER BY 1 DESC LIMIT ?`,
+      [...params, ...paramsAb, q.limite],
+    ));
+  } catch (e) { next(e); }
+});
+
+/** Abonos cobrados en el rango: el detalle de lo que se recuperó de la cartera. */
+router.get('/ventas/abonos', requierePermiso('reportes.ver'), validar({ query: esquemaRangoDetalle }), async (req, res, next) => {
+  try {
+    const q = datosQuery<Rango>(req);
+    const { where, params } = rangoAbonos(q, usuarioActual(req).sucursalId);
+    enviarOk(res, await queryReporte(
+      `SELECT a.fecha, a.prefijo || a.numero AS numero, c.nombre AS cliente,
+              mp.nombre AS metodo, a.moneda, a.monto_moneda,
+              (a.monto_usd - a.saldo_a_favor_usd) AS abonado_usd,
+              ROUND((a.monto_usd - a.saldo_a_favor_usd) * a.tasa_aplicada, 2) AS abonado_bs,
+              u.nombre_completo AS cajero
+         FROM abonos a
+         JOIN clientes c ON c.id = a.cliente_id
+         JOIN metodos_pago mp ON mp.id = a.metodo_pago_id
+         JOIN usuarios u ON u.id = a.usuario_id
+        WHERE ${where} ORDER BY a.fecha DESC LIMIT ?`,
       [...params, q.limite],
     ));
   } catch (e) { next(e); }
@@ -97,8 +151,15 @@ router.get('/ventas/detalle', requierePermiso('reportes.ver'), validar({ query: 
                   CASE WHEN EXISTS (SELECT 1 FROM pagos pg2 WHERE pg2.venta_id = v.id)
                        THEN ' + Credito' ELSE 'Credito' END
                 ELSE '' END AS metodo,
-              v.total_usd, v.total_bs, v.utilidad_total AS utilidad_usd,
-              v.total_credito AS credito_usd
+              CASE WHEN v.es_credito THEN 'CREDITO' ELSE 'CONTADO' END AS tipo,
+              v.total_usd,
+              -- Contado y credito de la MISMA venta: una venta a credito puede
+              -- llevar abono inicial, asi que las dos columnas conviven.
+              (v.total_usd - v.total_credito) AS contado_usd,
+              v.total_credito AS credito_usd,
+              COALESCE((SELECT SUM(cr.saldo_usd) FROM creditos cr
+                         WHERE cr.venta_id = v.id AND cr.estado <> 'ANULADO'), 0) AS saldo_usd,
+              v.total_bs, v.utilidad_total AS utilidad_usd
          FROM ventas v
          LEFT JOIN clientes c ON c.id = v.cliente_id
          JOIN usuarios u ON u.id = v.usuario_id
@@ -253,36 +314,57 @@ type Periodo = z.infer<typeof esquemaPeriodo>['periodo'];
  * pool abre la sesion con `-c timezone=...`; si no, una venta de las 11 PM
  * caeria en el dia siguiente y el total de "hoy" saldria mal.
  */
-const FILTRO_PERIODO: Record<Periodo, string> = {
-  dia: 'AND DATE(v.fecha) = CURRENT_DATE',
-  semana: "AND v.fecha >= CURRENT_DATE - INTERVAL '6 days'",
-  mes: "AND v.fecha >= CURRENT_DATE - INTERVAL '29 days'",
-  total: '',
+const CORTE_PERIODO: Record<Periodo, (col: string) => string> = {
+  dia: (c) => `AND DATE(${c}) = CURRENT_DATE`,
+  semana: (c) => `AND ${c} >= CURRENT_DATE - INTERVAL '6 days'`,
+  mes: (c) => `AND ${c} >= CURRENT_DATE - INTERVAL '29 days'`,
+  total: () => '',
 };
 
 /**
- * Totales de venta del periodo. Excluye las ANULADAS: una venta revertida no es
- * dinero que entro. Los Bs salen de v.total_bs (tasa congelada de cada venta),
- * nunca de convertir el total USD con la tasa de hoy.
+ * Totales del periodo en base COBRADA, no facturada.
+ *
+ * Lo que sale fiado no es venta del dia: entra el dia que el cliente paga. Por eso
+ *   cobrado = contado de las ventas del periodo + abonos recibidos en el periodo
+ * y el credito otorgado va aparte, como informacion, sin sumarse.
+ *
+ * Excluye ANULADAS (una venta revertida no es dinero que entro). Los Bs salen de
+ * la tasa congelada de cada documento, nunca de la tasa de hoy.
  */
 router.get('/dashboard/ventas', requierePermiso('dashboard.ver'), validar({ query: esquemaPeriodo }), async (req, res, next) => {
   try {
     const { periodo } = datosQuery<{ periodo: Periodo }>(req);
     const u = usuarioActual(req);
-    const filas = await queryReporte<{
-      tickets: string; ventas_usd: string; ventas_bs: string;
-      utilidad_usd: string; credito_usd: string;
-    }>(
+    const ventas = await queryReporte<Record<string, string>>(
       `SELECT COUNT(*) AS tickets,
-              COALESCE(SUM(v.total_usd), 0) AS ventas_usd,
-              COALESCE(SUM(v.total_bs), 0) AS ventas_bs,
-              COALESCE(SUM(v.utilidad_total), 0) AS utilidad_usd,
-              COALESCE(SUM(v.total_credito), 0) AS credito_usd
+              COUNT(*) FILTER (WHERE v.es_credito) AS tickets_credito,
+              COALESCE(SUM(v.total_usd), 0) AS facturado_usd,
+              COALESCE(SUM(v.total_usd - v.total_credito), 0) AS contado_usd,
+              COALESCE(SUM(ROUND((v.total_usd - v.total_credito) * v.tasa_cambio, 2)), 0) AS contado_bs,
+              COALESCE(SUM(v.total_credito), 0) AS credito_usd,
+              COALESCE(SUM(v.utilidad_total), 0) AS utilidad_usd
          FROM ventas v
-        WHERE v.sucursal_id = ? AND v.estado = 'CERRADA' ${FILTRO_PERIODO[periodo]}`,
+        WHERE v.sucursal_id = ? AND v.estado = 'CERRADA' ${CORTE_PERIODO[periodo]('v.fecha')}`,
       [u.sucursalId],
     );
-    enviarOk(res, { periodo, ...filas[0] });
+    // Lo aplicado a deuda = lo recibido menos lo que quedo como saldo a favor.
+    const abonos = await queryReporte<Record<string, string>>(
+      `SELECT COUNT(*) AS n,
+              COALESCE(SUM(a.monto_usd - a.saldo_a_favor_usd), 0) AS abonos_usd,
+              COALESCE(SUM(ROUND((a.monto_usd - a.saldo_a_favor_usd) * a.tasa_aplicada, 2)), 0) AS abonos_bs
+         FROM abonos a
+        WHERE a.sucursal_id = ? AND a.estado = 'APLICADO' ${CORTE_PERIODO[periodo]('a.fecha')}`,
+      [u.sucursalId],
+    );
+    const v = ventas[0]!;
+    const a = abonos[0]!;
+    enviarOk(res, {
+      periodo,
+      ...v,
+      ...a,
+      cobrado_usd: (Number(v.contado_usd) + Number(a.abonos_usd)).toFixed(2),
+      cobrado_bs: (Number(v.contado_bs) + Number(a.abonos_bs)).toFixed(2),
+    });
   } catch (e) { next(e); }
 });
 

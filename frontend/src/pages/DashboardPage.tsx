@@ -24,10 +24,15 @@ type Periodo = 'dia' | 'semana' | 'mes' | 'total';
 
 interface TotalesVenta {
   tickets: string;
-  ventas_usd: string;
-  ventas_bs: string;
-  utilidad_usd: string;
+  tickets_credito: string;
+  facturado_usd: string;
+  contado_usd: string;
+  abonos_usd: string;
+  /** Contado del período + abonos recibidos. Esto es "la venta del día". */
+  cobrado_usd: string;
+  cobrado_bs: string;
   credito_usd: string;
+  utilidad_usd: string;
 }
 
 const PERIODOS: { clave: Periodo; etiqueta: string; leyenda: string }[] = [
@@ -67,15 +72,26 @@ export default function DashboardPage() {
 
   const t = totales.data;
   const tickets = aNumero(t?.tickets ?? 0);
-  const vendido = aNumero(t?.ventas_usd ?? 0);
-  const promedio = tickets > 0 ? vendido / tickets : 0;
+  const cobrado = aNumero(t?.cobrado_usd ?? 0);
+  const promedio = tickets > 0 ? aNumero(t?.facturado_usd ?? 0) / tickets : 0;
   const leyenda = PERIODOS.find((p) => p.clave === periodo)!.leyenda;
+  /**
+   * Los Bs solo tienen sentido en un período de UN día: cada día tiene su tasa y
+   * sumar Bs de varios días con tasas distintas no da una cifra que signifique
+   * nada. Para semana / mes / total se muestra únicamente el USD.
+   */
+  const muestraBs = periodo === 'dia';
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold">Hola, {usuario?.nombreCompleto?.split(' ')[0]}</h1>
-        <p className="text-sm text-gray-500">Resumen de Mini Market Los Gochitos</p>
+        <p className="text-sm text-gray-500">
+          Resumen de Mini Market Los Gochitos
+          {tasa
+            ? <> · tasa de hoy <span className="font-medium text-gray-600 dark:text-gray-300">Bs {formatearNumero(tasa.tasa, 2)}</span></>
+            : <span className="font-medium text-red-500"> · sin tasa registrada hoy</span>}
+        </p>
       </div>
 
       {/* Período de los KPIs */}
@@ -95,33 +111,42 @@ export default function DashboardPage() {
 
       {/* KPIs */}
       <div className={cn('grid gap-4 sm:grid-cols-2 lg:grid-cols-4', totales.isFetching && 'opacity-60')}>
+        {/* Base cobrada: lo fiado NO entra aquí, entra el día que el cliente abona. */}
         <Card>
-          <p className="text-xs uppercase tracking-wide text-gray-500">Total vendido {leyenda}</p>
-          <p className="mt-1 text-2xl font-bold tabular-nums">{formatearUSD(vendido)}</p>
-          {/* Bs con la tasa congelada de cada venta, no con la de hoy. */}
-          <p className="text-xs text-gray-400">{formatearBs(t?.ventas_bs ?? 0)}</p>
+          <p className="text-xs uppercase tracking-wide text-gray-500">Venta cobrada {leyenda}</p>
+          <p className="mt-1 text-2xl font-bold tabular-nums">{formatearUSD(cobrado)}</p>
+          {muestraBs && <p className="text-xs text-gray-400">{formatearBs(t?.cobrado_bs ?? 0)}</p>}
+          <p className="mt-1 text-xs text-gray-400">
+            Contado {formatearUSD(t?.contado_usd ?? 0)} · Abonos {formatearUSD(t?.abonos_usd ?? 0)}
+          </p>
+        </Card>
+        <Card>
+          <p className="text-xs uppercase tracking-wide text-gray-500">Salió a crédito</p>
+          <p className="mt-1 text-2xl font-bold tabular-nums text-amber-600">{formatearUSD(t?.credito_usd ?? 0)}</p>
+          <p className="mt-1 text-xs text-gray-400">
+            {formatearNumero(aNumero(t?.tickets_credito ?? 0), 0)} venta(s) fiada(s) · no suma a lo cobrado
+          </p>
         </Card>
         <Card>
           <p className="text-xs uppercase tracking-wide text-gray-500">N.º de ventas</p>
           <p className="mt-1 text-2xl font-bold tabular-nums">{formatearNumero(tickets, 0)}</p>
-          <p className="text-xs text-gray-400">Ticket promedio {formatearUSD(promedio)}</p>
+          <p className="mt-1 text-xs text-gray-400">
+            Facturado {formatearUSD(t?.facturado_usd ?? 0)} · ticket {formatearUSD(promedio)}
+          </p>
         </Card>
         <Card>
           <p className="text-xs uppercase tracking-wide text-gray-500">Utilidad</p>
           <p className="mt-1 text-2xl font-bold tabular-nums text-green-600">{formatearUSD(t?.utilidad_usd ?? 0)}</p>
-          {aNumero(t?.credito_usd ?? 0) > 0 && (
-            <p className="text-xs text-amber-600">{formatearUSD(t!.credito_usd)} salió a crédito</p>
-          )}
-        </Card>
-        <Card>
-          <p className="text-xs uppercase tracking-wide text-gray-500">Tasa del día</p>
-          {tasa ? (
-            <p className="mt-1 text-2xl font-bold tabular-nums">Bs {formatearNumero(tasa.tasa, 2)}</p>
-          ) : (
-            <p className="mt-1 text-sm font-medium text-red-500">Sin registrar</p>
-          )}
+          <p className="mt-1 text-xs text-gray-400">Venta sin IVA menos costo de la mercancía</p>
         </Card>
       </div>
+      {!muestraBs && (
+        <p className="-mt-2 text-xs text-gray-400">
+          Los montos van solo en USD: cada día tiene su propia tasa y sumar bolívares de
+          varios días no da una cifra real. Para ver Bs, usa el período «Hoy» o el reporte
+          Cierre por día, que calcula cada día con su tasa.
+        </p>
+      )}
 
       {/* Accesos rápidos */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">

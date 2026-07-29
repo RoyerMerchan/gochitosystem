@@ -14,6 +14,8 @@ interface DefReporte {
   clave: string;
   titulo: string;
   url: string;
+  /** Aclara cómo leer el reporte cuando la base de cálculo no es obvia. */
+  nota?: string;
   columnas: { campo: string; etiqueta: string; tipo?: TipoCol }[];
 }
 
@@ -24,16 +26,36 @@ const REPORTES: { grupo: string; items: DefReporte[] }[] = [
   {
     grupo: 'Ventas',
     items: [
-      { clave: 'pordia', titulo: 'Ventas por día', url: '/reportes/ventas/por-dia', columnas: [
-        { campo: 'dia', etiqueta: 'Día', tipo: 'dia' }, { campo: 'ventas', etiqueta: 'N.º ventas', tipo: 'cant' },
-        { campo: 'total_usd', etiqueta: 'Total USD', tipo: 'usd' }, { campo: 'total_bs', etiqueta: 'Total Bs', tipo: 'bs' },
-        { campo: 'utilidad_usd', etiqueta: 'Utilidad USD', tipo: 'usd' }, { campo: 'credito_usd', etiqueta: 'A crédito USD', tipo: 'usd' }] },
-      { clave: 'detalle', titulo: 'Detalle de ventas', url: '/reportes/ventas/detalle', columnas: [
-        { campo: 'fecha', etiqueta: 'Fecha', tipo: 'fecha' }, { campo: 'numero', etiqueta: 'N.º' },
-        { campo: 'cliente', etiqueta: 'Cliente' }, { campo: 'cajero', etiqueta: 'Cajero' },
-        { campo: 'metodo', etiqueta: 'Método de pago' },
-        { campo: 'total_usd', etiqueta: 'Total USD', tipo: 'usd' }, { campo: 'total_bs', etiqueta: 'Total Bs', tipo: 'bs' },
-        { campo: 'utilidad_usd', etiqueta: 'Utilidad USD', tipo: 'usd' }] },
+      { clave: 'pordia', titulo: 'Cierre por día', url: '/reportes/ventas/por-dia',
+        nota: 'Base cobrada: lo que salió a crédito NO suma; entra el día que el cliente abona.',
+        columnas: [
+          { campo: 'dia', etiqueta: 'Día', tipo: 'dia' }, { campo: 'ventas', etiqueta: 'N.º ventas', tipo: 'cant' },
+          { campo: 'contado_usd', etiqueta: 'Contado USD', tipo: 'usd' },
+          { campo: 'abonos_usd', etiqueta: 'Abonos USD', tipo: 'usd' },
+          { campo: 'cobrado_usd', etiqueta: 'COBRADO USD', tipo: 'usd' },
+          { campo: 'cobrado_bs', etiqueta: 'Cobrado Bs', tipo: 'bs' },
+          { campo: 'credito_usd', etiqueta: 'Salió a crédito', tipo: 'usd' },
+          { campo: 'utilidad_usd', etiqueta: 'Utilidad USD', tipo: 'usd' }] },
+      { clave: 'detalle', titulo: 'Detalle de ventas', url: '/reportes/ventas/detalle',
+        nota: 'Ventas de contado y a crédito juntas. La columna Contado es lo que entró ese día; Crédito quedó por cobrar.',
+        columnas: [
+          { campo: 'fecha', etiqueta: 'Fecha', tipo: 'fecha' }, { campo: 'numero', etiqueta: 'N.º' },
+          { campo: 'tipo', etiqueta: 'Tipo' },
+          { campo: 'cliente', etiqueta: 'Cliente' }, { campo: 'cajero', etiqueta: 'Cajero' },
+          { campo: 'metodo', etiqueta: 'Método de pago' },
+          { campo: 'total_usd', etiqueta: 'Total USD', tipo: 'usd' },
+          { campo: 'contado_usd', etiqueta: 'Contado USD', tipo: 'usd' },
+          { campo: 'credito_usd', etiqueta: 'Crédito USD', tipo: 'usd' },
+          { campo: 'saldo_usd', etiqueta: 'Saldo pendiente', tipo: 'usd' },
+          { campo: 'utilidad_usd', etiqueta: 'Utilidad USD', tipo: 'usd' }] },
+      { clave: 'abonos', titulo: 'Abonos cobrados', url: '/reportes/ventas/abonos',
+        nota: 'Créditos que se cobraron en el período. Esto sí es venta del día en que se recibió.',
+        columnas: [
+          { campo: 'fecha', etiqueta: 'Fecha', tipo: 'fecha' }, { campo: 'numero', etiqueta: 'N.º' },
+          { campo: 'cliente', etiqueta: 'Cliente' }, { campo: 'metodo', etiqueta: 'Método' },
+          { campo: 'abonado_usd', etiqueta: 'Abonado USD', tipo: 'usd' },
+          { campo: 'abonado_bs', etiqueta: 'Abonado Bs', tipo: 'bs' },
+          { campo: 'cajero', etiqueta: 'Cajero' }] },
       { clave: 'mas', titulo: 'Más vendidos', url: '/reportes/ventas/mas-vendidos', columnas: [
         { campo: 'producto', etiqueta: 'Producto' }, { campo: 'cantidad', etiqueta: 'Cantidad', tipo: 'cant' },
         { campo: 'venta_usd', etiqueta: 'Venta USD', tipo: 'usd' }, { campo: 'utilidad_usd', etiqueta: 'Utilidad USD', tipo: 'usd' }] },
@@ -99,12 +121,32 @@ export default function ReportesPage() {
    * Totales del pie. Es lo que se usa para cuadrar el día: sin esto habría que
    * sumar a mano las filas o exportar a Excel solo para ver el total.
    */
+  /**
+   * Días distintos que abarca el resultado, leídos de la columna de fecha.
+   * Cada día tiene su propia tasa, así que solo se pueden sumar bolívares
+   * cuando el reporte cae dentro de UN día.
+   */
+  const diasDistintos = (() => {
+    const filas = datos.data ?? [];
+    const col = sel.columnas.find((c) => c.tipo === 'dia' || c.tipo === 'fecha');
+    if (!col || filas.length === 0) return 0;
+    const dias = new Set(filas.map((f) => String(f[col.campo] ?? '').slice(0, 10)));
+    return dias.size;
+  })();
+  const puedeSumarBs = diasDistintos === 1;
+
+  /**
+   * Totales del pie. Es lo que se usa para cuadrar el día: sin esto habría que
+   * sumar a mano las filas o exportar a Excel solo para ver el total.
+   */
   const totales = (() => {
     const filas = datos.data ?? [];
     if (filas.length === 0) return null;
     const acc: Record<string, number> = {};
     for (const c of sel.columnas) {
       if (!c.tipo || !SUMABLES.includes(c.tipo)) continue;
+      // Bs de varios días mezcla tasas distintas: no se suma, se deja vacío.
+      if (c.tipo === 'bs' && !puedeSumarBs) continue;
       acc[c.campo] = filas.reduce((a, f) => a + aNumero(f[c.campo] as string), 0);
     }
     return acc;
@@ -122,7 +164,9 @@ export default function ReportesPage() {
     if (totales) {
       const fila: Record<string, unknown> = {};
       sel.columnas.forEach((c, i) => {
-        fila[c.etiqueta] = c.campo in totales ? totales[c.campo] : i === 0 ? 'TOTAL' : '';
+        fila[c.etiqueta] = c.campo in totales ? totales[c.campo]
+          : i === 0 ? 'TOTAL'
+          : c.tipo === 'bs' ? 'varias tasas' : '';
       });
       filas.push(fila);
     }
@@ -139,7 +183,9 @@ export default function ReportesPage() {
     ).join('');
     const tfoot = totales
       ? `<tfoot><tr>${sel.columnas.map((c, i) => `<td style="text-align:${c.tipo && c.tipo !== 'texto' ? 'right' : 'left'};font-weight:bold;border-top:2px solid #999">${
-          c.campo in totales ? formatear(totales[c.campo], c.tipo) : i === 0 ? 'TOTAL' : ''
+          c.campo in totales ? formatear(totales[c.campo], c.tipo)
+            : i === 0 ? 'TOTAL'
+            : c.tipo === 'bs' ? 'varias tasas' : ''
         }</td>`).join('')}</tr></tfoot>`
       : '';
     const html = `<!doctype html><html><head><meta charset="utf-8"><title>${sel.titulo}</title>
@@ -180,7 +226,10 @@ export default function ReportesPage() {
       {/* Resultado */}
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-xl font-bold">{sel.titulo}</h1>
+          <div>
+            <h1 className="text-xl font-bold">{sel.titulo}</h1>
+            {sel.nota && <p className="mt-0.5 max-w-xl text-xs text-gray-500">{sel.nota}</p>}
+          </div>
           <div className="flex flex-wrap items-end gap-2">
             <FiltroPeriodo desde={desde} hasta={hasta} onCambiar={(d, h) => { setDesde(d); setHasta(h); }} />
             <div>
@@ -231,7 +280,13 @@ export default function ReportesPage() {
                         <td key={c.campo} className={`p-3 ${c.tipo && c.tipo !== 'texto' ? 'text-right tabular-nums' : ''}`}>
                           {c.campo in totales
                             ? formatear(totales[c.campo], c.tipo)
-                            : i === 0 ? `TOTAL · ${datos.data!.length} fila(s)` : ''}
+                            : i === 0 ? `TOTAL · ${datos.data!.length} fila(s)`
+                            : c.tipo === 'bs' ? (
+                              <span className="text-xs font-normal text-gray-400"
+                                title="Cada día tiene su tasa: sumar bolívares de varios días no da una cifra real.">
+                                varias tasas
+                              </span>
+                            ) : ''}
                         </td>
                       ))}
                     </tr>
