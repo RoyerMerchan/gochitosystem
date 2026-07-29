@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Plus, Trash2, Banknote } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
-import { formatearUSD, formatearBs, aNumero } from '@/lib/formato';
+import { formatearUSD, formatearBs, aNumero, usdABs, redondearCentavos } from '@/lib/formato';
 import { METODOS_PAGO, type MetodoPago } from './metodosPago';
 
 export interface LineaPagoEnvio {
@@ -69,7 +69,9 @@ export function ModalCobro({ abierto, totalUsd, tasa, onCerrar, onConfirmar, pro
 
   const agregarLinea = (metodo: MetodoPago) => {
     // Por defecto, el monto sugerido cubre el faltante en la moneda del metodo.
-    const faltanteMoneda = metodo.moneda === 'USD' ? faltante : faltante * tasa;
+    // Los Bs salen del faltante ya redondeado a centavos: es la plata que el
+    // cajero va a cobrar de verdad y tiene que coincidir con el ticket.
+    const faltanteMoneda = metodo.moneda === 'USD' ? redondearCentavos(faltante) : usdABs(faltante, tasa);
     setLineas((ls) => [
       ...ls,
       { metodo, monto: faltanteMoneda > 0 ? faltanteMoneda.toFixed(2) : '', referencia: '' },
@@ -116,7 +118,7 @@ export function ModalCobro({ abierto, totalUsd, tasa, onCerrar, onConfirmar, pro
               <span className="font-medium text-amber-600">Faltan {formatearUSD(faltante)}</span>
             ) : vuelto > 0.005 ? (
               <span className="font-medium text-blue-600">
-                Vuelto {formatearUSD(vuelto)} / {formatearBs(vuelto * tasa)}
+                Vuelto {formatearUSD(vuelto)} / {formatearBs(usdABs(vuelto, tasa))}
               </span>
             ) : (
               <span className="font-medium text-green-600">Pago completo</span>
@@ -136,7 +138,7 @@ export function ModalCobro({ abierto, totalUsd, tasa, onCerrar, onConfirmar, pro
       <div className="mb-4 rounded-lg bg-gray-50 p-4 text-center dark:bg-gray-700/50">
         <p className="text-xs uppercase tracking-wide text-gray-500">Total a cobrar</p>
         <p className="text-3xl font-bold tabular-nums">{formatearUSD(totalUsd)}</p>
-        <p className="text-sm text-gray-500">{formatearBs(totalUsd * tasa)} · tasa {tasa.toFixed(2)}</p>
+        <p className="text-sm text-gray-500">{formatearBs(usdABs(totalUsd, tasa))} · tasa {tasa.toFixed(2)}</p>
       </div>
 
       {/* Botones de metodo */}

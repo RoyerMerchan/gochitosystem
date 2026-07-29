@@ -14,7 +14,7 @@ import { FiltroPeriodo } from '@/components/ui/FiltroPeriodo';
 import { toast } from '@/store/toastStore';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useTasaStore } from '@/store/tasaStore';
-import { formatearUSD, formatearBs, formatearFecha, aNumero } from '@/lib/formato';
+import { formatearUSD, formatearBs, formatearFecha, aNumero, usdABs, redondearCentavos } from '@/lib/formato';
 import type { Producto } from '@/lib/tipos';
 
 interface EntradaFila { id: number; numero: string; fecha_recepcion: string; total_usd: string; total_bs: string; estado: string; }
@@ -122,7 +122,7 @@ export default function ComprasPage() {
       </Card>
 
       <Modal abierto={modal} onCerrar={cerrar} titulo="Ingresar mercancía" ancho="xl"
-        pie={<div className="flex items-center justify-between"><span className="text-lg font-bold">Total: {formatearUSD(total)}<span className="ml-2 text-sm font-normal text-gray-400">{formatearBs(total * tasaNum)}</span></span>
+        pie={<div className="flex items-center justify-between"><span className="text-lg font-bold">Total: {formatearUSD(redondearCentavos(total))}<span className="ml-2 text-sm font-normal text-gray-400">{formatearBs(usdABs(total, tasaNum))}</span></span>
           <button onClick={() => registrar.mutate()} disabled={renglones.length === 0 || registrar.isPending} className="rounded-lg bg-green-600 px-5 py-2 font-semibold text-white hover:bg-green-700 disabled:opacity-50">Ingresar al inventario</button></div>}>
         <div className="space-y-3">
           <p className="rounded-lg bg-blue-50 p-3 text-xs text-blue-700 dark:bg-blue-900/20 dark:text-blue-300">
@@ -152,8 +152,8 @@ export default function ComprasPage() {
                   {/* Si el proveedor factura en Bs se escribe aquí: se convierte a USD a la tasa de hoy. */}
                   <td className="p-2"><input type="number" step="0.01" value={costoEnBs(r.costoUnitario)} onChange={(e) => fijarCostoBs(i, e.target.value)} disabled={tasaNum <= 0} title={tasaNum <= 0 ? 'No hay tasa registrada hoy' : 'Costo en bolívares a la tasa de hoy'} className="w-28 rounded border border-gray-300 px-2 py-1 text-right disabled:opacity-40 dark:border-gray-600 dark:bg-gray-700" /></td>
                   <td className="p-2 text-right tabular-nums">
-                    {formatearUSD(subtotal)}
-                    <span className="block text-xs text-gray-400">{formatearBs(subtotal * tasaNum)}</span>
+                    {formatearUSD(redondearCentavos(subtotal))}
+                    <span className="block text-xs text-gray-400">{formatearBs(usdABs(subtotal, tasaNum))}</span>
                   </td>
                   <td className="p-2 text-right"><button onClick={() => setRenglones((rs) => rs.filter((_, j) => j !== i))} className="text-gray-400 hover:text-red-500"><Trash2 className="h-4 w-4" /></button></td>
                 </tr>
@@ -195,7 +195,7 @@ export default function ComprasPage() {
                         <td className="p-2 text-right tabular-nums text-gray-500">{formatearBs(aNumero(r.costo_unitario_neto) * tasaCompra)}</td>
                         <td className="p-2 text-right tabular-nums font-medium">
                           {formatearUSD(r.total_linea)}
-                          <span className="block text-xs font-normal text-gray-400">{formatearBs(aNumero(r.total_linea) * tasaCompra)}</span>
+                          <span className="block text-xs font-normal text-gray-400">{formatearBs(usdABs(r.total_linea, tasaCompra))}</span>
                         </td>
                       </tr>
                     );

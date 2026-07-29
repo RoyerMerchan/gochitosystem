@@ -8,7 +8,7 @@ import { Card, Cargando, EmptyState, Badge } from '@/components/ui/Feedback';
 import { Modal } from '@/components/ui/Modal';
 import { toast } from '@/store/toastStore';
 import { useTasaStore } from '@/store/tasaStore';
-import { formatearUSD, formatearBs, formatearFecha, formatearCantidad, aNumero } from '@/lib/formato';
+import { formatearUSD, formatearBs, formatearFecha, formatearCantidad, aNumero, usdABs } from '@/lib/formato';
 import { METODOS_PAGO } from '@/features/pos/metodosPago';
 
 interface FilaCartera {
@@ -470,7 +470,7 @@ function ProductosDeVenta({ ventaId, tasaHoy }: { ventaId: number; tasaHoy: numb
               </td>
               <td className="py-1 text-right tabular-nums">
                 {formatearUSD(r.total_linea)}
-                <span className="block text-[11px] text-gray-400">{formatearBs(aNumero(r.total_linea) * tasa)}</span>
+                <span className="block text-[11px] text-gray-400">{formatearBs(usdABs(r.total_linea, tasa))}</span>
               </td>
             </tr>
           ))}
@@ -480,7 +480,7 @@ function ProductosDeVenta({ ventaId, tasaHoy }: { ventaId: number; tasaHoy: numb
         <span>Total de la factura</span>
         <span className="tabular-nums">
           {formatearUSD(venta.data.venta.total_usd)}
-          <span className="ml-1 font-normal text-gray-400">{formatearBs(aNumero(venta.data.venta.total_usd) * tasa)}</span>
+          <span className="ml-1 font-normal text-gray-400">{formatearBs(usdABs(venta.data.venta.total_usd, tasa))}</span>
         </span>
       </div>
     </div>

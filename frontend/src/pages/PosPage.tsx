@@ -15,7 +15,7 @@ import { imprimirTicket } from '@/features/pos/ticket';
 import { useTasaStore } from '@/store/tasaStore';
 import { useAuthStore } from '@/store/authStore';
 import { toast } from '@/store/toastStore';
-import { formatearUSD, formatearBs, formatearCantidad } from '@/lib/formato';
+import { formatearUSD, formatearBs, formatearCantidad, usdABs, redondearCentavos } from '@/lib/formato';
 import { useDebounce } from '@/hooks/useDebounce';
 import type { Producto } from '@/lib/tipos';
 
@@ -284,6 +284,8 @@ export default function PosPage() {
                     </td>
                     <td className="p-3 text-right tabular-nums">
                       <div>{formatearUSD(i.precioUnitario)}</div>
+                      {/* Precio unitario: escala 4, NO se redondea a centavos
+                          (un producto de $ 0,0345 se volvería $ 0,03). */}
                       <div className="text-xs text-gray-400">{formatearBs(i.precioUnitario * tasaNum)}</div>
                       {i.precioMayorista != null && (
                         <button
@@ -296,9 +298,10 @@ export default function PosPage() {
                       )}
                     </td>
                     <td className="p-3 text-right font-semibold tabular-nums">
-                      {formatearUSD((i.precioUnitario - i.descuentoUnitario) * i.cantidad)}
+                      {/* El Bs sale del USD ya redondeado, igual que en el ticket. */}
+                      {formatearUSD(redondearCentavos((i.precioUnitario - i.descuentoUnitario) * i.cantidad))}
                       <span className="block text-xs font-normal text-gray-400">
-                        {formatearBs((i.precioUnitario - i.descuentoUnitario) * i.cantidad * tasaNum)}
+                        {formatearBs(usdABs((i.precioUnitario - i.descuentoUnitario) * i.cantidad, tasaNum))}
                       </span>
                     </td>
                     <td className="p-3">
@@ -352,7 +355,7 @@ export default function PosPage() {
               <span className="text-sm text-gray-500">TOTAL</span>
               <div className="text-right">
                 <p className="text-3xl font-bold tabular-nums">{formatearUSD(totalUsd)}</p>
-                <p className="text-sm text-gray-500">{formatearBs(totalUsd * tasaNum)}</p>
+                <p className="text-sm text-gray-500">{formatearBs(usdABs(totalUsd, tasaNum))}</p>
               </div>
             </div>
           </div>

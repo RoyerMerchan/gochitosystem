@@ -3,7 +3,7 @@
  * Abre una ventana con el recibo y lanza el dialogo de impresion del navegador,
  * que sirve tanto para impresora termica como para "Guardar como PDF".
  */
-import { formatearUSD, formatearBs, formatearFechaHora, formatearNumero } from '@/lib/formato';
+import { formatearUSD, formatearBs, formatearFechaHora, formatearNumero, usdABs, redondearCentavos } from '@/lib/formato';
 
 export interface ItemTicket {
   nombre: string;
@@ -39,11 +39,11 @@ export function imprimirTicket(d: DatosTicket): void {
       </tr>
       <tr class="det">
         <td>${formatearNumero(i.cantidad, i.cantidad % 1 === 0 ? 0 : 3)} x ${formatearUSD(i.precioUnitario)}</td>
-        <td class="r">${formatearUSD(i.total)}</td>
+        <td class="r">${formatearUSD(redondearCentavos(i.total))}</td>
       </tr>
       <tr class="det">
         <td>${formatearBs(i.precioUnitario * d.tasa)} c/u</td>
-        <td class="r">${formatearBs(i.total * d.tasa)}</td>
+        <td class="r">${formatearBs(usdABs(i.total, d.tasa))}</td>
       </tr>`,
     )
     .join('');

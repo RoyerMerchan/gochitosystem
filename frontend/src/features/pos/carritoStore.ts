@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { Producto } from '@/lib/tipos';
+import { redondearCentavos } from '@/lib/formato';
 
 /** Renglon del carrito del POS. Precios en USD. */
 export interface ItemCarrito {
@@ -121,10 +122,18 @@ export const useCarrito = create<EstadoCarrito>()(
 
       limpiar: () => set({ items: [], clienteId: null, clienteNombre: 'CONSUMIDOR FINAL' }),
 
+      /**
+       * Redondeado a centavos: es lo que el cliente debe de verdad y de donde
+       * sale el monto en Bs. Sin redondear aquí, una cantidad fraccionada
+       * (0,476 kg) dejaba un total crudo de $ 4,046 que se mostraba como
+       * "$ 4,05" pero se convertía a Bs como 4,046 — Bs 3 menos que el ticket.
+       */
       totalUsd: () =>
-        get().items.reduce(
-          (acc, i) => acc + (i.precioUnitario - i.descuentoUnitario) * i.cantidad,
-          0,
+        redondearCentavos(
+          get().items.reduce(
+            (acc, i) => acc + (i.precioUnitario - i.descuentoUnitario) * i.cantidad,
+            0,
+          ),
         ),
 
       totalItems: () => get().items.reduce((acc, i) => acc + i.cantidad, 0),

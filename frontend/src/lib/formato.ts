@@ -60,9 +60,30 @@ export function formatearBs(valor: unknown, conSimbolo = true): string {
   return conSimbolo ? `Bs ${s}` : s;
 }
 
-/** Convierte un monto en USD a Bs con la tasa dada (string o number). */
+/**
+ * Redondea a centavos medio-arriba, igual que el backend (`dividirRedondeando`).
+ * El epsilon corrige el error binario: 4.045 * 100 da 404.49999999999994, y sin
+ * el ajuste Math.round devolvería 4.04 en vez de 4.05.
+ */
+export function redondearCentavos(valor: unknown): number {
+  const n = aNumero(valor);
+  const signo = n < 0 ? -1 : 1;
+  return (signo * Math.round(Math.abs(n) * 100 + 1e-9)) / 100;
+}
+
+/**
+ * Convierte USD a Bs con la tasa dada.
+ *
+ * Redondea el USD a centavos ANTES de multiplicar, porque es exactamente lo que
+ * hace el backend al guardar la venta: `total_bs = usdABs(total_usd, tasa)` con
+ * total_usd ya en centavos. Multiplicar el monto crudo daba un Bs distinto al
+ * del ticket —Bs 3.011,15 en pantalla contra Bs 3.014,13 impresos— en toda
+ * venta con cantidad fraccionada (productos pesables).
+ *
+ * El cliente debe $ 4,05; los Bs se derivan de esos $ 4,05, no de $ 4,046.
+ */
 export function usdABs(usd: unknown, tasa: unknown): number {
-  return aNumero(usd) * aNumero(tasa);
+  return redondearCentavos(redondearCentavos(usd) * aNumero(tasa));
 }
 
 /** Dolares compactos para tarjetas: $ 1,3 K */

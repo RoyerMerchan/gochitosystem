@@ -11,7 +11,7 @@ import { useDebounce } from '@/hooks/useDebounce';
 import { toast } from '@/store/toastStore';
 import { useAuthStore } from '@/store/authStore';
 import { METODOS_PAGO } from '@/features/pos/metodosPago';
-import { formatearUSD, formatearBs, formatearFechaHora, aNumero } from '@/lib/formato';
+import { formatearUSD, formatearBs, formatearFechaHora, aNumero, usdABs } from '@/lib/formato';
 
 interface VentaFila {
   id: number; numero: string; fecha: string; total_usd: string; total_bs: string;
@@ -256,7 +256,7 @@ export default function VentasPage() {
                         <td className="p-2 text-right tabular-nums text-gray-500">{formatearBs(aNumero(r.precio_venta_unitario) * tasaVenta)}</td>
                         <td className="p-2 text-right tabular-nums font-medium">
                           {formatearUSD(r.total_linea)}
-                          <span className="block text-xs font-normal text-gray-400">{formatearBs(aNumero(r.total_linea) * tasaVenta)}</span>
+                          <span className="block text-xs font-normal text-gray-400">{formatearBs(usdABs(r.total_linea, tasaVenta))}</span>
                         </td>
                       </tr>
                     );
