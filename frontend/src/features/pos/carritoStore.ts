@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { Producto } from '@/lib/tipos';
-import { redondearCentavos } from '@/lib/formato';
+import { totalDocumentoUsd } from '@/lib/calculoVenta';
 
 /** Renglon del carrito del POS. Precios en USD. */
 export interface ItemCarrito {
@@ -14,6 +14,7 @@ export interface ItemCarrito {
   esMayor: boolean; // true si se esta cobrando al mayor
   costoUnitario: number; // USD (para referencia)
   impuestoTasa: number;
+  esPrecioIncluyeImpuesto: boolean; // false = hay que agregar el impuesto encima
   cantidad: number;
   descuentoUnitario: number; // USD
   esPesable: boolean;
@@ -67,6 +68,7 @@ export const useCarrito = create<EstadoCarrito>()(
             esMayor: false,
             costoUnitario: Number(p.costo_promedio),
             impuestoTasa: Number(p.impuesto_tasa),
+            esPrecioIncluyeImpuesto: Number(p.es_precio_incluye_impuesto) !== 0,
             cantidad,
             descuentoUnitario: 0,
             esPesable: Boolean(p.es_pesable),
@@ -123,18 +125,15 @@ export const useCarrito = create<EstadoCarrito>()(
       limpiar: () => set({ items: [], clienteId: null, clienteNombre: 'CONSUMIDOR FINAL' }),
 
       /**
-       * Redondeado a centavos: es lo que el cliente debe de verdad y de donde
-       * sale el monto en Bs. Sin redondear aquí, una cantidad fraccionada
-       * (0,476 kg) dejaba un total crudo de $ 4,046 que se mostraba como
-       * "$ 4,05" pero se convertía a Bs como 4,046 — Bs 3 menos que el ticket.
+       * Suma de los renglones YA redondeados a centavos, exactamente como los
+       * calcula el backend (ver lib/calculoVenta.ts). Es lo que el cliente debe
+       * de verdad y de donde salen los Bs a cobrar.
+       *
+       * Sumar en crudo y redondear al final daba un total un centavo distinto al
+       * del backend en toda venta con cantidad fraccionada, y ese centavo abria
+       * un credito fantasma de $ 0,01.
        */
-      totalUsd: () =>
-        redondearCentavos(
-          get().items.reduce(
-            (acc, i) => acc + (i.precioUnitario - i.descuentoUnitario) * i.cantidad,
-            0,
-          ),
-        ),
+      totalUsd: () => totalDocumentoUsd(get().items),
 
       totalItems: () => get().items.reduce((acc, i) => acc + i.cantidad, 0),
     }),

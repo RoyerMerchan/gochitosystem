@@ -167,7 +167,7 @@ export async function registrarVenta(
     const totalBs = usdABs(totalUsd, tasaEscalada);
 
     // --- 6. Pagos (mixtos entre monedas) -------------------------------------
-    const { pagosCalculados, pagadoUsd, creditoUsd } = await calcularPagos(
+    const { pagosCalculados, creditoUsd, vueltoUsd, redondeo } = await calcularPagos(
       cx,
       entrada,
       totalUsd,
@@ -178,7 +178,9 @@ export async function registrarVenta(
     if (creditoUsd > 0n) {
       await validarCredito(cx, entrada.clienteId ?? null, creditoUsd);
     }
-    const vueltoUsd = pagadoUsd > totalUsd ? pagadoUsd - totalUsd : 0n;
+    // Lo cobrado y el credito siempre cuadran contra el total; el centavo que la
+    // conversion de tasa dejo fuera queda documentado en ventas.redondeo.
+    const pagadoAplicado = totalUsd - creditoUsd;
 
     // --- 7. Insertar la venta -------------------------------------------------
     const cantidadItems = sumar(calculados.map((r) => r.cantidad));
@@ -186,17 +188,17 @@ export async function registrarVenta(
       `INSERT INTO ventas
         (sucursal_id, turno_caja_id, usuario_id, cliente_id, prefijo, numero, anio, fecha,
          subtotal_bruto, descuento_lineas, descuento_documento, base_gravable, impuesto_total,
-         total_usd, tasa_cambio, tasa_cambio_id, total_bs, costo_total, utilidad_total,
+         redondeo, total_usd, tasa_cambio, tasa_cambio_id, total_bs, costo_total, utilidad_total,
          total_pagado, total_credito, cantidad_items, es_credito, estado, clave_idempotencia)
-       VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         usuario.sucursalId, turno.id, usuario.id, entrada.clienteId ?? null, prefijo, numero, anio,
         centavosASql(subtotalBruto), centavosASql(descuentoLineas),
         centavosASql(aCentavos(entrada.descuentoDocumento ?? '0')),
-        centavosASql(baseTotal), centavosASql(impuestoTotal),
+        centavosASql(baseTotal), centavosASql(impuestoTotal), centavosASql(redondeo),
         centavosASql(totalUsd), tasaHoy.tasa, tasaHoy.id, bsASql(totalBs),
         centavosASql(costoTotal), centavosASql(utilidadTotal),
-        centavosASql(pagadoUsd > totalUsd ? totalUsd : pagadoUsd), centavosASql(creditoUsd),
+        centavosASql(pagadoAplicado), centavosASql(creditoUsd),
         cantidadASql(cantidadItems), creditoUsd > 0n, ESTADO_VENTA.CERRADA,
         idempotencyKey,
       ],
@@ -298,7 +300,7 @@ export async function registrarVenta(
       total_usd: centavosASql(totalUsd),
       total_bs: bsASql(totalBs),
       tasa_cambio: tasaHoy.tasa,
-      total_pagado_usd: centavosASql(pagadoUsd),
+      total_pagado_usd: centavosASql(pagadoAplicado),
       total_credito_usd: centavosASql(creditoUsd),
       vuelto_usd: centavosASql(vueltoUsd),
       utilidad_total: centavosASql(utilidadTotal),
@@ -475,13 +477,39 @@ interface PagoCalculado {
   esCredito: boolean;
 }
 
+interface ResultadoPagos {
+  pagosCalculados: PagoCalculado[];
+  /** Suma real de los cobros convertidos a USD: lo que entro de verdad. */
+  pagadoUsd: bigint;
+  /** Credito de cartera a crear. 0 si la venta quedo cubierta. */
+  creditoUsd: bigint;
+  /** Vueltas a entregar (0 si la diferencia fue solo redondeo de tasa). */
+  vueltoUsd: bigint;
+  /** Centavos de diferencia absorbidos por la conversion. Va a ventas.redondeo. */
+  redondeo: bigint;
+}
+
+/**
+ * Residuo tolerado al cerrar una venta: 1 centavo de USD.
+ *
+ * El total en USD es la suma de renglones ya redondeados a centavos, y el cobro llega
+ * en Bs: dividir por la tasa casi nunca cae exacto sobre ese total. Sin tolerancia ese
+ * centavo se interpretaba como venta impaga y abria un credito fantasma de $ 0,01 —o
+ * reventaba con CLIENTE_SIN_CREDITO cuando el cliente no maneja credito—. Al revés, un
+ * centavo de sobra generaba un movimiento de vueltas de ~Bs 7 que el cajero nunca
+ * entrego y descuadraba el arqueo.
+ *
+ * Es la misma tolerancia que TOLERANCIA_CIERRE en creditos.service.
+ */
+const TOLERANCIA_REDONDEO = 1n;
+
 /** Valida y calcula los pagos; separa lo pagado de lo que va a credito. */
 async function calcularPagos(
   cx: Ejecutor,
   entrada: VentaEntrada,
   totalUsd: bigint,
   tasaEscalada: bigint,
-): Promise<{ pagosCalculados: PagoCalculado[]; pagadoUsd: bigint; creditoUsd: bigint }> {
+): Promise<ResultadoPagos> {
   const pagos: PagoCalculado[] = [];
   let pagadoUsd = 0n;
   let creditoDeclarado = 0n;
@@ -517,16 +545,36 @@ async function calcularPagos(
     });
   }
 
-  // El credito es lo declarado explicitamente, o el faltante si los pagos no cubren.
-  const faltante = totalUsd - pagadoUsd;
-  const creditoUsd = creditoDeclarado > 0n ? creditoDeclarado : faltante > 0n ? faltante : 0n;
+  // Lo que falta despues de cobros y del credito que el cajero declaro.
+  // Positivo = falta plata; negativo = pago de mas.
+  const faltante = totalUsd - pagadoUsd - creditoDeclarado;
 
-  // Si no hay credito y lo pagado no cubre el total: pago insuficiente.
-  if (creditoUsd === 0n && pagadoUsd < totalUsd) {
-    throw new ReglaNegocio('PAGO_INSUFICIENTE');
+  let creditoUsd = creditoDeclarado;
+  let vueltoUsd = 0n;
+  let redondeo = 0n;
+
+  if (faltante > TOLERANCIA_REDONDEO) {
+    // Falta plata de verdad: sin linea de credito es pago insuficiente; con ella,
+    // el credito absorbe todo el resto para que la factura quede completa.
+    if (creditoDeclarado === 0n) throw new ReglaNegocio('PAGO_INSUFICIENTE');
+    creditoUsd = creditoDeclarado + faltante;
+  } else if (faltante > 0n) {
+    // Centavos de la division por la tasa. NO abren cartera.
+    if (creditoDeclarado > 0n) creditoUsd = creditoDeclarado + faltante;
+    else redondeo = -faltante;
+  } else if (faltante < 0n) {
+    const sobra = -faltante;
+    if (sobra > TOLERANCIA_REDONDEO) vueltoUsd = sobra;
+    else redondeo = sobra; // no se entrega vuelto por un centavo
   }
 
-  return { pagosCalculados: pagos.filter((p) => !p.esCredito), pagadoUsd, creditoUsd };
+  return {
+    pagosCalculados: pagos.filter((p) => !p.esCredito),
+    pagadoUsd,
+    creditoUsd,
+    vueltoUsd,
+    redondeo,
+  };
 }
 
 function aMontoMonedaLocal(v: string): bigint {

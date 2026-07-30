@@ -15,7 +15,8 @@ import { imprimirTicket } from '@/features/pos/ticket';
 import { useTasaStore } from '@/store/tasaStore';
 import { useAuthStore } from '@/store/authStore';
 import { toast } from '@/store/toastStore';
-import { formatearUSD, formatearBs, formatearCantidad, usdABs, redondearCentavos } from '@/lib/formato';
+import { formatearUSD, formatearBs, formatearCantidad, usdABs } from '@/lib/formato';
+import { totalLineaUsd, impuestoDocumentoUsd } from '@/lib/calculoVenta';
 import { useDebounce } from '@/hooks/useDebounce';
 import type { Producto } from '@/lib/tipos';
 
@@ -54,17 +55,8 @@ export default function PosPage() {
   const hayMayor = conMayor.length > 0;
   const todoMayor = hayMayor && conMayor.every((i) => i.esMayor);
 
-  const impuestoTotal = useMemo(
-    () =>
-      items.reduce((acc, i) => {
-        const base = (i.precioUnitario - i.descuentoUnitario) * i.cantidad;
-        // Precio con IVA incluido: se desagrega para mostrar el impuesto.
-        const factor = i.impuestoTasa / 100;
-        const baseSinImp = factor > 0 ? base / (1 + factor) : base;
-        return acc + (base - baseSinImp);
-      }, 0),
-    [items],
-  );
+  // Mismo desglose que el backend, renglon por renglon (lib/calculoVenta.ts).
+  const impuestoTotal = useMemo(() => impuestoDocumentoUsd(items), [items]);
 
   // Buscar productos al escribir.
   useEffect(() => {
@@ -124,7 +116,7 @@ export default function PosPage() {
       nombre: i.nombre,
       cantidad: i.cantidad,
       precioUnitario: i.precioUnitario,
-      total: (i.precioUnitario - i.descuentoUnitario) * i.cantidad,
+      total: totalLineaUsd(i),
     }));
     const clienteNombre = carrito.clienteNombre;
     try {
@@ -298,10 +290,12 @@ export default function PosPage() {
                       )}
                     </td>
                     <td className="p-3 text-right font-semibold tabular-nums">
-                      {/* El Bs sale del USD ya redondeado, igual que en el ticket. */}
-                      {formatearUSD(redondearCentavos((i.precioUnitario - i.descuentoUnitario) * i.cantidad))}
+                      {/* El Bs sale del USD ya redondeado, igual que en el ticket.
+                          Estos renglones SI suman el TOTAL de la derecha: los tres
+                          usan totalLineaUsd(), el mismo calculo del backend. */}
+                      {formatearUSD(totalLineaUsd(i))}
                       <span className="block text-xs font-normal text-gray-400">
-                        {formatearBs(usdABs((i.precioUnitario - i.descuentoUnitario) * i.cantidad, tasaNum))}
+                        {formatearBs(usdABs(totalLineaUsd(i), tasaNum))}
                       </span>
                     </td>
                     <td className="p-3">
