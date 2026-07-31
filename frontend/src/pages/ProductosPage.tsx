@@ -11,6 +11,7 @@ import { toast } from '@/store/toastStore';
 import { useDebounce } from '@/hooks/useDebounce';
 import { formatearUSD, formatearBs, formatearCantidad } from '@/lib/formato';
 import type { Producto } from '@/lib/tipos';
+import { STALE_CATALOGO } from '@/app/QueryProvider';
 
 interface Cat { id: number; nombre: string; }
 interface Uni { id: number; codigo: string; nombre: string; }
@@ -35,9 +36,9 @@ export default function ProductosPage() {
     queryKey: ['productos', q, soloStockBajo],
     queryFn: () => obtenerPaginado<Producto>(`/productos?limite=200${q ? `&busqueda=${encodeURIComponent(q)}` : ''}${soloStockBajo ? '&stockBajo=true' : ''}`),
   });
-  const cats = useQuery({ queryKey: ['categorias'], queryFn: () => obtener<Cat[]>('/categorias') });
-  const unis = useQuery({ queryKey: ['unidades'], queryFn: () => obtener<Uni[]>('/unidades-medida') });
-  const imps = useQuery({ queryKey: ['impuestos'], queryFn: () => obtener<Imp[]>('/impuestos') });
+  const cats = useQuery({ queryKey: ['categorias'], queryFn: () => obtener<Cat[]>('/categorias'), staleTime: STALE_CATALOGO });
+  const unis = useQuery({ queryKey: ['unidades'], queryFn: () => obtener<Uni[]>('/unidades-medida'), staleTime: STALE_CATALOGO });
+  const imps = useQuery({ queryKey: ['impuestos'], queryFn: () => obtener<Imp[]>('/impuestos'), staleTime: STALE_CATALOGO });
 
   const guardar = useMutation({
     mutationFn: (d: typeof VACIO) => editando ? reemplazar(`/productos/${editando}`, d) : crear('/productos', d),

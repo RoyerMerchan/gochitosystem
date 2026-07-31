@@ -587,6 +587,7 @@ CREATE TABLE productos (
 );
 
 CREATE UNIQUE INDEX uq_productos_sku ON productos (sku) WHERE eliminado_en IS NULL;
+CREATE INDEX ix_productos_nombre ON productos (nombre) WHERE eliminado_en IS NULL;
 CREATE INDEX ix_productos_categoria ON productos (categoria_id);
 CREATE INDEX ix_productos_unidad ON productos (unidad_medida_id);
 CREATE INDEX ix_productos_impuesto ON productos (impuesto_id);
@@ -816,6 +817,7 @@ CREATE TABLE ventas (
 CREATE UNIQUE INDEX uq_ventas_numero ON ventas (sucursal_id, anio, prefijo, numero);
 CREATE UNIQUE INDEX uq_ventas_idem ON ventas (clave_idempotencia) WHERE clave_idempotencia IS NOT NULL;
 CREATE INDEX ix_ventas_suc_fecha ON ventas (sucursal_id, fecha, estado);
+CREATE INDEX ix_ventas_suc_id ON ventas (sucursal_id, id DESC);
 CREATE INDEX ix_ventas_cliente ON ventas (cliente_id, fecha, estado);
 CREATE INDEX ix_ventas_turno ON ventas (turno_caja_id);
 CREATE INDEX ix_ventas_usuario ON ventas (usuario_id);
@@ -859,6 +861,7 @@ CREATE TABLE venta_detalle (
 );
 
 CREATE UNIQUE INDEX uq_vdet_linea ON venta_detalle (venta_id, linea);
+CREATE INDEX ix_vd_venta ON venta_detalle (venta_id);
 CREATE INDEX ix_vd_producto ON venta_detalle (producto_id, venta_id);
 CREATE INDEX ix_vd_categoria ON venta_detalle (categoria_id);
 CREATE INDEX ix_vd_unidad ON venta_detalle (unidad_medida_id);
@@ -896,6 +899,7 @@ CREATE TABLE creditos (
 );
 
 CREATE INDEX ix_cred_cliente ON creditos (cliente_id, estado, fecha_vencimiento);
+CREATE INDEX ix_creditos_pendientes ON creditos (cliente_id, fecha_emision, id) WHERE estado IN ('PENDIENTE', 'PARCIAL', 'VENCIDO');
 CREATE INDEX ix_cred_sucursal ON creditos (sucursal_id);
 CREATE INDEX ix_cred_venta ON creditos (venta_id);
 CREATE INDEX ix_cred_usuario ON creditos (usuario_id);
@@ -937,6 +941,7 @@ CREATE TABLE pagos (
 );
 
 CREATE INDEX ix_pagos_venta ON pagos (venta_id);
+CREATE INDEX ix_pagos_suc_fecha ON pagos (sucursal_id, fecha);
 CREATE INDEX ix_pagos_sucursal ON pagos (sucursal_id);
 CREATE INDEX ix_pagos_turno ON pagos (turno_caja_id);
 CREATE INDEX ix_pagos_metodo ON pagos (metodo_pago_id);
@@ -983,6 +988,7 @@ CREATE TABLE abonos (
 CREATE UNIQUE INDEX uq_abonos_numero ON abonos (sucursal_id, anio, prefijo, numero);
 CREATE UNIQUE INDEX uq_abonos_idem ON abonos (clave_idempotencia) WHERE clave_idempotencia IS NOT NULL;
 CREATE INDEX ix_abonos_cliente ON abonos (cliente_id, fecha);
+CREATE INDEX ix_abonos_suc_fecha ON abonos (sucursal_id, fecha);
 CREATE INDEX ix_abonos_turno ON abonos (turno_caja_id);
 CREATE INDEX ix_abonos_metodo ON abonos (metodo_pago_id);
 CREATE INDEX ix_abonos_usuario ON abonos (usuario_id);

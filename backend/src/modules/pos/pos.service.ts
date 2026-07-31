@@ -56,7 +56,7 @@ import {
 } from '../../config/constantes';
 import { siguienteConsecutivo } from '../../utils/consecutivos';
 import { exigirTasaDeHoy } from '../tasas/tasas.service';
-import { turnoActivoDeUsuario, registrarMovimiento } from '../caja/caja.service';
+import { turnoActivoDeUsuario, registrarMovimiento, registrarMovimientos } from '../caja/caja.service';
 import type { Id } from '../../tipos/comunes';
 import type { UsuarioAutenticado } from '../../tipos/comunes';
 import type { VentaEntrada } from './pos.types';
@@ -206,61 +206,32 @@ export async function registrarVenta(
     );
 
     // --- 8. Renglones, stock y ledger ----------------------------------------
-    let linea = 0;
-    for (const r of calculados) {
-      linea += 1;
-      // utilidad_unitaria (escala 4) = utilidad_total(esc 2) / cantidad(esc 3).
-      // valor real = (utilidadTotal/100) / (cantidad/1000); escalado a 4 -> *100000.
-      const utilidadUnit =
-        r.cantidad > 0n ? dividirRedondeando(r.utilidadTotal * 100_000n, r.cantidad) : 0n;
-
-      await insertar(
-        `INSERT INTO venta_detalle
-          (venta_id, linea, producto_id, descripcion, categoria_id, unidad_medida_id, cantidad,
-           precio_compra_unitario, precio_venta_unitario, descuento_unitario, impuesto_id,
-           impuesto_tasa, impuesto_monto, es_precio_incluia_impuesto, base_gravable, costo_total,
-           utilidad_unitaria, utilidad_total, total_linea)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          ventaId, linea, r.productoId, r.descripcion, r.categoriaId, r.unidadMedidaId,
-          cantidadASql(r.cantidad), unitarioASql(r.precioCompraUnit), unitarioASql(r.precioVentaUnit),
-          unitarioASql(r.descuentoUnit), r.impuestoId, tasaMilesimasASql(r.impuestoTasaMilesimas),
-          centavosASql(r.impuesto), r.esPrecioIncluyeImpuesto ?? false, centavosASql(r.base),
-          centavosASql(r.costoTotal), unitarioASql(utilidadUnit), centavosASql(r.utilidadTotal),
-          centavosASql(r.totalLinea),
-        ],
-        cx,
-      );
-
-      if (r.esManejaInventario) {
-        await descontarStock(cx, r, ventaId, usuario.id, usuario.sucursalId);
-      }
-    }
+    // Todo en bloque. Antes eran ~5 viajes a la base POR RENGLON (insertar detalle,
+    // leer stock, actualizarlo, insertar el movimiento): con la base en un proveedor
+    // externo, una venta de 10 items se iba en decenas de idas y vueltas con la
+    // transaccion abierta. Ahora el costo no depende de cuantos renglones haya.
+    await insertarDetalle(cx, ventaId, calculados);
+    await descontarStockLote(cx, calculados, ventaId, usuario.id, usuario.sucursalId);
 
     // --- 9. Pagos -------------------------------------------------------------
-    for (const p of pagosCalculados) {
-      await insertar(
-        `INSERT INTO pagos
-          (venta_id, sucursal_id, turno_caja_id, metodo_pago_id, moneda, monto_moneda,
-           tasa_aplicada, monto_usd, referencia, usuario_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          ventaId, usuario.sucursalId, turno.id, p.metodoPagoId, p.moneda,
-          montoMonedaASql(p.montoMoneda), tasaHoy.tasa, centavosASql(p.montoUsd),
-          p.referencia ?? null, usuario.id,
-        ],
-        cx,
-      );
+    await insertarPagos(cx, {
+      ventaId, sucursalId: usuario.sucursalId, turnoId: turno.id,
+      usuarioId: usuario.id, tasa: tasaHoy.tasa, pagos: pagosCalculados,
+    });
 
-      // Movimiento de caja de efectivo por su moneda.
-      if (p.afectaCaja) {
-        await registrarMovimiento(
-          cx, turno.id, usuario.sucursalId, 'VENTA', 1, p.moneda,
-          montoMonedaASql(p.montoMoneda), tasaHoy.tasa, centavosASql(p.montoUsd),
-          `Venta ${prefijo}${numero}`, usuario.id, p.metodoPagoId, 'VENTA', ventaId,
-        );
-        await sumarACaja(cx, turno.id, p.moneda, p.montoMoneda, p.montoUsd, 'venta');
-      }
+    const enCaja = pagosCalculados.filter((p) => p.afectaCaja);
+    if (enCaja.length > 0) {
+      await registrarMovimientos(
+        cx,
+        enCaja.map((p) => ({
+          turnoId: turno.id, sucursalId: usuario.sucursalId, tipo: 'VENTA', signo: 1 as const,
+          moneda: p.moneda, montoMoneda: montoMonedaASql(p.montoMoneda), tasaAplicada: tasaHoy.tasa,
+          montoUsd: centavosASql(p.montoUsd), concepto: `Venta ${prefijo}${numero}`,
+          usuarioId: usuario.id, metodoPagoId: p.metodoPagoId,
+          documentoTipo: 'VENTA' as const, documentoId: ventaId,
+        })),
+      );
+      await sumarACaja(cx, turno.id, enCaja);
     }
 
     // --- 10. Vueltas ----------------------------------------------------------
@@ -325,20 +296,33 @@ async function calcularRenglones(
   const brutos: bigint[] = [];
   const filas: FilaProductoVenta[] = [];
 
+  /**
+   * Un solo SELECT para todos los productos del carrito, en vez de uno por renglon.
+   * El `ORDER BY p.id` ademas fija un orden de bloqueo estable: dos cajeros vendiendo
+   * los mismos productos a la vez toman los locks en el mismo orden y no se traban
+   * entre si, cosa que el bucle anterior no garantizaba.
+   */
+  const idsProducto = [...new Set(entrada.renglones.map((r) => String(r.productoId)))];
+  const encontrados = await query<FilaProductoVenta>(
+    `SELECT p.id, p.nombre, p.categoria_id, p.unidad_medida_id, p.impuesto_id,
+            i.tasa AS impuesto_tasa, p.precio_venta, p.es_precio_incluye_impuesto,
+            p.es_maneja_inventario, p.esta_activo,
+            ps.cantidad, ps.costo_promedio
+       FROM productos p
+       JOIN impuestos i ON i.id = p.impuesto_id
+       LEFT JOIN producto_stock ps ON ps.producto_id = p.id AND ps.sucursal_id = ?
+      WHERE p.id IN (${idsProducto.map(() => '?').join(', ')}) AND p.eliminado_en IS NULL
+      ORDER BY p.id
+      FOR UPDATE OF p`,
+    [sucursalId, ...idsProducto],
+    cx,
+  );
+  const productoPorId = new Map(encontrados.map((f) => [String(f.id), f]));
+
+  // Se recorre en el orden del carrito para que el error sea el mismo de siempre:
+  // manda el primer renglon con problema, no el primer producto de la consulta.
   for (const r of entrada.renglones) {
-    const fila = await queryOne<FilaProductoVenta>(
-      `SELECT p.id, p.nombre, p.categoria_id, p.unidad_medida_id, p.impuesto_id,
-              i.tasa AS impuesto_tasa, p.precio_venta, p.es_precio_incluye_impuesto,
-              p.es_maneja_inventario, p.esta_activo,
-              ps.cantidad, ps.costo_promedio
-         FROM productos p
-         JOIN impuestos i ON i.id = p.impuesto_id
-         LEFT JOIN producto_stock ps ON ps.producto_id = p.id AND ps.sucursal_id = ?
-        WHERE p.id = ? AND p.eliminado_en IS NULL
-        LIMIT 1 FOR UPDATE OF p`,
-      [sucursalId, r.productoId],
-      cx,
-    );
+    const fila = productoPorId.get(String(r.productoId));
     if (!fila) throw new NoEncontrado('PRODUCTO_NO_ENCONTRADO');
     if (!fila.esta_activo) throw new ReglaNegocio('PRODUCTO_INACTIVO');
     filas.push(fila);
@@ -414,55 +398,139 @@ async function calcularRenglones(
   });
 }
 
-/** Descuenta stock con FOR UPDATE (ya bloqueado) e inserta el movimiento SALIDA_VENTA. */
-async function descontarStock(
+/** Genera `(?, ?, ...), (?, ?, ...)` para un INSERT/VALUES de varias filas. */
+function marcasFilas(filas: number, columnas: number): string {
+  const una = `(${Array.from({ length: columnas }, () => '?').join(', ')})`;
+  return Array.from({ length: filas }, () => una).join(', ');
+}
+
+/** Inserta TODOS los renglones de la venta en una sola sentencia. */
+async function insertarDetalle(
   cx: Ejecutor,
-  r: RenglonCalculado,
+  ventaId: number,
+  calculados: readonly RenglonCalculado[],
+): Promise<void> {
+  if (calculados.length === 0) return;
+
+  const params: (string | number | boolean)[] = [];
+  calculados.forEach((r, idx) => {
+    // utilidad_unitaria (escala 4) = utilidad_total(esc 2) / cantidad(esc 3).
+    // valor real = (utilidadTotal/100) / (cantidad/1000); escalado a 4 -> *100000.
+    const utilidadUnit =
+      r.cantidad > 0n ? dividirRedondeando(r.utilidadTotal * 100_000n, r.cantidad) : 0n;
+
+    params.push(
+      ventaId, idx + 1, r.productoId, r.descripcion, r.categoriaId, r.unidadMedidaId,
+      cantidadASql(r.cantidad), unitarioASql(r.precioCompraUnit), unitarioASql(r.precioVentaUnit),
+      unitarioASql(r.descuentoUnit), r.impuestoId, tasaMilesimasASql(r.impuestoTasaMilesimas),
+      centavosASql(r.impuesto), r.esPrecioIncluyeImpuesto ?? false, centavosASql(r.base),
+      centavosASql(r.costoTotal), unitarioASql(utilidadUnit), centavosASql(r.utilidadTotal),
+      centavosASql(r.totalLinea),
+    );
+  });
+
+  await ejecutar(
+    `INSERT INTO venta_detalle
+      (venta_id, linea, producto_id, descripcion, categoria_id, unidad_medida_id, cantidad,
+       precio_compra_unitario, precio_venta_unitario, descuento_unitario, impuesto_id,
+       impuesto_tasa, impuesto_monto, es_precio_incluia_impuesto, base_gravable, costo_total,
+       utilidad_unitaria, utilidad_total, total_linea)
+     VALUES ${marcasFilas(calculados.length, 19)}`,
+    params,
+    cx,
+  );
+}
+
+/**
+ * Descuenta el stock de todos los renglones y escribe el kardex, en bloque.
+ *
+ * Produce EXACTAMENTE las mismas filas que el descuento renglon por renglon, incluso
+ * si el mismo producto viene repetido en dos renglones: el saldo se lleva en memoria
+ * en el orden de los renglones, asi que el segundo parte del saldo que dejo el primero.
+ */
+async function descontarStockLote(
+  cx: Ejecutor,
+  calculados: readonly RenglonCalculado[],
   ventaId: number,
   usuarioId: number,
   sucursalId: number,
 ): Promise<void> {
-  const stock = await queryOne<{ cantidad: string; costo_promedio: string }>(
-    `SELECT cantidad, costo_promedio FROM producto_stock
-      WHERE producto_id = ? AND sucursal_id = ? LIMIT 1 FOR UPDATE`,
-    [r.productoId, sucursalId],
+  const conInventario = calculados.filter((r) => r.esManejaInventario);
+  if (conInventario.length === 0) return;
+
+  const ids = [...new Set(conInventario.map((r) => String(r.productoId)))];
+  const filas = await query<{ producto_id: string; cantidad: string; costo_promedio: string }>(
+    `SELECT producto_id, cantidad, costo_promedio FROM producto_stock
+      WHERE sucursal_id = ? AND producto_id IN (${ids.map(() => '?').join(', ')})
+      ORDER BY producto_id
+      FOR UPDATE`,
+    [sucursalId, ...ids],
     cx,
   );
-  const saldoAnterior = aCantidad(stock?.cantidad ?? '0');
-  if (saldoAnterior < r.cantidad) {
-    // Se permite vender sin stock solo si la configuracion lo autoriza.
-    const cfg = await queryOne<{ es_permite_stock_negativo: boolean }>(
-      `SELECT es_permite_stock_negativo FROM configuracion WHERE id = 1`,
-      [],
-      cx,
-    );
-    if (!cfg || !cfg.es_permite_stock_negativo) {
-      throw new Conflicto('STOCK_INSUFICIENTE');
-    }
-  }
-  const saldoPosterior = saldoAnterior - r.cantidad;
-  const costoProm = aUnitario(stock?.costo_promedio ?? '0');
+  const stockPorProducto = new Map(filas.map((f) => [String(f.producto_id), f]));
 
-  await ejecutar(
-    `UPDATE producto_stock SET cantidad = ?, ultima_salida_en = NOW()
-      WHERE producto_id = ? AND sucursal_id = ?`,
-    [cantidadASql(saldoPosterior), r.productoId, sucursalId],
-    cx,
-  );
+  // Saldo corrido en memoria, en el orden de los renglones.
+  const saldos = new Map<string, bigint>();
+  const movimientos: (string | number)[] = [];
+  const finales: { productoId: string; cantidad: bigint }[] = [];
+  let algunoSinStock = false;
 
-  await insertar(
-    `INSERT INTO inventario_movimientos
-      (sucursal_id, producto_id, tipo, signo, cantidad, costo_unitario, costo_total,
-       saldo_anterior, saldo_posterior, costo_promedio_anterior, costo_promedio_posterior,
-       documento_tipo, venta_id, usuario_id, nota)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
+  for (const r of conInventario) {
+    const clave = String(r.productoId);
+    const fila = stockPorProducto.get(clave);
+    const saldoAnterior = saldos.get(clave) ?? aCantidad(fila?.cantidad ?? '0');
+    if (saldoAnterior < r.cantidad) algunoSinStock = true;
+
+    const saldoPosterior = saldoAnterior - r.cantidad;
+    saldos.set(clave, saldoPosterior);
+    const costoProm = aUnitario(fila?.costo_promedio ?? '0');
+
+    movimientos.push(
       sucursalId, r.productoId, TIPO_MOVIMIENTO_INVENTARIO.SALIDA_VENTA,
       SIGNO_MOVIMIENTO_INVENTARIO.SALIDA_VENTA, cantidadASql(r.cantidad),
       unitarioASql(costoProm), centavosASql(r.costoTotal), cantidadASql(saldoAnterior),
       cantidadASql(saldoPosterior), unitarioASql(costoProm), unitarioASql(costoProm),
       DOCUMENTO_TIPO_MOVIMIENTO.VENTA, ventaId, usuarioId, 'Salida por venta',
-    ],
+    );
+  }
+
+  // Se consulta la configuracion UNA vez, y solo si de verdad falto stock.
+  if (algunoSinStock) {
+    const cfg = await queryOne<{ es_permite_stock_negativo: boolean }>(
+      `SELECT es_permite_stock_negativo FROM configuracion WHERE id = 1`,
+      [],
+      cx,
+    );
+    if (!cfg || !cfg.es_permite_stock_negativo) throw new Conflicto('STOCK_INSUFICIENTE');
+  }
+
+  for (const [clave, saldo] of saldos) finales.push({ productoId: clave, cantidad: saldo });
+
+  // Un solo UPDATE para todos los productos, via lista de VALUES.
+  const paramsStock: (string | number)[] = [];
+  const valores = finales
+    .map(({ productoId, cantidad }) => {
+      paramsStock.push(productoId, cantidadASql(cantidad));
+      return '(?::bigint, ?::numeric)';
+    })
+    .join(', ');
+
+  await ejecutar(
+    `UPDATE producto_stock ps
+        SET cantidad = v.cantidad, ultima_salida_en = NOW()
+       FROM (VALUES ${valores}) AS v(producto_id, cantidad)
+      WHERE ps.producto_id = v.producto_id AND ps.sucursal_id = ?`,
+    [...paramsStock, sucursalId],
+    cx,
+  );
+
+  await ejecutar(
+    `INSERT INTO inventario_movimientos
+      (sucursal_id, producto_id, tipo, signo, cantidad, costo_unitario, costo_total,
+       saldo_anterior, saldo_posterior, costo_promedio_anterior, costo_promedio_posterior,
+       documento_tipo, venta_id, usuario_id, nota)
+     VALUES ${marcasFilas(conInventario.length, 15)}`,
+    movimientos,
     cx,
   );
 }
@@ -514,13 +582,23 @@ async function calcularPagos(
   let pagadoUsd = 0n;
   let creditoDeclarado = 0n;
 
-  for (const p of entrada.pagos) {
-    const metodo = await queryOne<FilaMetodoPago>(
+  // Los metodos de pago se traen de una sola vez (son 8 filas de catalogo; no tiene
+  // sentido un viaje a la base por cada linea de cobro).
+  const idsMetodo = [...new Set(entrada.pagos.map((p) => String(p.metodoPagoId)))];
+  const metodosPorId = new Map<string, FilaMetodoPago>();
+  if (idsMetodo.length > 0) {
+    const filasMetodo = await query<FilaMetodoPago>(
       `SELECT id, moneda, requiere_referencia, afecta_caja_efectivo, es_no_es_cobro, esta_activo
-         FROM metodos_pago WHERE id = ? AND eliminado_en IS NULL LIMIT 1`,
-      [p.metodoPagoId],
+         FROM metodos_pago
+        WHERE id IN (${idsMetodo.map(() => '?').join(', ')}) AND eliminado_en IS NULL`,
+      idsMetodo,
       cx,
     );
+    for (const f of filasMetodo) metodosPorId.set(String(f.id), f);
+  }
+
+  for (const p of entrada.pagos) {
+    const metodo = metodosPorId.get(String(p.metodoPagoId));
     if (!metodo || !metodo.esta_activo) throw new NoEncontrado('NO_ENCONTRADO');
     if (metodo.requiere_referencia && !p.referencia?.trim()) {
       throw new ReglaNegocio('REFERENCIA_REQUERIDA');
@@ -644,35 +722,70 @@ async function crearCredito(
   );
 }
 
-/** Suma un cobro de efectivo a los totales del turno. */
+/** Inserta todos los pagos de la venta en una sola sentencia. */
+async function insertarPagos(
+  cx: Ejecutor,
+  d: {
+    ventaId: number;
+    sucursalId: number;
+    turnoId: number;
+    usuarioId: number;
+    tasa: string;
+    pagos: readonly PagoCalculado[];
+  },
+): Promise<void> {
+  if (d.pagos.length === 0) return;
+
+  const params: (string | number | null)[] = [];
+  for (const p of d.pagos) {
+    params.push(
+      d.ventaId, d.sucursalId, d.turnoId, p.metodoPagoId, p.moneda,
+      montoMonedaASql(p.montoMoneda), d.tasa, centavosASql(p.montoUsd),
+      p.referencia ?? null, d.usuarioId,
+    );
+  }
+
+  await ejecutar(
+    `INSERT INTO pagos
+      (venta_id, sucursal_id, turno_caja_id, metodo_pago_id, moneda, monto_moneda,
+       tasa_aplicada, monto_usd, referencia, usuario_id)
+     VALUES ${marcasFilas(d.pagos.length, 10)}`,
+    params,
+    cx,
+  );
+}
+
+/**
+ * Suma los cobros de efectivo a los totales del turno, en UN solo UPDATE.
+ *
+ * Se agrupan por moneda antes de escribir: pagar con dos billetes distintos no tiene
+ * por que costar dos viajes a la base. El total acumulado es identico al de sumar
+ * cada pago por separado (la suma en Bs se hace con la misma conversion escala 4 -> 2
+ * pago por pago, para no cambiar ni un centimo de redondeo).
+ */
 async function sumarACaja(
   cx: Ejecutor,
   turnoId: number,
-  moneda: 'USD' | 'VES',
-  montoMoneda: bigint,
-  montoUsd: bigint,
-  _tipo: 'venta' | 'abono',
+  pagos: readonly PagoCalculado[],
 ): Promise<void> {
-  if (moneda === MONEDA.USD) {
-    await ejecutar(
-      `UPDATE turnos_caja
-          SET total_ventas_efectivo_usd = total_ventas_efectivo_usd + ?,
-              esperado_usd = esperado_usd + ?
-        WHERE id = ?`,
-      [centavosASql(montoUsd), centavosASql(montoUsd), turnoId],
-      cx,
-    );
-  } else {
-    const montoBs = dividirRedondeando(montoMoneda, 100n); // escala 4 -> 2
-    await ejecutar(
-      `UPDATE turnos_caja
-          SET total_ventas_efectivo_bs = total_ventas_efectivo_bs + ?,
-              esperado_bs = esperado_bs + ?
-        WHERE id = ?`,
-      [bsASql(montoBs), bsASql(montoBs), turnoId],
-      cx,
-    );
+  let usd = 0n;
+  let bs = 0n;
+  for (const p of pagos) {
+    if (p.moneda === MONEDA.USD) usd += p.montoUsd;
+    else bs += dividirRedondeando(p.montoMoneda, 100n); // escala 4 -> 2, igual que antes
   }
+  if (usd === 0n && bs === 0n) return;
+
+  await ejecutar(
+    `UPDATE turnos_caja
+        SET total_ventas_efectivo_usd = total_ventas_efectivo_usd + ?,
+            esperado_usd             = esperado_usd + ?,
+            total_ventas_efectivo_bs = total_ventas_efectivo_bs + ?,
+            esperado_bs              = esperado_bs + ?
+      WHERE id = ?`,
+    [centavosASql(usd), centavosASql(usd), bsASql(bs), bsASql(bs), turnoId],
+    cx,
+  );
 }
 
 /** Resta las vueltas entregadas del efectivo esperado del turno. */

@@ -2,7 +2,8 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { BarChart3, Download, FileText } from 'lucide-react';
-import * as XLSX from 'xlsx';
+// xlsx pesa ~280 KB y solo hace falta al pulsar "Excel": se carga en ese momento
+// (import dinamico) para no meterlo en el bundle de la pantalla.
 import { obtener } from '@/lib/axios';
 import { Card, Cargando, EmptyState } from '@/components/ui/Feedback';
 import { FiltroPeriodo } from '@/components/ui/FiltroPeriodo';
@@ -152,7 +153,8 @@ export default function ReportesPage() {
     return acc;
   })();
 
-  const exportarExcel = () => {
+  const exportarExcel = async () => {
+    const XLSX = await import('xlsx');
     const filas = (datos.data ?? []).map((f) => {
       const obj: Record<string, unknown> = {};
       // Números crudos, no formateados: en Excel deben poder sumarse.

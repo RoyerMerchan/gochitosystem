@@ -6,6 +6,7 @@ import { obtener, reemplazar } from '@/lib/axios';
 import { ErrorApi } from '@/lib/errores';
 import { Card, Cargando } from '@/components/ui/Feedback';
 import { toast } from '@/store/toastStore';
+import { STALE_CATALOGO } from '@/app/QueryProvider';
 
 interface Config {
   nombre_negocio: string; razon_social: string | null; nit: string | null;
@@ -18,7 +19,7 @@ export default function ConfiguracionPage() {
   const qc = useQueryClient();
   const [form, setForm] = useState<Record<string, string>>({});
 
-  const config = useQuery({ queryKey: ['config'], queryFn: () => obtener<Config>('/configuracion') });
+  const config = useQuery({ queryKey: ['config'], queryFn: () => obtener<Config>('/configuracion'), staleTime: STALE_CATALOGO });
 
   useEffect(() => {
     if (config.data) {

@@ -8,6 +8,7 @@ import { Card, Cargando, EmptyState } from '@/components/ui/Feedback';
 import { Modal } from '@/components/ui/Modal';
 import { useConfirm } from '@/hooks/useConfirm';
 import { toast } from '@/store/toastStore';
+import { STALE_CATALOGO } from '@/app/QueryProvider';
 
 interface Categoria { id: number; nombre: string; descripcion: string | null; productos: number; }
 
@@ -19,7 +20,7 @@ export default function CategoriasPage() {
   const [nombre, setNombre] = useState('');
   const [descripcion, setDescripcion] = useState('');
 
-  const cats = useQuery({ queryKey: ['categorias'], queryFn: () => obtener<Categoria[]>('/categorias') });
+  const cats = useQuery({ queryKey: ['categorias'], queryFn: () => obtener<Categoria[]>('/categorias'), staleTime: STALE_CATALOGO });
 
   const guardar = useMutation({
     mutationFn: () => editando ? reemplazar(`/categorias/${editando}`, { nombre, descripcion }) : crear('/categorias', { nombre, descripcion }),

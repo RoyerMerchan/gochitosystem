@@ -10,7 +10,7 @@ import {
 import { aCentavos, centavosASql, dividirRedondeando } from '../../utils/dinero';
 import { aTasaCambio, montoMonedaAUsdPiso, aMontoMoneda, montoMonedaASql } from '../../utils/moneda';
 import { siguienteConsecutivo } from '../../utils/consecutivos';
-import { ESTADO_CREDITO, ESTADO_ABONO, TIPO_DOCUMENTO } from '../../config/constantes';
+import { ESTADO_CREDITO, TIPO_DOCUMENTO } from '../../config/constantes';
 import { registrarMovimiento, turnoActivoDeUsuario } from '../caja/caja.service';
 import type { Id, UsuarioAutenticado } from '../../tipos/comunes';
 

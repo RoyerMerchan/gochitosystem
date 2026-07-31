@@ -2,7 +2,7 @@
  * Caja y turnos. Arqueo SEPARADO por moneda: el efectivo en USD y el efectivo
  * en Bs se cuentan y cuadran por separado, nunca se netea una moneda contra otra.
  */
-import { Conflicto, NoEncontrado, ReglaNegocio } from '../../errores/AppError';
+import { Conflicto, NoEncontrado } from '../../errores/AppError';
 import { query, queryOne, ejecutar, insertar, withTransaction, type Ejecutor } from '../../database/pool';
 import { ESTADO_TURNO } from '../../config/constantes';
 import type { Id, DecimalSql } from '../../tipos/comunes';
@@ -94,7 +94,7 @@ export async function crearCaja(sucursalId: Id, nombre: string): Promise<{ id: n
 export async function abrirTurno(
   entrada: { cajaId: Id; baseInicialUsd: string; baseInicialBs: string },
   usuarioId: Id,
-  sucursalId: Id,
+  _sucursalId: Id,
 ): Promise<TurnoActivo> {
   return withTransaction(async (cx) => {
     const abierto = await turnoAbiertoDeCaja(entrada.cajaId, cx, true);
@@ -163,6 +163,54 @@ export async function registrarMovimiento(
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [turnoId, sucursalId, tipo, signo, moneda, montoMoneda, tasaAplicada, montoUsd,
      metodoPagoId ?? null, concepto, documentoTipo, documentoId ?? null, usuarioId],
+    cx,
+  );
+}
+
+export interface MovimientoCaja {
+  turnoId: Id;
+  sucursalId: Id;
+  tipo: string;
+  signo: 1 | -1;
+  moneda: 'USD' | 'VES';
+  montoMoneda: string;
+  tasaAplicada: string;
+  montoUsd: string;
+  concepto: string;
+  usuarioId: Id;
+  metodoPagoId?: Id | null;
+  documentoTipo?: 'VENTA' | 'ABONO' | 'DEVOLUCION' | 'MANUAL';
+  documentoId?: Id | null;
+}
+
+/**
+ * Inserta varios movimientos de caja en una sola sentencia.
+ *
+ * Misma fila que `registrarMovimiento`, pero sin pagar un viaje a la base por cada
+ * pago de la venta. Se mantiene la version de a uno para el resto de llamadores.
+ */
+export async function registrarMovimientos(
+  cx: Ejecutor,
+  movimientos: readonly MovimientoCaja[],
+): Promise<void> {
+  if (movimientos.length === 0) return;
+
+  const params: (string | number | null)[] = [];
+  for (const m of movimientos) {
+    params.push(
+      m.turnoId as number, m.sucursalId as number, m.tipo, m.signo, m.moneda, m.montoMoneda,
+      m.tasaAplicada, m.montoUsd, (m.metodoPagoId as number | null) ?? null, m.concepto,
+      m.documentoTipo ?? 'MANUAL', (m.documentoId as number | null) ?? null, m.usuarioId as number,
+    );
+  }
+  const fila = `(${Array.from({ length: 13 }, () => '?').join(', ')})`;
+
+  await ejecutar(
+    `INSERT INTO movimientos_caja
+      (turno_caja_id, sucursal_id, tipo, signo, moneda, monto_moneda, tasa_aplicada,
+       monto_usd, metodo_pago_id, concepto, documento_tipo, documento_id, usuario_id)
+     VALUES ${movimientos.map(() => fila).join(', ')}`,
+    params,
     cx,
   );
 }

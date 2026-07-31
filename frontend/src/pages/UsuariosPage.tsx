@@ -8,6 +8,7 @@ import { Card, Cargando, Badge, EmptyState } from '@/components/ui/Feedback';
 import { Modal } from '@/components/ui/Modal';
 import { toast } from '@/store/toastStore';
 import { formatearRelativo } from '@/lib/formato';
+import { STALE_CATALOGO } from '@/app/QueryProvider';
 
 interface Usuario {
   id: number; usuario: string; email: string | null; nombre_completo: string;
@@ -24,7 +25,7 @@ export default function UsuariosPage() {
   const [nuevaClave, setNuevaClave] = useState('');
 
   const usuarios = useQuery({ queryKey: ['usuarios'], queryFn: () => obtener<Usuario[]>('/usuarios') });
-  const roles = useQuery({ queryKey: ['roles'], queryFn: () => obtener<Rol[]>('/roles') });
+  const roles = useQuery({ queryKey: ['roles'], queryFn: () => obtener<Rol[]>('/roles'), staleTime: STALE_CATALOGO });
 
   const guardar = useMutation({
     mutationFn: () => editando
