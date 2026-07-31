@@ -26,7 +26,11 @@ function traducirErrorPG(error: unknown): AppError | null {
     case '23505':
       return new Conflicto('REGISTRO_DUPLICADO', { causa: error });
     case '23503':
-      return new ReglaNegocio('REFERENCIA_INEXISTENTE', { causa: error });
+      // Que referencia falta lo dice la restriccion; sin eso el mensaje es inutil.
+      return new ReglaNegocio('REFERENCIA_INEXISTENTE', {
+        causa: error,
+        detalles: diagnosticoError(error),
+      });
     case '40001': // serialization_failure
     case '40P01': // deadlock_detected
       return new Conflicto('CONFLICTO_CONCURRENCIA', { causa: error });
@@ -37,7 +41,12 @@ function traducirErrorPG(error: unknown): AppError | null {
     case '23502': // not_null_violation
     case '22P02': // invalid_text_representation (p.ej. texto donde se esperaba numero)
     case '22007': // invalid_datetime_format
-      return new ReglaNegocio('DATOS_INVALIDOS', { causa: error });
+      // "Los datos enviados no son validos" a secas no permite arreglar nada: se
+      // adjunta la columna/restriccion que rechazo Postgres, igual que en los 500.
+      return new ReglaNegocio('DATOS_INVALIDOS', {
+        causa: error,
+        detalles: diagnosticoError(error),
+      });
     default:
       return null;
   }

@@ -17,6 +17,7 @@ import rutasCompras from '../modules/compras/compras.routes';
 import rutasCreditos, { rutasAbonos } from '../modules/creditos/creditos.routes';
 import rutasInventario from '../modules/inventario/inventario.routes';
 import rutasReportes from '../modules/reportes/reportes.routes';
+import rutasBanco from '../modules/banco/banco.routes';
 import rutasConfiguracion from '../modules/configuracion/configuracion.routes';
 import rutasUsuarios, { routerRoles } from '../modules/usuarios/usuarios.routes';
 import {
@@ -51,6 +52,7 @@ router.use('/creditos', rutasCreditos);
 router.use('/abonos', rutasAbonos);
 router.use('/inventario', rutasInventario);
 router.use('/reportes', rutasReportes);
+router.use('/banco', rutasBanco);
 router.use('/configuracion', rutasConfiguracion);
 router.use('/usuarios', rutasUsuarios);
 router.use('/roles', routerRoles);

@@ -1,5 +1,5 @@
 /** Productos: listado con búsqueda, crear, editar y borrar. */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Search, Package, AlertTriangle, Plus, Pencil, Trash2 } from 'lucide-react';
 import { obtenerPaginado, obtener, crear, reemplazar, eliminar } from '@/lib/axios';
@@ -51,18 +51,48 @@ export default function ProductosPage() {
     onError: (e) => toast.error(e instanceof ErrorApi ? e.message : 'No se pudo eliminar'),
   });
 
+  // IDs por defecto de los catalogos. Los BIGINT llegan como string desde la API,
+  // de ahi el Number(): un id "3" y un id 3 no comparan igual en el <select>.
+  const catPorDefecto = () => Number(cats.data?.[0]?.id ?? 0);
+  const uniPorDefecto = () => Number(unis.data?.[0]?.id ?? 0);
+  const impPorDefecto = () =>
+    Number(imps.data?.find((i) => i.tasa === '0.000')?.id ?? imps.data?.[0]?.id ?? 0);
+
   const abrirNuevo = () => {
     setEditando(null);
-    setForm({ ...VACIO, categoriaId: cats.data?.[0]?.id ?? 0, unidadMedidaId: unis.data?.[0]?.id ?? 0, impuestoId: imps.data?.find((i) => i.tasa === '0.000')?.id ?? imps.data?.[0]?.id ?? 0 });
+    setForm({ ...VACIO, categoriaId: catPorDefecto(), unidadMedidaId: uniPorDefecto(), impuestoId: impPorDefecto() });
     setModal(true);
   };
   const abrirEditar = (p: Producto) => {
     setEditando(p.id);
-    setForm({ sku: p.sku, nombre: p.nombre, descripcion: '', categoriaId: p.categoria_id, unidadMedidaId: 0, impuestoId: p.impuesto_id, precioVenta: p.precio_venta, precioMayorista: p.precio_venta_mayorista ?? '', costoInicial: p.costo_promedio, stockMinimo: p.stock_minimo, esPesable: Boolean(p.es_pesable), esFavoritoPos: Boolean(p.es_favorito_pos), codigoBarras: '' });
-    // La unidad no viene en el listado; se deja la primera si no se sabe.
-    setForm((f) => ({ ...f, unidadMedidaId: unis.data?.[0]?.id ?? 0 }));
+    setForm({
+      sku: p.sku, nombre: p.nombre, descripcion: '', categoriaId: Number(p.categoria_id),
+      // La unidad no viene en el listado; se deja la primera si no se sabe.
+      unidadMedidaId: uniPorDefecto(), impuestoId: Number(p.impuesto_id),
+      precioVenta: p.precio_venta, precioMayorista: p.precio_venta_mayorista ?? '',
+      costoInicial: p.costo_promedio, stockMinimo: p.stock_minimo,
+      esPesable: Boolean(p.es_pesable), esFavoritoPos: Boolean(p.es_favorito_pos), codigoBarras: '',
+    });
     setModal(true);
   };
+
+  /**
+   * Si el modal se abre antes de que respondan /categorias, /unidades-medida o
+   * /impuestos, esos ids quedaban en 0 y el backend respondia 422. En cuanto
+   * llegan los catalogos se rellena lo que falte.
+   */
+  useEffect(() => {
+    if (!modal) return;
+    setForm((f) => ({
+      ...f,
+      categoriaId: f.categoriaId || catPorDefecto(),
+      unidadMedidaId: f.unidadMedidaId || uniPorDefecto(),
+      impuestoId: f.impuestoId || impPorDefecto(),
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modal, cats.data, unis.data, imps.data]);
+
+  const faltanCatalogos = !form.categoriaId || !form.unidadMedidaId || !form.impuestoId;
   const pedirBorrar = async (p: Producto) => {
     if (await confirm({ titulo: 'Eliminar producto', mensaje: `¿Eliminar "${p.nombre}"? Dejará de aparecer en el catálogo.`, confirmar: 'Eliminar', peligro: true })) {
       borrar.mutate(p.id);
@@ -122,8 +152,10 @@ export default function ProductosPage() {
       </Card>
 
       <Modal abierto={modal} onCerrar={() => setModal(false)} titulo={editando ? 'Editar producto' : 'Nuevo producto'} ancho="lg"
-        pie={<div className="flex justify-end gap-2"><button onClick={() => setModal(false)} className="rounded-lg border border-gray-300 px-4 py-2 text-sm dark:border-gray-600">Cancelar</button>
-          <button onClick={() => guardar.mutate(form)} disabled={!form.sku || !form.nombre || !form.precioVenta || guardar.isPending} className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600 disabled:opacity-50">Guardar</button></div>}>
+        pie={<div className="flex items-center justify-end gap-2">
+          {faltanCatalogos && <span className="mr-auto text-xs text-amber-600">Cargando categorías, unidades e impuestos…</span>}
+          <button onClick={() => setModal(false)} className="rounded-lg border border-gray-300 px-4 py-2 text-sm dark:border-gray-600">Cancelar</button>
+          <button onClick={() => guardar.mutate(form)} disabled={!form.sku || !form.nombre || !form.precioVenta || faltanCatalogos || guardar.isPending} className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600 disabled:opacity-50">Guardar</button></div>}>
         <div className="grid grid-cols-2 gap-3">
           <Campo label="Código / SKU *"><input value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} className={INP} /></Campo>
           <Campo label="Código de barras"><input value={form.codigoBarras} onChange={(e) => setForm({ ...form, codigoBarras: e.target.value })} className={INP} placeholder="Opcional" /></Campo>

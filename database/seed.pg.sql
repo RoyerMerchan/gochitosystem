@@ -113,6 +113,8 @@ INSERT INTO permisos (codigo, modulo, accion, descripcion) VALUES
  ('caja.movimiento','caja','movimiento','Registrar ingreso/egreso de caja'),
  ('caja.ver','caja','ver','Ver turnos y arqueos'),
  ('reportes.ver','reportes','ver','Ver reportes'),
+ ('banco.ver','banco','ver','Ver la correlacion con banco'),
+ ('banco.registrar','banco','registrar','Registrar el saldo bancario del dia'),
  ('exportaciones.generar','exportaciones','generar','Exportar reportes a PDF/Excel'),
  ('dashboard.ver','dashboard','ver','Ver el dashboard'),
  ('auditoria.ver','auditoria','ver','Ver la bitacora de auditoria');

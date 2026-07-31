@@ -17,6 +17,7 @@ import CreditosPage from '@/pages/CreditosPage';
 import ComprasPage from '@/pages/ComprasPage';
 import InventarioPage from '@/pages/InventarioPage';
 import ReportesPage from '@/pages/ReportesPage';
+import BancoPage from '@/pages/BancoPage';
 import CajaPage from '@/pages/CajaPage';
 import ConfiguracionPage from '@/pages/ConfiguracionPage';
 import CategoriasPage from '@/pages/CategoriasPage';
@@ -50,6 +51,7 @@ export function App() {
             <Route path="/creditos" element={<Privada><CreditosPage /></Privada>} />
             <Route path="/caja" element={<Privada><CajaPage /></Privada>} />
             <Route path="/reportes" element={<Privada><ReportesPage /></Privada>} />
+            <Route path="/banco" element={<Privada><BancoPage /></Privada>} />
             <Route path="/categorias" element={<Privada><CategoriasPage /></Privada>} />
             <Route path="/usuarios" element={<Privada><UsuariosPage /></Privada>} />
             <Route path="/configuracion" element={<Privada><ConfiguracionPage /></Privada>} />

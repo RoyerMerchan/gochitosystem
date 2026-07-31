@@ -11,21 +11,31 @@ import { tasaDeFecha } from '../tasas/tasas.service';
 
 const decimal = z.union([z.string(), z.number()]).transform(String).refine((v) => /^\d+(\.\d+)?$/.test(v), 'Numero invalido');
 
+/**
+ * Decimal opcional del formulario. Un `<input type="number">` vacio manda "", no
+ * `undefined`: sin este caso, borrar "Costo inicial" o "Stock minimo" devolvia un
+ * 422 seco ("los datos no son validos") sin decir cual campo. "" = no enviado.
+ */
+const decimalOpcional = z.union([z.string(), z.number()]).transform(String)
+  .refine((v) => v === '' || /^\d+(\.\d+)?$/.test(v), 'Debe ser un numero (ej. 1.76)')
+  .transform((v) => (v === '' ? undefined : v))
+  .optional();
+
 const esquemaProducto = z.object({
   sku: z.string().trim().min(1, 'El código (SKU) es obligatorio').max(40),
   nombre: z.string().trim().min(1, 'El nombre es obligatorio').max(160),
   descripcion: z.string().trim().max(500).nullable().optional(),
-  categoriaId: z.coerce.number().int().positive(),
-  unidadMedidaId: z.coerce.number().int().positive(),
-  impuestoId: z.coerce.number().int().positive(),
+  categoriaId: z.coerce.number().int().positive('Seleccione una categoría'),
+  unidadMedidaId: z.coerce.number().int().positive('Seleccione una unidad de medida'),
+  impuestoId: z.coerce.number().int().positive('Seleccione un impuesto'),
   precioVenta: decimal,
   precioMayorista: z.union([z.string(), z.number()]).transform(String)
     .refine((v) => v === '' || /^\d+(\.\d+)?$/.test(v), 'Numero invalido')
     .transform((v) => (v === '' ? null : v))
     .nullable()
     .optional(),
-  costoInicial: decimal.optional(),
-  stockMinimo: decimal.optional(),
+  costoInicial: decimalOpcional,
+  stockMinimo: decimalOpcional,
   esPrecioIncluyeImpuesto: z.coerce.boolean().optional(),
   esPesable: z.coerce.boolean().optional(),
   esFavoritoPos: z.coerce.boolean().optional(),

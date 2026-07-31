@@ -4,7 +4,7 @@ import { NavLink, Link, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, ShoppingCart, Package, Users, PackagePlus,
   CreditCard, Boxes, Wallet, BarChart3, Settings, TrendingUp, Menu, LogOut,
-  Receipt, UserCog, Tags,
+  Receipt, UserCog, Tags, Landmark,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { cerrarSesion } from '@/lib/authApi';
@@ -51,6 +51,8 @@ const NAV: { seccion: string; items: ItemNav[] }[] = [
     items: [
       { a: '/creditos', etiqueta: 'Créditos', icono: CreditCard, permiso: 'creditos.ver' },
       { a: '/caja', etiqueta: 'Caja', icono: Wallet, permiso: 'caja.ver' },
+      // Apartado aparte, sin relacion con las cifras de caja ni de reportes.
+      { a: '/banco', etiqueta: 'Correlación con banco', icono: Landmark, permiso: 'caja.ver' },
       { a: '/reportes', etiqueta: 'Reportes', icono: BarChart3, permiso: 'reportes.ver' },
     ],
   },

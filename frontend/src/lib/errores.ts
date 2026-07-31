@@ -13,9 +13,44 @@ const CODIGOS_TECNICOS = new Set<string>([
 ]);
 
 /**
+ * Traduce `detalles` a un texto corto que diga QUE fallo.
+ *
+ * Llegan en dos formas:
+ *   - Zod:      [{ campo, mensaje }]         -> "categoriaId: debe ser mayor que cero"
+ *   - Postgres: { causa, sqlstate, ... }     -> "null value in column ... [23502] {fk_x}"
+ */
+function describirDetalles(detalles: unknown): string {
+  if (!detalles || typeof detalles !== 'object') return '';
+
+  if (Array.isArray(detalles)) {
+    const campos = detalles
+      .filter((i): i is Record<string, unknown> => Boolean(i) && typeof i === 'object')
+      .map((i) => {
+        const campo = typeof i['campo'] === 'string' ? i['campo'] : null;
+        const msg = typeof i['mensaje'] === 'string' ? i['mensaje'] : null;
+        if (campo && msg) return `${campo}: ${msg}`;
+        return msg ?? campo ?? '';
+      })
+      .filter(Boolean);
+    return campos.length > 0 ? ` — ${campos.join(' · ')}` : '';
+  }
+
+  const d = detalles as { causa?: unknown; sqlstate?: unknown; restriccion?: unknown; columna?: unknown };
+  if (typeof d.causa !== 'string' || !d.causa) return '';
+  const sqlstate = typeof d.sqlstate === 'string' ? ` [${d.sqlstate}]` : '';
+  const rest = typeof d.restriccion === 'string' ? ` {${d.restriccion}}` : '';
+  const col = typeof d.columna === 'string' ? ` (columna ${d.columna})` : '';
+  return ` — ${d.causa}${col}${sqlstate}${rest}`;
+}
+
+/**
  * Aviso legible. Los errores de negocio (stock, cupo, duplicado) muestran su
  * mensaje tal cual; los tecnicos (5xx, red, inesperado) agregan el codigo y una
  * referencia corta para poder identificarlos.
+ *
+ * En ambos casos, si el backend mando `detalles` se anexan: un 422 que solo dice
+ * "los datos no son validos" no deja arreglar nada, y el campo culpable YA viene
+ * en la respuesta —solo faltaba mostrarlo.
  */
 function componerMensaje(
   mensaje: string,
@@ -24,20 +59,11 @@ function componerMensaje(
   requestId: string | null,
   detalles?: unknown,
 ): string {
+  const detalle = describirDetalles(detalles);
   const esTecnico = estadoHttp >= 500 || CODIGOS_TECNICOS.has(codigo);
-  if (!esTecnico) return mensaje;
+  if (!esTecnico) return `${mensaje}${detalle}`;
   const ref = requestId ? ` · ref: ${requestId.slice(0, 8)}` : '';
-  // El backend adjunta la causa real de la BD en detalles (causa/sqlstate) para depurar.
-  let causa = '';
-  if (detalles && typeof detalles === 'object') {
-    const d = detalles as { causa?: unknown; sqlstate?: unknown; restriccion?: unknown };
-    if (typeof d.causa === 'string' && d.causa) {
-      const sqlstate = typeof d.sqlstate === 'string' ? ` [${d.sqlstate}]` : '';
-      const rest = typeof d.restriccion === 'string' ? ` {${d.restriccion}}` : '';
-      causa = ` — ${d.causa}${sqlstate}${rest}`;
-    }
-  }
-  return `${mensaje} (${codigo}${ref})${causa}`;
+  return `${mensaje} (${codigo}${ref})${detalle}`;
 }
 
 export class ErrorApi extends Error {
