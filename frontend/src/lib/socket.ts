@@ -20,11 +20,13 @@ const MAPA_INVALIDACION: Record<string, string[]> = {
   // Una venta del POS toca: lista de ventas, existencias, caja y (si es fiado) cartera.
   // 'dashboard' cubre los totales por período y el contador de cartera: sin él, el
   // saldo que te deben se quedaba congelado hasta recargar la página.
-  pos: ['ventas', 'venta-detalle', 'existencias', 'productos', 'prodBuscar', 'cajas-estado', 'turno-activo', 'cartera', 'clientes', 'dashboard'],
-  ventas: ['ventas', 'venta-detalle', 'existencias', 'productos', 'prodBuscar', 'cajas-estado', 'turno-activo', 'cartera', 'dashboard'],
+  // 'estado-cuenta' es la cuenta de una persona abierta en el modal de abono: si
+  // otra caja le fia o le cobra, tiene que verse ahi sin recargar.
+  pos: ['ventas', 'venta-detalle', 'existencias', 'productos', 'prodBuscar', 'cajas-estado', 'turno-activo', 'cartera', 'estado-cuenta', 'clientes', 'dashboard'],
+  ventas: ['ventas', 'venta-detalle', 'existencias', 'productos', 'prodBuscar', 'cajas-estado', 'turno-activo', 'cartera', 'estado-cuenta', 'dashboard'],
   compras: ['compras', 'compra-detalle', 'existencias', 'productos', 'prodBuscar', 'proveedores'],
-  abonos: ['cartera', 'clientes', 'cajas-estado', 'turno-activo', 'ventas', 'dashboard'],
-  creditos: ['cartera', 'clientes', 'ventas', 'dashboard'],
+  abonos: ['cartera', 'estado-cuenta', 'clientes', 'cajas-estado', 'turno-activo', 'ventas', 'dashboard'],
+  creditos: ['cartera', 'estado-cuenta', 'clientes', 'ventas', 'dashboard'],
   'turnos-caja': ['cajas-estado', 'turno-activo'],
   inventario: ['existencias', 'productos', 'prodBuscar'],
   productos: ['productos', 'existencias', 'prodBuscar', 'categorias'],

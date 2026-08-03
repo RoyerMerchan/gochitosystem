@@ -14,7 +14,11 @@ import { formatearUSD } from '@/lib/formato';
 interface Cliente {
   id: number; tipo_documento: string; documento: string | null; nombre: string;
   telefono: string | null; email: string | null; cupo_credito: string;
-  dias_plazo: number; saldo_actual: string; es_permite_credito: number; esta_activo: number;
+  dias_plazo: number; saldo_actual: string;
+  /** Deuda real: la suma de todos sus créditos vivos. */
+  deuda_usd: string;
+  documentos_deuda: string;
+  es_permite_credito: number; esta_activo: number;
 }
 
 const VACIO = { nombre: '', documento: '', telefono: '', email: '', cupoCredito: '0', diasPlazo: 15, esPermiteCredito: false };
@@ -102,7 +106,16 @@ export default function ClientesPage() {
                     <td className="p-3 font-medium">{c.nombre}</td>
                     <td className="p-3 text-gray-500">{c.telefono ?? '—'}</td>
                     <td className="p-3 text-right tabular-nums">{formatearUSD(c.cupo_credito)}</td>
-                    <td className="p-3 text-right tabular-nums font-medium text-red-600">{Number(c.saldo_actual) > 0 ? formatearUSD(c.saldo_actual) : '—'}</td>
+                    <td className="p-3 text-right tabular-nums font-medium text-red-600">
+                      {Number(c.deuda_usd) > 0 ? (
+                        <>
+                          {formatearUSD(c.deuda_usd)}
+                          <span className="block text-xs font-normal text-gray-400">
+                            {c.documentos_deuda} {Number(c.documentos_deuda) === 1 ? 'factura' : 'facturas'}
+                          </span>
+                        </>
+                      ) : '—'}
+                    </td>
                     <td className="p-3 text-center">{c.es_permite_credito === 1 ? <Badge color="verde">Sí</Badge> : <Badge color="gris">No</Badge>}</td>
                     <td className="p-3">
                       <div className="flex justify-end gap-1">

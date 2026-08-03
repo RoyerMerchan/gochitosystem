@@ -86,6 +86,7 @@ const REPORTES: { grupo: string; items: DefReporte[] }[] = [
         { campo: 'total_bs', etiqueta: 'Total Bs', tipo: 'bs' }] },
       { clave: 'deuda', titulo: 'Con deuda', url: '/reportes/clientes/con-deuda', columnas: [
         { campo: 'nombre', etiqueta: 'Cliente' }, { campo: 'documento', etiqueta: 'Documento' },
+        { campo: 'documentos', etiqueta: 'Facturas', tipo: 'cant' },
         { campo: 'saldo_usd', etiqueta: 'Saldo USD', tipo: 'usd' }] },
     ],
   },

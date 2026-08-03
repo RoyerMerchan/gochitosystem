@@ -900,6 +900,9 @@ CREATE TABLE creditos (
 
 CREATE INDEX ix_cred_cliente ON creditos (cliente_id, estado, fecha_vencimiento);
 CREATE INDEX ix_creditos_pendientes ON creditos (cliente_id, fecha_emision, id) WHERE estado IN ('PENDIENTE', 'PARCIAL', 'VENCIDO');
+-- La deuda de una persona es la suma de sus creditos vivos: cartera, buscador de
+-- clientes y cupo del POS la calculan con este indice, sin tocar la tabla.
+CREATE INDEX ix_creditos_deuda_cliente ON creditos (cliente_id, saldo_usd) WHERE estado IN ('PENDIENTE', 'PARCIAL', 'VENCIDO') AND saldo_usd > 0;
 CREATE INDEX ix_cred_sucursal ON creditos (sucursal_id);
 CREATE INDEX ix_cred_venta ON creditos (venta_id);
 CREATE INDEX ix_cred_usuario ON creditos (usuario_id);

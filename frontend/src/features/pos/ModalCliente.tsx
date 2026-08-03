@@ -13,7 +13,9 @@ import { toast } from '@/store/toastStore';
 import { formatearUSD } from '@/lib/formato';
 
 interface ClienteFila {
-  id: number; nombre: string; documento: string | null; saldo_actual: string; es_permite_credito: number;
+  id: number; nombre: string; documento: string | null;
+  /** Deuda real: la suma de todos sus créditos vivos. */
+  deuda_usd: string; documentos_deuda: string; es_permite_credito: number;
 }
 
 interface Props {
@@ -134,8 +136,13 @@ export function ModalCliente({ abierto, onCerrar, onSeleccionar }: Props) {
                   <p className="font-medium">{c.nombre}</p>
                   <p className="text-xs text-gray-400">{c.documento ?? 'sin documento'}</p>
                 </div>
-                {Number(c.saldo_actual) > 0 && (
-                  <span className="ml-auto text-xs font-medium text-red-500">debe {formatearUSD(c.saldo_actual)}</span>
+                {Number(c.deuda_usd) > 0 && (
+                  <span className="ml-auto text-right text-xs font-medium text-red-500">
+                    debe {formatearUSD(c.deuda_usd)}
+                    <span className="block font-normal text-gray-400">
+                      {c.documentos_deuda} {Number(c.documentos_deuda) === 1 ? 'factura' : 'facturas'}
+                    </span>
+                  </span>
                 )}
               </button>
             ))

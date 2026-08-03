@@ -14,32 +14,57 @@ import { ESTADO_CREDITO, TIPO_DOCUMENTO } from '../../config/constantes';
 import { registrarMovimiento, turnoActivoDeUsuario } from '../caja/caja.service';
 import type { Id, UsuarioAutenticado } from '../../tipos/comunes';
 
-/** Cartera: clientes con deuda y su antiguedad de saldos. */
+/**
+ * Cartera: una fila por PERSONA, con su deuda total.
+ *
+ * El total sale de sumar TODOS sus creditos vivos (`creditos.saldo_usd`), no de
+ * `clientes.saldo_actual`: ese es un espejo desnormalizado que se actualiza con
+ * GREATEST(0, ...), y si alguna vez se desincroniza el cliente aparece debiendo
+ * de menos —o desaparece de la cartera con facturas todavia sin cobrar—.
+ * Sumando los creditos, el total de la persona y sus tramos de mora siempre
+ * cuadran entre si, porque salen de las mismas filas.
+ */
 export async function listarCartera(): Promise<unknown[]> {
   return query(
-    `SELECT c.id AS cliente_id, c.nombre, c.documento, c.saldo_actual AS saldo_usd,
-            c.cupo_credito,
+    `SELECT c.id AS cliente_id, c.nombre, c.documento, c.cupo_credito,
+            SUM(cr.saldo_usd) AS saldo_usd,
+            COUNT(*) AS documentos,
             COALESCE(SUM(CASE WHEN (CURRENT_DATE - cr.fecha_vencimiento) <= 0 THEN cr.saldo_usd ELSE 0 END),0) AS por_vencer,
             COALESCE(SUM(CASE WHEN (CURRENT_DATE - cr.fecha_vencimiento) BETWEEN 1 AND 30 THEN cr.saldo_usd ELSE 0 END),0) AS d1_30,
             COALESCE(SUM(CASE WHEN (CURRENT_DATE - cr.fecha_vencimiento) BETWEEN 31 AND 60 THEN cr.saldo_usd ELSE 0 END),0) AS d31_60,
             COALESCE(SUM(CASE WHEN (CURRENT_DATE - cr.fecha_vencimiento) BETWEEN 61 AND 90 THEN cr.saldo_usd ELSE 0 END),0) AS d61_90,
             COALESCE(SUM(CASE WHEN (CURRENT_DATE - cr.fecha_vencimiento) > 90 THEN cr.saldo_usd ELSE 0 END),0) AS d90_mas
        FROM clientes c
-       JOIN creditos cr ON cr.cliente_id = c.id AND cr.estado IN ('PENDIENTE','PARCIAL','VENCIDO')
+       JOIN creditos cr ON cr.cliente_id = c.id
+        AND cr.estado IN ('PENDIENTE','PARCIAL','VENCIDO') AND cr.saldo_usd > 0
       WHERE c.eliminado_en IS NULL
-      GROUP BY c.id, c.nombre, c.documento, c.saldo_actual, c.cupo_credito
-      HAVING c.saldo_actual > 0
-      ORDER BY c.saldo_actual DESC`,
+      GROUP BY c.id, c.nombre, c.documento, c.cupo_credito
+      ORDER BY SUM(cr.saldo_usd) DESC`,
   );
 }
 
-/** Estado de cuenta de un cliente: creditos pendientes + historial de abonos. */
+/**
+ * Estado de cuenta de un cliente: su deuda total consolidada, las facturas que
+ * la componen y el historial de abonos. `resumen` es la cuenta unica de la
+ * persona: lo que hay que cobrarle sumando todos sus creditos.
+ */
 export async function estadoCuenta(clienteId: Id): Promise<unknown> {
   const cliente = await queryOne(
     `SELECT id, nombre, documento, saldo_actual, cupo_credito FROM clientes WHERE id = ? AND eliminado_en IS NULL`,
     [clienteId],
   );
   if (!cliente) throw new NoEncontrado('CLIENTE_NO_ENCONTRADO');
+
+  const resumen = await queryOne(
+    `SELECT COALESCE(SUM(saldo_usd), 0) AS deuda_usd,
+            COUNT(*) AS documentos,
+            COALESCE(SUM(saldo_usd) FILTER (WHERE fecha_vencimiento < CURRENT_DATE), 0) AS vencido_usd,
+            COUNT(*) FILTER (WHERE fecha_vencimiento < CURRENT_DATE) AS documentos_vencidos,
+            MIN(fecha_emision) AS deuda_desde
+       FROM creditos
+      WHERE cliente_id = ? AND estado IN ('PENDIENTE','PARCIAL','VENCIDO') AND saldo_usd > 0`,
+    [clienteId],
+  );
 
   const creditos = await query(
     `SELECT cr.id, cr.venta_id, v.prefijo || v.numero AS documento, cr.fecha_emision, cr.fecha_vencimiento,
@@ -57,7 +82,7 @@ export async function estadoCuenta(clienteId: Id): Promise<unknown> {
     [clienteId],
   );
 
-  return { cliente, creditos, abonos };
+  return { cliente, resumen, creditos, abonos };
 }
 
 export interface AbonoEntrada {
@@ -206,11 +231,17 @@ export async function registrarAbono(
       }
     }
 
-    const saldoRestante = await queryOne<{ saldo_actual: string }>(`SELECT saldo_actual FROM clientes WHERE id = ?`, [entrada.clienteId], cx);
+    // Lo que le queda debiendo a la persona: la suma de sus creditos vivos, no el
+    // espejo de clientes.saldo_actual.
+    const saldoRestante = await queryOne<{ deuda_usd: string }>(
+      `SELECT COALESCE(SUM(saldo_usd), 0) AS deuda_usd FROM creditos
+        WHERE cliente_id = ? AND estado IN ('PENDIENTE','PARCIAL','VENCIDO') AND saldo_usd > 0`,
+      [entrada.clienteId], cx,
+    );
     return {
       id: abonoId, numero: `${prefijo}${numero}`,
       monto_usd: centavosASql(montoUsd), aplicado_usd: centavosASql(aplicado),
-      saldo_restante: saldoRestante?.saldo_actual ?? '0',
+      saldo_restante: saldoRestante?.deuda_usd ?? '0',
     };
   });
 }
@@ -223,7 +254,8 @@ async function creditosObjetivo(
   cx: Ejecutor, clienteId: Id, ids: number[],
 ): Promise<Array<{ id: number; saldo_usd: string }>> {
   const base = `SELECT id, saldo_usd FROM creditos
-                 WHERE cliente_id = ? AND estado IN ('PENDIENTE','PARCIAL','VENCIDO')`;
+                 WHERE cliente_id = ? AND estado IN ('PENDIENTE','PARCIAL','VENCIDO')
+                   AND saldo_usd > 0`;
   const orden = 'ORDER BY fecha_emision, id FOR UPDATE';
 
   if (ids.length === 0) {

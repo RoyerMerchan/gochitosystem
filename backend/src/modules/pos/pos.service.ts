@@ -670,9 +670,8 @@ async function validarCredito(
     es_permite_credito: boolean;
     esta_bloqueado: boolean;
     cupo_credito: string;
-    saldo_actual: string;
   }>(
-    `SELECT es_permite_credito, esta_bloqueado, cupo_credito, saldo_actual
+    `SELECT es_permite_credito, esta_bloqueado, cupo_credito
        FROM clientes WHERE id = ? AND eliminado_en IS NULL LIMIT 1 FOR UPDATE`,
     [clienteId],
     cx,
@@ -681,8 +680,18 @@ async function validarCredito(
   if (cliente.esta_bloqueado) throw new Conflicto('CLIENTE_BLOQUEADO');
   if (!cliente.es_permite_credito) throw new ReglaNegocio('CLIENTE_SIN_CREDITO');
 
+  // Contra el cupo se pone la deuda REAL: la suma de todos sus creditos vivos.
+  // El FOR UPDATE de arriba serializa dos ventas a credito del mismo cliente, asi
+  // que esta suma no se puede quedar vieja entre la lectura y el INSERT.
+  const deuda = await queryOne<{ deuda_usd: string }>(
+    `SELECT COALESCE(SUM(saldo_usd), 0) AS deuda_usd FROM creditos
+      WHERE cliente_id = ? AND estado IN ('PENDIENTE','PARCIAL','VENCIDO') AND saldo_usd > 0`,
+    [clienteId],
+    cx,
+  );
+
   const cupo = aCentavos(cliente.cupo_credito);
-  const saldo = aCentavos(cliente.saldo_actual);
+  const saldo = aCentavos(deuda?.deuda_usd ?? '0');
   if (saldo + montoUsd > cupo) throw new Conflicto('CUPO_CREDITO_EXCEDIDO');
 }
 

@@ -12,7 +12,11 @@ import { formatearUSD, formatearBs, formatearFecha, formatearCantidad, aNumero, 
 import { METODOS_PAGO } from '@/features/pos/metodosPago';
 
 interface FilaCartera {
-  cliente_id: number; nombre: string; documento: string | null; saldo_usd: string;
+  cliente_id: number; nombre: string; documento: string | null;
+  /** Cuenta única de la persona: la suma de TODOS sus créditos vivos. */
+  saldo_usd: string;
+  /** Cuántas facturas componen esa deuda. */
+  documentos: string;
   por_vencer: string; d1_30: string; d31_60: string; d61_90: string; d90_mas: string;
 }
 
@@ -22,7 +26,14 @@ interface Deuda {
   monto_original_usd: string; saldo_usd: string; estado: string; dias_mora: number;
 }
 
-interface EstadoCuenta { creditos: Deuda[] }
+/** Deuda consolidada de la persona, calculada en el backend sobre sus créditos. */
+interface ResumenCuenta {
+  deuda_usd: string; documentos: string;
+  vencido_usd: string; documentos_vencidos: string;
+  deuda_desde: string | null;
+}
+
+interface EstadoCuenta { resumen: ResumenCuenta; creditos: Deuda[] }
 
 interface DetalleVenta {
   venta: { numero: string; fecha: string; total_usd: string; tasa_cambio: string };
@@ -76,10 +87,22 @@ export default function CreditosPage() {
   const enBs = monedaEntrada === 'VES';
 
   // Deudas vivas, más antiguas primero (el backend ya las devuelve por fecha_emision).
+  // Con saldo > 0, el mismo filtro con el que el backend suma la deuda total: así
+  // lo que se marca aquí y el total de la cuenta hablan de las mismas facturas.
   const deudas = useMemo(
-    () => (cuenta.data?.creditos ?? []).filter((c) => ESTADOS_VIVOS.includes(c.estado)),
+    () => (cuenta.data?.creditos ?? []).filter(
+      (c) => ESTADOS_VIVOS.includes(c.estado) && aNumero(c.saldo_usd) > 0,
+    ),
     [cuenta.data],
   );
+  // Cuenta única de la persona: la deuda total la suma el backend sobre sus
+  // créditos. Mientras carga se usa el total de la fila de cartera, que sale de
+  // la misma suma, para que el número no salte.
+  const resumen = cuenta.data?.resumen;
+  const deudaTotal = aNumero(resumen?.deuda_usd ?? abonar?.saldo_usd ?? 0);
+  const docsDeuda = Number(resumen?.documentos ?? abonar?.documentos ?? 0);
+  const vencidoTotal = aNumero(resumen?.vencido_usd ?? 0);
+
   // Objetivo del abono: lo marcado, o todo si no hay nada marcado.
   const objetivo = seleccion.length > 0 ? deudas.filter((d) => seleccion.includes(d.id)) : deudas;
   const saldoObjetivo = objetivo.reduce((a, d) => a + aNumero(d.saldo_usd), 0);
@@ -205,7 +228,10 @@ export default function CreditosPage() {
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <p className="truncate font-medium">{c.nombre}</p>
-                      {c.documento && <p className="text-xs text-gray-400">{c.documento}</p>}
+                      <p className="text-xs text-gray-400">
+                        {c.documento && <span>{c.documento} · </span>}
+                        {c.documentos} {Number(c.documentos) === 1 ? 'factura' : 'facturas'}
+                      </p>
                     </div>
                     <div className="shrink-0 text-right">
                       <p className="font-bold tabular-nums">{formatearUSD(c.saldo_usd)}</p>
@@ -252,7 +278,10 @@ export default function CreditosPage() {
                   <tr key={c.cliente_id} className="border-t border-gray-100 dark:border-gray-700">
                     <td className="p-3 font-medium">
                       {c.nombre}
-                      {c.documento && <span className="block text-xs font-normal text-gray-400">{c.documento}</span>}
+                      <span className="block text-xs font-normal text-gray-400">
+                        {c.documento && <>{c.documento} · </>}
+                        {c.documentos} {Number(c.documentos) === 1 ? 'factura' : 'facturas'}
+                      </span>
                     </td>
                     <td className="p-3 text-right tabular-nums text-gray-500">{formatearUSD(c.por_vencer, false)}</td>
                     <td className="p-3 text-right tabular-nums">{formatearUSD(c.d1_30, false)}</td>
@@ -294,6 +323,23 @@ export default function CreditosPage() {
           </div>
         }>
         <div className="space-y-4">
+          {/* La cuenta de la persona: todo lo que debe, sumando sus créditos. */}
+          <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-900/40">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4">
+              <span className="text-xs font-medium uppercase tracking-wide text-gray-500">Deuda total de la cuenta</span>
+              <span className="text-xl font-bold tabular-nums">{formatearUSD(deudaTotal)}</span>
+            </div>
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4 text-xs text-gray-500">
+              <span>
+                {docsDeuda} {docsDeuda === 1 ? 'factura' : 'facturas'}
+                {vencidoTotal > 0 && (
+                  <span className="ml-1 font-medium text-red-500">· {formatearUSD(vencidoTotal)} vencido</span>
+                )}
+              </span>
+              <span className="tabular-nums">{tasaNum > 0 ? formatearBs(usdABs(deudaTotal, tasaNum)) : 'sin tasa de hoy'}</span>
+            </div>
+          </div>
+
           {/* Deudas: marcar cuáles se pagan */}
           <div>
             <div className="mb-1 flex items-center justify-between">

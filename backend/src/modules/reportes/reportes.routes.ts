@@ -272,9 +272,17 @@ router.get('/clientes/mayor-gasto', requierePermiso('reportes.ver'), validar({ q
 
 router.get('/clientes/con-deuda', requierePermiso('reportes.ver'), async (_req, res, next) => {
   try {
+    // Una fila por persona con su deuda total: la suma de sus creditos vivos
+    // (misma fuente que la cartera), no el espejo de clientes.saldo_actual.
     const datos = await queryReporte(
-      `SELECT nombre, documento, saldo_actual AS saldo_usd, cupo_credito
-         FROM clientes WHERE eliminado_en IS NULL AND saldo_actual > 0 ORDER BY saldo_actual DESC`,
+      `SELECT c.nombre, c.documento, SUM(cr.saldo_usd) AS saldo_usd,
+              COUNT(*) AS documentos, c.cupo_credito
+         FROM clientes c
+         JOIN creditos cr ON cr.cliente_id = c.id
+          AND cr.estado IN ('PENDIENTE','PARCIAL','VENCIDO') AND cr.saldo_usd > 0
+        WHERE c.eliminado_en IS NULL
+        GROUP BY c.id, c.nombre, c.documento, c.cupo_credito
+        ORDER BY SUM(cr.saldo_usd) DESC`,
     );
     enviarOk(res, datos);
   } catch (e) { next(e); }
@@ -420,8 +428,10 @@ router.get('/dashboard/resumen', requierePermiso('dashboard.ver'), async (req, r
          FROM ventas WHERE sucursal_id = ? AND estado='CERRADA' AND DATE(fecha) = CURRENT_DATE`,
       [u.sucursalId],
     );
+    // Misma fuente que /dashboard/cartera: los creditos, no el espejo del cliente.
     const cartera = await queryReporte<{ total: string }>(
-      `SELECT COALESCE(SUM(saldo_actual),0) AS total FROM clientes WHERE eliminado_en IS NULL`,
+      `SELECT COALESCE(SUM(saldo_usd),0) AS total FROM creditos
+        WHERE estado IN ('PENDIENTE','PARCIAL','VENCIDO') AND saldo_usd > 0`,
     );
     const serie = await queryReporte(
       `SELECT DATE(fecha) AS dia, SUM(total_usd) AS usd, SUM(utilidad_total) AS utilidad
