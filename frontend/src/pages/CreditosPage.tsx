@@ -69,6 +69,11 @@ export default function CreditosPage() {
   const [monedaEntrada, setMonedaEntrada] = useState<'USD' | 'VES'>('VES');
   /** Deuda cuyo detalle de productos está desplegado. */
   const [verProductos, setVerProductos] = useState<number | null>(null);
+  /**
+   * La cuenta se cobra como UNA sola deuda. El desglose compra por compra queda
+   * escondido: solo se abre si el cliente quiere pagar una factura suelta.
+   */
+  const [verDetalle, setVerDetalle] = useState(false);
   const [referencia, setReferencia] = useState('');
   const [busqueda, setBusqueda] = useState('');
 
@@ -120,6 +125,8 @@ export default function CreditosPage() {
   const montoUsd = Math.abs(montoUsdCrudo - saldoObjetivo) <= 0.01 ? saldoObjetivo : montoUsdCrudo;
   const montoBs = montoUsd * tasaNum;
   const excede = montoUsd > saldoObjetivo;
+  /** En cuánto queda la cuenta de la persona después de este abono. */
+  const quedaCuenta = Math.max(0, deudaTotal - montoUsd);
 
   /**
    * Lo que se envía al backend va SIEMPRE en la moneda del método de pago (es la
@@ -146,7 +153,14 @@ export default function CreditosPage() {
 
   const abrir = (c: FilaCartera) => {
     setAbonar(c); setSeleccion([]); setMontoManual(null); setReferencia('');
-    setMonedaEntrada(metodo.moneda); setVerProductos(null);
+    setMonedaEntrada(metodo.moneda); setVerProductos(null); setVerDetalle(false);
+  };
+  /** Al cerrar el desglose se vuelve a cobrar la cuenta completa. */
+  const alternarDetalle = () => {
+    setVerDetalle((v) => {
+      if (v) { setSeleccion([]); setMontoManual(null); setVerProductos(null); }
+      return !v;
+    });
   };
   const alternar = (id: number) => {
     setMontoManual(null); // el monto vuelve a seguir la selección
@@ -311,7 +325,7 @@ export default function CreditosPage() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-sm">
               <span className="text-gray-500">
-                {seleccion.length > 0 ? `${seleccion.length} factura(s) marcada(s):` : 'Toda la deuda:'}
+                {seleccion.length > 0 ? `${seleccion.length} compra(s) marcada(s):` : 'Cuenta completa:'}
               </span>{' '}
               <span className="font-semibold">{formatearUSD(saldoObjetivo)}</span>
               {excede && <p className="text-xs font-medium text-red-500">El monto supera lo que se va a pagar</p>}
@@ -323,7 +337,11 @@ export default function CreditosPage() {
           </div>
         }>
         <div className="space-y-4">
-          {/* La cuenta de la persona: todo lo que debe, sumando sus créditos. */}
+          {/*
+            La cuenta de la persona como UNA sola deuda: la suma de todo lo que
+            debe y en qué queda después de este abono. El desglose compra por
+            compra vive detrás del enlace de abajo.
+          */}
           <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-900/40">
             <div className="flex flex-wrap items-baseline justify-between gap-x-4">
               <span className="text-xs font-medium uppercase tracking-wide text-gray-500">Deuda total de la cuenta</span>
@@ -331,31 +349,48 @@ export default function CreditosPage() {
             </div>
             <div className="flex flex-wrap items-baseline justify-between gap-x-4 text-xs text-gray-500">
               <span>
-                {docsDeuda} {docsDeuda === 1 ? 'factura' : 'facturas'}
+                {docsDeuda} {docsDeuda === 1 ? 'compra fiada' : 'compras fiadas'}
                 {vencidoTotal > 0 && (
                   <span className="ml-1 font-medium text-red-500">· {formatearUSD(vencidoTotal)} vencido</span>
                 )}
               </span>
               <span className="tabular-nums">{tasaNum > 0 ? formatearBs(usdABs(deudaTotal, tasaNum)) : 'sin tasa de hoy'}</span>
             </div>
+            {montoUsd > 0 && !excede && (
+              <p className="mt-2 border-t border-gray-200 pt-2 text-sm dark:border-gray-700">
+                {quedaCuenta <= 0
+                  ? <span className="font-semibold text-green-600">Con este abono la cuenta queda en cero</span>
+                  : <>Con este abono queda debiendo <span className="font-semibold">{formatearUSD(quedaCuenta)}</span>
+                      {tasaNum > 0 && <span className="text-gray-400"> · {formatearBs(usdABs(quedaCuenta, tasaNum))}</span>}</>}
+              </p>
+            )}
           </div>
 
-          {/* Deudas: marcar cuáles se pagan */}
+          {/* Desglose: solo si el cliente quiere pagar una compra suelta. */}
           <div>
-            <div className="mb-1 flex items-center justify-between">
+            <div className="mb-1 flex items-center justify-between gap-2">
               <label className="text-xs font-medium text-gray-500">
-                Deudas pendientes {seleccion.length === 0 && <span className="text-gray-400">· sin marcar se abona a las más antiguas primero</span>}
+                {verDetalle
+                  ? <>Marca lo que paga <span className="text-gray-400">· sin marcar se abona a lo más antiguo primero</span></>
+                  : <>Se abona a la cuenta completa, de lo más antiguo a lo más nuevo</>}
               </label>
               {deudas.length > 0 && (
-                <button onClick={marcarTodas} className="text-xs font-semibold text-amber-600 hover:underline">
-                  {seleccion.length === deudas.length ? 'Quitar todas' : 'Marcar todas'}
+                <button onClick={alternarDetalle} className="shrink-0 text-xs font-semibold text-amber-600 hover:underline">
+                  {verDetalle
+                    ? 'Cobrar la cuenta completa'
+                    : `Ver las ${deudas.length} ${deudas.length === 1 ? 'compra' : 'compras'}`}
                 </button>
               )}
             </div>
             {cuenta.isLoading ? <Cargando /> : deudas.length === 0 ? (
               <p className="rounded-lg border border-dashed border-gray-300 p-3 text-center text-sm text-gray-400 dark:border-gray-600">Sin facturas pendientes</p>
-            ) : (
+            ) : !verDetalle ? null : (
               <div className="max-h-72 space-y-1 overflow-y-auto rounded-lg border border-gray-200 p-1 dark:border-gray-700">
+                <div className="flex justify-end px-1 pt-1">
+                  <button onClick={marcarTodas} className="text-xs font-semibold text-amber-600 hover:underline">
+                    {seleccion.length === deudas.length ? 'Quitar todas' : 'Marcar todas'}
+                  </button>
+                </div>
                 {deudas.map((d) => {
                   const marcada = seleccion.includes(d.id);
                   const aplica = aplicacion.get(d.id) ?? 0;
