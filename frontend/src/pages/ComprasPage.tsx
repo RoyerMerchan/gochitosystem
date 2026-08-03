@@ -1,11 +1,14 @@
 /**
  * Entrada de mercancía: el negocio ingresa el stock manualmente.
- * Solo se agregan productos con cantidad y costo; actualiza stock y costo promedio.
- * (Internamente usa el proveedor generico "INGRESO DIRECTO".)
+ * Se agregan productos con cantidad y costo; actualiza stock y costo promedio.
+ *
+ * Cada entrada queda a nombre de un proveedor. Si no se elige ninguno usa el
+ * generico "INGRESO DIRECTO" (id 1), que es lo que hacia siempre antes.
+ * A crédito, la entrada abre cuenta por pagar con ese proveedor.
  */
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { PackagePlus, Plus, Trash2, Search, Eye } from 'lucide-react';
+import { PackagePlus, Plus, Trash2, Search, Eye, Truck } from 'lucide-react';
 import { obtenerPaginado, obtener, crear } from '@/lib/axios';
 import { ErrorApi } from '@/lib/errores';
 import { Card, Cargando, Badge, EmptyState } from '@/components/ui/Feedback';
@@ -17,12 +20,24 @@ import { useTasaStore } from '@/store/tasaStore';
 import { formatearUSD, formatearBs, formatearFecha, aNumero, usdABs, redondearCentavos } from '@/lib/formato';
 import type { Producto } from '@/lib/tipos';
 
-interface EntradaFila { id: number; numero: string; fecha_recepcion: string; total_usd: string; total_bs: string; estado: string; }
+interface EntradaFila {
+  id: number; numero: string; fecha_recepcion: string; total_usd: string; total_bs: string;
+  estado: string; proveedor: string; proveedor_id: number;
+  numero_factura_proveedor: string | null; condicion_pago: string; saldo_pendiente: string;
+}
 interface Renglon { productoId: number; nombre: string; sku: string; cantidad: string; costoUnitario: string; }
+interface Proveedor { id: number; razon_social: string; nit: string | null; saldo_actual: string; }
 interface DetalleCompra {
-  compra: { proveedor: string; estado: string; total_usd: string; total_bs: string; tasa_cambio: string; fecha_recepcion: string };
+  compra: {
+    proveedor: string; estado: string; total_usd: string; total_bs: string; tasa_cambio: string;
+    fecha_recepcion: string; numero_factura_proveedor: string | null;
+    condicion_pago: string; saldo_pendiente: string;
+  };
   renglones: Array<{ linea: number; descripcion: string; cantidad: string; costo_unitario_neto: string; total_linea: string }>;
 }
+
+/** Proveedor generico que usa el sistema cuando no se indica ninguno. */
+const PROVEEDOR_DIRECTO = 1;
 
 export default function ComprasPage() {
   const qc = useQueryClient();
@@ -38,23 +53,66 @@ export default function ComprasPage() {
   const [desde, setDesde] = useState('');
   const [hasta, setHasta] = useState('');
   const [ver, setVer] = useState<EntradaFila | null>(null);
+  /** Filtro del listado: 0 = todos los proveedores. */
+  const [filtroProv, setFiltroProv] = useState(0);
+  // Datos de la entrada que se está cargando.
+  const [proveedorId, setProveedorId] = useState(PROVEEDOR_DIRECTO);
+  const [facturaProv, setFacturaProv] = useState('');
+  const [condicion, setCondicion] = useState<'CONTADO' | 'CREDITO'>('CONTADO');
+  // Alta rápida de proveedor, para no tener que salir a otra pantalla.
+  const [creandoProv, setCreandoProv] = useState(false);
+  const [provNuevo, setProvNuevo] = useState({ razonSocial: '', telefono: '' });
+
   const paramsE = new URLSearchParams({ limite: '100' });
   if (desde) paramsE.set('desde', desde);
   if (hasta) paramsE.set('hasta', hasta);
-  const entradas = useQuery({ queryKey: ['compras', desde, hasta], queryFn: () => obtenerPaginado<EntradaFila>(`/compras?${paramsE.toString()}`) });
+  if (filtroProv) paramsE.set('proveedorId', String(filtroProv));
+  const entradas = useQuery({ queryKey: ['compras', desde, hasta, filtroProv], queryFn: () => obtenerPaginado<EntradaFila>(`/compras?${paramsE.toString()}`) });
   const detalle = useQuery({ queryKey: ['compra-detalle', ver?.id], queryFn: () => obtener<DetalleCompra>(`/compras/${ver!.id}`), enabled: ver !== null });
   const busq = useQuery({ queryKey: ['prodBuscar', q], queryFn: () => obtener<Producto[]>(`/productos/buscar?q=${encodeURIComponent(q)}`), enabled: q.length > 0 });
+  const proveedores = useQuery({ queryKey: ['proveedores'], queryFn: () => obtenerPaginado<Proveedor>('/proveedores?limite=200') });
+  const listaProv = proveedores.data?.datos ?? [];
 
   const registrar = useMutation({
     mutationFn: () => crear('/compras', {
-      condicionPago: 'CONTADO',
+      proveedorId,
+      numeroFacturaProveedor: facturaProv.trim() || undefined,
+      condicionPago: condicion,
       renglones: renglones.map((r) => ({ productoId: r.productoId, cantidad: r.cantidad, costoUnitario: r.costoUnitario })),
     }),
-    onSuccess: () => { toast.exito('Mercancía ingresada · stock y costo actualizados'); qc.invalidateQueries({ queryKey: ['compras'] }); qc.invalidateQueries({ queryKey: ['existencias'] }); cerrar(); },
+    onSuccess: () => {
+      toast.exito(condicion === 'CREDITO'
+        ? 'Mercancía ingresada · queda por pagar al proveedor'
+        : 'Mercancía ingresada · stock y costo actualizados');
+      qc.invalidateQueries({ queryKey: ['compras'] });
+      qc.invalidateQueries({ queryKey: ['existencias'] });
+      // La compra a crédito mueve el saldo del proveedor y los totales del panel.
+      qc.invalidateQueries({ queryKey: ['proveedores'] });
+      qc.invalidateQueries({ queryKey: ['dashboard'] });
+      cerrar();
+    },
     onError: (e) => toast.error(e instanceof ErrorApi ? e.message : 'No se pudo registrar la entrada'),
   });
 
-  const cerrar = () => { setModal(false); setRenglones([]); setTermino(''); };
+  const crearProveedor = useMutation({
+    mutationFn: () => crear<Proveedor>('/proveedores', {
+      razonSocial: provNuevo.razonSocial.trim(),
+      telefono: provNuevo.telefono.trim() || null,
+    }),
+    onSuccess: (p) => {
+      toast.exito('Proveedor creado');
+      qc.invalidateQueries({ queryKey: ['proveedores'] });
+      setProveedorId(p.id);
+      setCreandoProv(false); setProvNuevo({ razonSocial: '', telefono: '' });
+    },
+    onError: (e) => toast.error(e instanceof ErrorApi ? e.message : 'No se pudo crear el proveedor'),
+  });
+
+  const cerrar = () => {
+    setModal(false); setRenglones([]); setTermino('');
+    setProveedorId(PROVEEDOR_DIRECTO); setFacturaProv(''); setCondicion('CONTADO');
+    setCreandoProv(false); setProvNuevo({ razonSocial: '', telefono: '' });
+  };
   const agregar = (p: Producto) => {
     if (renglones.some((r) => r.productoId === p.id)) return;
     setRenglones((rs) => [...rs, { productoId: p.id, nombre: p.nombre, sku: p.sku, cantidad: '1', costoUnitario: p.costo_promedio }]);
@@ -80,6 +138,14 @@ export default function ComprasPage() {
         <div className="flex flex-wrap items-end gap-2">
           <FiltroPeriodo desde={desde} hasta={hasta} onCambiar={(d, h) => { setDesde(d); setHasta(h); }} />
           <div>
+            <label className="mb-0.5 block text-[10px] uppercase text-gray-400">Proveedor</label>
+            <select value={filtroProv} onChange={(e) => setFiltroProv(Number(e.target.value))}
+              className="max-w-[12rem] rounded-lg border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800">
+              <option value={0}>Todos</option>
+              {listaProv.map((p) => <option key={p.id} value={p.id}>{p.razon_social}</option>)}
+            </select>
+          </div>
+          <div>
             <label className="mb-0.5 block text-[10px] uppercase text-gray-400">Desde</label>
             <input type="date" value={desde} onChange={(e) => setDesde(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-gray-800" />
           </div>
@@ -98,17 +164,29 @@ export default function ComprasPage() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-xs uppercase text-gray-500 dark:bg-gray-700/50"><tr>
               <th className="p-3 text-left">N.º</th><th className="p-3 text-left">Fecha</th>
+              <th className="p-3 text-left">Proveedor</th>
               <th className="p-3 text-right">Total $ / Bs</th><th className="p-3 text-center">Estado</th><th className="p-3"></th></tr></thead>
             <tbody>
               {entradas.data!.datos.map((c) => (
                 <tr key={c.id} className="border-t border-gray-100 dark:border-gray-700">
                   <td className="p-3 font-medium">{c.numero}</td>
                   <td className="p-3 text-gray-500">{formatearFecha(c.fecha_recepcion)}</td>
+                  <td className="p-3">
+                    <span className={c.proveedor_id === PROVEEDOR_DIRECTO ? 'text-gray-400' : 'font-medium'}>{c.proveedor}</span>
+                    {c.numero_factura_proveedor && (
+                      <span className="block text-xs text-gray-400">Factura {c.numero_factura_proveedor}</span>
+                    )}
+                  </td>
                   <td className="p-3 text-right tabular-nums">
                     {formatearUSD(c.total_usd)}
                     <span className="block text-xs text-gray-400">{formatearBs(c.total_bs)}</span>
                   </td>
-                  <td className="p-3 text-center">{c.estado === 'ANULADA' ? <Badge color="rojo">Anulada</Badge> : <Badge color="verde">Ingresada</Badge>}</td>
+                  <td className="p-3 text-center">
+                    {c.estado === 'ANULADA' ? <Badge color="rojo">Anulada</Badge> : <Badge color="verde">Ingresada</Badge>}
+                    {c.estado !== 'ANULADA' && aNumero(c.saldo_pendiente) > 0 && (
+                      <span className="mt-1 block text-xs font-medium text-amber-600">Debes {formatearUSD(c.saldo_pendiente)}</span>
+                    )}
+                  </td>
                   <td className="p-3 text-right">
                     <button onClick={() => setVer(c)} className="text-gray-400 hover:text-amber-600" title="Ver productos">
                       <Eye className="h-4 w-4" />
@@ -128,6 +206,58 @@ export default function ComprasPage() {
           <p className="rounded-lg bg-blue-50 p-3 text-xs text-blue-700 dark:bg-blue-900/20 dark:text-blue-300">
             Al ingresar, el stock sube y el costo promedio de cada producto se recalcula automáticamente.
           </p>
+
+          {/* A quién se le compró: queda guardado en la entrada y sale en los reportes. */}
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="sm:col-span-2">
+              <label className="mb-1 flex items-center justify-between text-xs font-medium text-gray-500">
+                <span className="flex items-center gap-1"><Truck className="h-3.5 w-3.5" /> Proveedor</span>
+                <button onClick={() => setCreandoProv((v) => !v)} className="font-semibold text-amber-600 hover:underline">
+                  {creandoProv ? 'Cancelar' : '+ Nuevo proveedor'}
+                </button>
+              </label>
+              {creandoProv ? (
+                <div className="flex flex-wrap gap-2">
+                  <input value={provNuevo.razonSocial} onChange={(e) => setProvNuevo({ ...provNuevo, razonSocial: e.target.value })}
+                    placeholder="Nombre del proveedor *" autoFocus className={`${INP} min-w-0 flex-1`} />
+                  <input value={provNuevo.telefono} onChange={(e) => setProvNuevo({ ...provNuevo, telefono: e.target.value })}
+                    placeholder="Teléfono" className={`${INP} w-32`} />
+                  <button onClick={() => crearProveedor.mutate()} disabled={!provNuevo.razonSocial.trim() || crearProveedor.isPending}
+                    className="rounded-lg bg-amber-500 px-3 py-2 text-sm font-semibold text-white hover:bg-amber-600 disabled:opacity-50">
+                    Guardar
+                  </button>
+                </div>
+              ) : (
+                <select value={proveedorId} onChange={(e) => setProveedorId(Number(e.target.value))} className={INP}>
+                  {listaProv.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.id === PROVEEDOR_DIRECTO ? `${p.razon_social} (sin proveedor)` : p.razon_social}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-500">N.º factura del proveedor</label>
+              <input value={facturaProv} onChange={(e) => setFacturaProv(e.target.value)} placeholder="Opcional" className={INP} />
+            </div>
+          </div>
+
+          {/* Contado = ya se pagó. Crédito = queda como cuenta por pagar al proveedor. */}
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-xs font-medium text-gray-500">Cómo se paga:</span>
+            <div className="flex overflow-hidden rounded-lg border border-gray-300 dark:border-gray-600">
+              {(['CONTADO', 'CREDITO'] as const).map((c) => (
+                <button key={c} onClick={() => setCondicion(c)}
+                  className={`px-3 py-1.5 text-sm font-semibold ${condicion === c ? 'bg-amber-500 text-white' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700'}`}>
+                  {c === 'CONTADO' ? 'De contado' : 'A crédito'}
+                </button>
+              ))}
+            </div>
+            {condicion === 'CREDITO' && (
+              <span className="text-xs text-amber-600">Queda como cuenta por pagar a este proveedor</span>
+            )}
+          </div>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
             <input value={termino} onChange={(e) => setTermino(e.target.value)} placeholder="Buscar producto para agregar…" className={`${INP} pl-9`} autoFocus />
@@ -174,6 +304,16 @@ export default function ComprasPage() {
               <div><span className="text-gray-500">Proveedor:</span> <span className="font-medium">{detalle.data.compra.proveedor}</span></div>
               <div><span className="text-gray-500">Estado:</span> <span className="font-medium">{detalle.data.compra.estado}</span></div>
               <div><span className="text-gray-500">Tasa de la entrada:</span> <span className="font-medium">{formatearBs(detalle.data.compra.tasa_cambio)}/$</span></div>
+              {detalle.data.compra.numero_factura_proveedor && (
+                <div><span className="text-gray-500">Factura del proveedor:</span> <span className="font-medium">{detalle.data.compra.numero_factura_proveedor}</span></div>
+              )}
+              <div>
+                <span className="text-gray-500">Pago:</span>{' '}
+                <span className="font-medium">{detalle.data.compra.condicion_pago === 'CREDITO' ? 'A crédito' : 'De contado'}</span>
+                {aNumero(detalle.data.compra.saldo_pendiente) > 0 && (
+                  <span className="ml-1 font-medium text-amber-600">· debes {formatearUSD(detalle.data.compra.saldo_pendiente)}</span>
+                )}
+              </div>
             </div>
             <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
               <table className="w-full text-sm">

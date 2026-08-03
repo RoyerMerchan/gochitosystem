@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   ShoppingCart, Package, TrendingUp, Receipt, Info, ChevronDown, ChevronUp,
-  CreditCard, ArrowDown,
+  CreditCard, ArrowDown, PackagePlus,
 } from 'lucide-react';
 import { obtenerPaginado, obtener } from '@/lib/axios';
 import { Card } from '@/components/ui/Feedback';
@@ -39,6 +39,17 @@ interface TotalesVenta {
   cobrado_bs: string;
   credito_usd: string;
   utilidad_usd: string;
+}
+
+/** Lo que salió en mercancía en el período, con el mismo corte que las ventas. */
+interface Compras {
+  entradas: string;
+  compras_usd: string;
+  compras_bs: string;
+  proveedores: string;
+  por_pagar_usd: string;
+  top_proveedor: string | null;
+  top_proveedor_usd: string;
 }
 
 interface Cartera {
@@ -98,6 +109,12 @@ export default function DashboardPage() {
   const cartera = useQuery({
     queryKey: ['dashboard', 'cartera'],
     queryFn: () => obtener<Cartera>('/reportes/dashboard/cartera'),
+  });
+
+  /** Compras del período: la plata que salió en mercancía, para leerla junto a lo que entró. */
+  const compras = useQuery({
+    queryKey: ['dashboard', 'compras', periodo],
+    queryFn: () => obtener<Compras>(`/reportes/dashboard/compras?periodo=${periodo}`),
   });
 
   const t = totales.data;
@@ -278,6 +295,54 @@ export default function DashboardPage() {
           </div>
         </Card>
       </div>
+
+      {/*
+        Compras: la plata que SALIÓ en mercancía. Va en su propia tarjeta y no en
+        la grilla de KPIs para que no se lea como si fuera ingreso.
+      */}
+      {(() => {
+        const c = compras.data;
+        const gasto = aNumero(c?.compras_usd ?? 0);
+        const porPagar = aNumero(c?.por_pagar_usd ?? 0);
+        return (
+          <Card className={cn(compras.isFetching && 'opacity-60')}>
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-gray-500">
+                  <PackagePlus className="h-3.5 w-3.5" /> Compras de mercancía {leyenda}
+                </p>
+                <p className="mt-1 text-3xl font-bold tabular-nums text-blue-600">{formatearUSD(gasto)}</p>
+                {muestraBs && <p className="text-sm tabular-nums text-gray-500">{formatearBs(c?.compras_bs ?? 0)}</p>}
+                <p className="text-xs text-gray-400">
+                  {formatearNumero(aNumero(c?.entradas ?? 0), 0)} entrada(s) ·{' '}
+                  {formatearNumero(aNumero(c?.proveedores ?? 0), 0)} proveedor(es)
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-6">
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-gray-500">Le compras más a</p>
+                  <p className="mt-1 max-w-[14rem] truncate text-lg font-bold">{c?.top_proveedor ?? '—'}</p>
+                  {c?.top_proveedor && (
+                    <p className="text-xs text-gray-400">{formatearUSD(c.top_proveedor_usd)} {leyenda}</p>
+                  )}
+                </div>
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-gray-500">Le debes a proveedores</p>
+                  <p className={cn('mt-1 text-xl font-bold tabular-nums', porPagar > 0 ? 'text-amber-600' : 'text-gray-400')}>
+                    {formatearUSD(porPagar)}
+                  </p>
+                  <p className="text-xs text-gray-400">de las entradas a crédito</p>
+                </div>
+                <Link to="/compras"
+                  className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">
+                  Ingresar mercancía
+                </Link>
+              </div>
+            </div>
+          </Card>
+        );
+      })()}
 
       {/* Cómo se arman los números, con las cifras reales del período. */}
       <Card>

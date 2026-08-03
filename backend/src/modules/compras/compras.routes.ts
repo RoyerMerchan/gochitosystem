@@ -32,6 +32,7 @@ const esquemaCompra = z.object({
 const esquemaListadoCompras = esquemaPaginacion.extend({
   desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   hasta: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  proveedorId: z.coerce.number().int().positive().optional(),
 });
 
 router.get('/', requierePermiso('compras.ver'), validar({ query: esquemaListadoCompras }), async (req, res, next) => {
@@ -39,7 +40,8 @@ router.get('/', requierePermiso('compras.ver'), validar({ query: esquemaListadoC
     const q = datosQuery<z.infer<typeof esquemaListadoCompras>>(req);
     const p = normalizarPaginacion(q);
     const u = usuarioActual(req);
-    const { datos, total } = await compras.listar(u.sucursalId, p.desplazamiento, p.limite, { desde: q.desde, hasta: q.hasta });
+    const { datos, total } = await compras.listar(u.sucursalId, p.desplazamiento, p.limite,
+      { desde: q.desde, hasta: q.hasta, proveedorId: q.proveedorId });
     enviarOk(res, datos, construirMeta(p, total));
   } catch (e) { next(e); }
 });

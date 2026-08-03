@@ -289,6 +289,112 @@ router.get('/clientes/con-deuda', requierePermiso('reportes.ver'), async (_req, 
 });
 
 // ---------------------------------------------------------------------------
+// COMPRAS: entrada de mercancia (que se compro, a quien y cuanto costo)
+// ---------------------------------------------------------------------------
+
+/**
+ * Rango sobre compras RECIBIDAS. Se filtra por `fecha_recepcion` (cuando entro
+ * la mercancia de verdad), no por la fecha de la factura del proveedor, que
+ * puede venir de otro dia. Las ANULADAS quedan fuera: esa mercancia se revirtio.
+ */
+function rangoCompras(q: Rango, sucursalId: number): { where: string; params: (string | number)[] } {
+  const cond = ["c.estado <> 'ANULADA'", 'c.sucursal_id = ?'];
+  const params: (string | number)[] = [sucursalId];
+  if (q.desde) { cond.push('c.fecha_recepcion >= ?'); params.push(`${q.desde} 00:00:00`); }
+  if (q.hasta) { cond.push('c.fecha_recepcion <= ?'); params.push(`${q.hasta} 23:59:59`); }
+  return { where: cond.join(' AND '), params };
+}
+
+/** Una fila por entrada de mercancia: cuando, a quien y cuanto. */
+router.get('/compras/detalle', requierePermiso('reportes.ver'), validar({ query: esquemaRangoDetalle }), async (req, res, next) => {
+  try {
+    const q = datosQuery<Rango>(req);
+    const { where, params } = rangoCompras(q, usuarioActual(req).sucursalId);
+    enviarOk(res, await queryReporte(
+      `SELECT TO_CHAR(c.fecha_recepcion, 'YYYY-MM-DD HH24:MI') AS fecha,
+              c.prefijo || c.numero AS numero, p.razon_social AS proveedor,
+              COALESCE(c.numero_factura_proveedor, '') AS factura,
+              CASE WHEN c.condicion_pago = 'CREDITO' THEN 'A credito' ELSE 'De contado' END AS condicion,
+              c.total_usd, c.total_bs,
+              c.saldo_pendiente AS por_pagar_usd, u.nombre_completo AS registro
+         FROM compras c
+         JOIN proveedores p ON p.id = c.proveedor_id
+         JOIN usuarios u ON u.id = c.usuario_id
+        WHERE ${where} ORDER BY c.fecha_recepcion DESC LIMIT ?`,
+      [...params, q.limite],
+    ));
+  } catch (e) { next(e); }
+});
+
+/** Cuanto se le compro a cada proveedor en el periodo. */
+router.get('/compras/por-proveedor', requierePermiso('reportes.ver'), validar({ query: esquemaRango }), async (req, res, next) => {
+  try {
+    const q = datosQuery<Rango>(req);
+    const { where, params } = rangoCompras(q, usuarioActual(req).sucursalId);
+    enviarOk(res, await queryReporte(
+      `SELECT p.razon_social AS proveedor, COUNT(*) AS entradas,
+              SUM(c.total_usd) AS total_usd, SUM(c.total_bs) AS total_bs,
+              SUM(c.saldo_pendiente) AS por_pagar_usd,
+              TO_CHAR(MAX(c.fecha_recepcion), 'YYYY-MM-DD') AS ultima_compra
+         FROM compras c JOIN proveedores p ON p.id = c.proveedor_id
+        WHERE ${where}
+        GROUP BY p.id, p.razon_social ORDER BY SUM(c.total_usd) DESC LIMIT ?`,
+      [...params, q.limite],
+    ));
+  } catch (e) { next(e); }
+});
+
+/** Compra por dia: cuanta plata se fue en mercancia cada dia. */
+router.get('/compras/por-dia', requierePermiso('reportes.ver'), validar({ query: esquemaRangoDetalle }), async (req, res, next) => {
+  try {
+    const q = datosQuery<Rango>(req);
+    const { where, params } = rangoCompras(q, usuarioActual(req).sucursalId);
+    enviarOk(res, await queryReporte(
+      `SELECT TO_CHAR(DATE(c.fecha_recepcion), 'YYYY-MM-DD') AS dia,
+              COUNT(*) AS entradas, SUM(c.total_usd) AS total_usd, SUM(c.total_bs) AS total_bs
+         FROM compras c WHERE ${where}
+        GROUP BY 1 ORDER BY 1 DESC LIMIT ?`,
+      [...params, q.limite],
+    ));
+  } catch (e) { next(e); }
+});
+
+/** Que productos se compraron y a que costo, con su proveedor. */
+router.get('/compras/productos', requierePermiso('reportes.ver'), validar({ query: esquemaRango }), async (req, res, next) => {
+  try {
+    const q = datosQuery<Rango>(req);
+    const { where, params } = rangoCompras(q, usuarioActual(req).sucursalId);
+    enviarOk(res, await queryReporte(
+      `SELECT cd.descripcion AS producto, p.razon_social AS proveedor,
+              SUM(cd.cantidad) AS cantidad, SUM(cd.total_linea) AS costo_usd,
+              SUM(cd.total_linea * c.tasa_cambio) AS costo_bs
+         FROM compra_detalle cd
+         JOIN compras c ON c.id = cd.compra_id
+         JOIN proveedores p ON p.id = c.proveedor_id
+        WHERE ${where}
+        GROUP BY cd.producto_id, cd.descripcion, p.id, p.razon_social
+        ORDER BY SUM(cd.total_linea) DESC LIMIT ?`,
+      [...params, q.limite],
+    ));
+  } catch (e) { next(e); }
+});
+
+/** Cuentas por pagar: lo que se le debe a cada proveedor por compras a credito. */
+router.get('/compras/por-pagar', requierePermiso('reportes.ver'), async (req, res, next) => {
+  try {
+    enviarOk(res, await queryReporte(
+      `SELECT p.razon_social AS proveedor, COUNT(*) AS documentos,
+              SUM(c.saldo_pendiente) AS saldo_usd,
+              TO_CHAR(MIN(c.fecha_recepcion), 'YYYY-MM-DD') AS mas_antigua
+         FROM compras c JOIN proveedores p ON p.id = c.proveedor_id
+        WHERE c.sucursal_id = ? AND c.estado <> 'ANULADA' AND c.saldo_pendiente > 0
+        GROUP BY p.id, p.razon_social ORDER BY SUM(c.saldo_pendiente) DESC`,
+      [usuarioActual(req).sucursalId],
+    ));
+  } catch (e) { next(e); }
+});
+
+// ---------------------------------------------------------------------------
 // INVENTARIO: entradas / salidas / existencias
 // ---------------------------------------------------------------------------
 router.get('/inventario/movimientos', requierePermiso('reportes.ver'), validar({ query: esquemaRango.extend({ signo: z.enum(['1', '-1']).optional() }) }), async (req, res, next) => {
@@ -373,6 +479,40 @@ router.get('/dashboard/ventas', requierePermiso('dashboard.ver'), validar({ quer
       cobrado_usd: (Number(v.contado_usd) + Number(a.abonos_usd)).toFixed(2),
       cobrado_bs: (Number(v.contado_bs) + Number(a.abonos_bs)).toFixed(2),
     });
+  } catch (e) { next(e); }
+});
+
+/**
+ * Lo que se gasto en mercancia en el periodo, con el mismo corte que las ventas
+ * para poder ponerlos lado a lado. Va aparte y no dentro de /dashboard/ventas
+ * para no mezclar la plata que entra con la que sale.
+ *
+ * Los Bs salen de `total_bs`, que la entrada congelo con su propia tasa.
+ */
+router.get('/dashboard/compras', requierePermiso('dashboard.ver'), validar({ query: esquemaPeriodo }), async (req, res, next) => {
+  try {
+    const { periodo } = datosQuery<{ periodo: Periodo }>(req);
+    const u = usuarioActual(req);
+    const filas = await queryReporte<Record<string, string>>(
+      `SELECT COUNT(*) AS entradas,
+              COALESCE(SUM(c.total_usd), 0) AS compras_usd,
+              COALESCE(SUM(c.total_bs), 0) AS compras_bs,
+              COUNT(DISTINCT c.proveedor_id) AS proveedores,
+              COALESCE(SUM(c.saldo_pendiente), 0) AS por_pagar_usd
+         FROM compras c
+        WHERE c.sucursal_id = ? AND c.estado <> 'ANULADA' ${CORTE_PERIODO[periodo]('c.fecha_recepcion')}`,
+      [u.sucursalId],
+    );
+    // Al proveedor que mas se le compro en el periodo: sirve para saber de quien
+    // depende el surtido sin abrir el reporte completo.
+    const top = await queryReporte<Record<string, string>>(
+      `SELECT p.razon_social AS proveedor, SUM(c.total_usd) AS total_usd
+         FROM compras c JOIN proveedores p ON p.id = c.proveedor_id
+        WHERE c.sucursal_id = ? AND c.estado <> 'ANULADA' ${CORTE_PERIODO[periodo]('c.fecha_recepcion')}
+        GROUP BY p.id, p.razon_social ORDER BY SUM(c.total_usd) DESC LIMIT 1`,
+      [u.sucursalId],
+    );
+    enviarOk(res, { periodo, ...filas[0], top_proveedor: top[0]?.proveedor ?? null, top_proveedor_usd: top[0]?.total_usd ?? '0' });
   } catch (e) { next(e); }
 });
 

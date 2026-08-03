@@ -76,6 +76,44 @@ const REPORTES: { grupo: string; items: DefReporte[] }[] = [
     ],
   },
   {
+    grupo: 'Compras',
+    items: [
+      { clave: 'compradia', titulo: 'Compras por día', url: '/reportes/compras/por-dia',
+        nota: 'Lo que salió en mercancía cada día, por fecha de recepción. No incluye entradas anuladas.',
+        columnas: [
+          { campo: 'dia', etiqueta: 'Día', tipo: 'dia' }, { campo: 'entradas', etiqueta: 'Entradas', tipo: 'cant' },
+          { campo: 'total_usd', etiqueta: 'Compras USD', tipo: 'usd' },
+          { campo: 'total_bs', etiqueta: 'Compras Bs', tipo: 'bs' }] },
+      { clave: 'compradet', titulo: 'Detalle de entradas', url: '/reportes/compras/detalle',
+        nota: 'Una fila por entrada de mercancía, con su proveedor y su factura.',
+        columnas: [
+          { campo: 'fecha', etiqueta: 'Fecha', tipo: 'fecha' }, { campo: 'numero', etiqueta: 'N.º' },
+          { campo: 'proveedor', etiqueta: 'Proveedor' }, { campo: 'factura', etiqueta: 'Factura prov.' },
+          { campo: 'condicion', etiqueta: 'Pago' },
+          { campo: 'total_usd', etiqueta: 'Total USD', tipo: 'usd' },
+          { campo: 'total_bs', etiqueta: 'Total Bs', tipo: 'bs' },
+          { campo: 'por_pagar_usd', etiqueta: 'Por pagar USD', tipo: 'usd' },
+          { campo: 'registro', etiqueta: 'Registró' }] },
+      // Sin columna de Bs: acumular varios días mezcla tasas distintas y el total
+      // no significaría nada. El USD sí es comparable entre fechas.
+      { clave: 'compraprov', titulo: 'Compras por proveedor', url: '/reportes/compras/por-proveedor', columnas: [
+        { campo: 'proveedor', etiqueta: 'Proveedor' }, { campo: 'entradas', etiqueta: 'Entradas', tipo: 'cant' },
+        { campo: 'total_usd', etiqueta: 'Total USD', tipo: 'usd' },
+        { campo: 'por_pagar_usd', etiqueta: 'Por pagar USD', tipo: 'usd' },
+        { campo: 'ultima_compra', etiqueta: 'Última compra', tipo: 'dia' }] },
+      { clave: 'compraprod', titulo: 'Productos comprados', url: '/reportes/compras/productos', columnas: [
+        { campo: 'producto', etiqueta: 'Producto' }, { campo: 'proveedor', etiqueta: 'Proveedor' },
+        { campo: 'cantidad', etiqueta: 'Cantidad', tipo: 'cant' },
+        { campo: 'costo_usd', etiqueta: 'Costo USD', tipo: 'usd' }] },
+      { clave: 'porpagar', titulo: 'Cuentas por pagar', url: '/reportes/compras/por-pagar',
+        nota: 'Saldo vivo con cada proveedor. No depende del período: es lo que debes ahora.',
+        columnas: [
+          { campo: 'proveedor', etiqueta: 'Proveedor' }, { campo: 'documentos', etiqueta: 'Entradas', tipo: 'cant' },
+          { campo: 'saldo_usd', etiqueta: 'Saldo USD', tipo: 'usd' },
+          { campo: 'mas_antigua', etiqueta: 'Más antigua', tipo: 'dia' }] },
+    ],
+  },
+  {
     grupo: 'Clientes',
     items: [
       { clave: 'compradores', titulo: 'Más compradores', url: '/reportes/clientes/mas-compradores', columnas: [

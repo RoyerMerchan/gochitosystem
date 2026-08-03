@@ -55,7 +55,9 @@ export const PERMISOS = {
 
   // Terceros
   proveedoresVer: 'proveedores.ver',
-  proveedoresGestionar: 'proveedores.gestionar',
+  proveedoresCrear: 'proveedores.crear',
+  proveedoresEditar: 'proveedores.editar',
+  proveedoresEliminar: 'proveedores.eliminar',
   clientesVer: 'clientes.ver',
   clientesCrear: 'clientes.crear',
   clientesEditar: 'clientes.editar',

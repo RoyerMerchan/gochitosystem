@@ -212,17 +212,19 @@ function tasaMilesimasASql(tasaMilesimas: bigint): string {
 
 export async function listar(
   sucursalId: number, desplazamiento: number, limite: number,
-  filtros: { desde?: string; hasta?: string } = {},
+  filtros: { desde?: string; hasta?: string; proveedorId?: number } = {},
 ): Promise<{ datos: unknown[]; total: number }> {
   const cond = ['c.sucursal_id = ?'];
   const params: (string | number)[] = [sucursalId];
   if (filtros.desde) { cond.push('c.fecha_recepcion >= ?'); params.push(`${filtros.desde} 00:00:00`); }
   if (filtros.hasta) { cond.push('c.fecha_recepcion <= ?'); params.push(`${filtros.hasta} 23:59:59`); }
+  if (filtros.proveedorId) { cond.push('c.proveedor_id = ?'); params.push(filtros.proveedorId); }
   const where = `WHERE ${cond.join(' AND ')}`;
 
   const datos = await query(
     `SELECT c.id, c.prefijo || c.numero AS numero, c.fecha_recepcion, c.total_usd, c.total_bs,
-            c.estado, c.condicion_pago, c.saldo_pendiente, p.razon_social AS proveedor
+            c.estado, c.condicion_pago, c.saldo_pendiente, c.numero_factura_proveedor,
+            c.proveedor_id, p.razon_social AS proveedor
        FROM compras c JOIN proveedores p ON p.id = c.proveedor_id
       ${where} ORDER BY c.id DESC LIMIT ? OFFSET ?`,
     [...params, limite, desplazamiento],
