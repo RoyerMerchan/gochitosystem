@@ -1,15 +1,18 @@
 /** Cartera: clientes con deuda, antigüedad de saldos y registro de abonos. */
 import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { CreditCard, HandCoins, Eye, Search } from 'lucide-react';
+import { CreditCard, HandCoins, Eye, Search, FileText } from 'lucide-react';
 import { obtener, crear } from '@/lib/axios';
 import { ErrorApi } from '@/lib/errores';
 import { Card, Cargando, EmptyState, Badge } from '@/components/ui/Feedback';
 import { Modal } from '@/components/ui/Modal';
 import { toast } from '@/store/toastStore';
 import { useTasaStore } from '@/store/tasaStore';
+import { useAuthStore } from '@/store/authStore';
 import { formatearUSD, formatearBs, formatearFecha, formatearCantidad, aNumero, usdABs } from '@/lib/formato';
 import { METODOS_PAGO } from '@/features/pos/metodosPago';
+import { NEGOCIO } from '@/config/negocio';
+import { imprimirEstadoCuenta, abrirVentanaImpresion } from '@/features/creditos/estadoCuentaImpreso';
 
 interface FilaCartera {
   cliente_id: number; nombre: string; documento: string | null;
@@ -33,7 +36,12 @@ interface ResumenCuenta {
   deuda_desde: string | null;
 }
 
-interface EstadoCuenta { resumen: ResumenCuenta; creditos: Deuda[] }
+interface Abono {
+  id: number; numero: string; fecha: string; moneda: string;
+  monto_moneda: string; tasa_aplicada: string; monto_usd: string; estado: string;
+}
+
+interface EstadoCuenta { resumen: ResumenCuenta; creditos: Deuda[]; abonos: Abono[] }
 
 interface DetalleVenta {
   venta: { numero: string; fecha: string; total_usd: string; tasa_cambio: string };
@@ -54,6 +62,7 @@ export default function CreditosPage() {
   const qc = useQueryClient();
   const tasa = useTasaStore((s) => s.tasa);
   const tasaNum = tasa ? Number(tasa.tasa) : 0;
+  const usuario = useAuthStore((s) => s.usuario);
 
   const [abonar, setAbonar] = useState<FilaCartera | null>(null);
   const [metodoId, setMetodoId] = useState(3);
@@ -155,6 +164,36 @@ export default function CreditosPage() {
     setAbonar(c); setSeleccion([]); setMontoManual(null); setReferencia('');
     setMonedaEntrada(metodo.moneda); setVerProductos(null); setVerDetalle(false);
   };
+  /**
+   * Estado de cuenta imprimible (PDF) de una persona. Sirve desde la lista y
+   * desde el modal: si la cuenta ya se pidió, sale de la caché de React Query.
+   */
+  const imprimirCuenta = async (c: FilaCartera) => {
+    const ventana = abrirVentanaImpresion();
+    try {
+      const datos = await qc.fetchQuery({
+        queryKey: ['estado-cuenta', c.cliente_id],
+        queryFn: () => obtener<EstadoCuenta>(`/creditos/cliente/${c.cliente_id}`),
+      });
+      const pendientes = datos.creditos.filter(
+        (d) => ESTADOS_VIVOS.includes(d.estado) && aNumero(d.saldo_usd) > 0,
+      );
+      imprimirEstadoCuenta({
+        negocio: NEGOCIO,
+        cliente: { nombre: c.nombre, documento: c.documento },
+        fecha: new Date(),
+        tasa: tasaNum,
+        deudas: pendientes,
+        totalUsd: aNumero(datos.resumen?.deuda_usd ?? c.saldo_usd),
+        abonos: (datos.abonos ?? []).slice(0, 10),
+        atendidoPor: usuario?.nombreCompleto ?? null,
+      }, ventana);
+    } catch {
+      ventana?.close();
+      toast.error('No se pudo generar el estado de cuenta');
+    }
+  };
+
   /** Al cerrar el desglose se vuelve a cobrar la cuenta completa. */
   const alternarDetalle = () => {
     setVerDetalle((v) => {
@@ -266,9 +305,15 @@ export default function CreditosPage() {
                       </span>
                     ))}
                   </div>
-                  <button onClick={() => abrir(c)} className="flex w-full items-center justify-center gap-1 rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold text-white active:bg-green-700">
-                    <HandCoins className="h-4 w-4" /> Abonar
-                  </button>
+                  <div className="flex gap-2">
+                    <button onClick={() => abrir(c)} className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold text-white active:bg-green-700">
+                      <HandCoins className="h-4 w-4" /> Abonar
+                    </button>
+                    <button onClick={() => imprimirCuenta(c)} title="Estado de cuenta en PDF"
+                      className="flex items-center justify-center gap-1 rounded-lg border border-gray-300 px-3 py-2 text-sm font-semibold active:bg-gray-100 dark:border-gray-600 dark:active:bg-gray-700">
+                      <FileText className="h-4 w-4" /> PDF
+                    </button>
+                  </div>
                 </li>
               ))}
             </ul>
@@ -306,10 +351,16 @@ export default function CreditosPage() {
                       {formatearUSD(c.saldo_usd)}
                       <span className="block text-xs font-normal text-gray-400">{tasaNum > 0 ? formatearBs(usdABs(c.saldo_usd, tasaNum)) : '—'}</span>
                     </td>
-                    <td className="p-3 text-right">
-                      <button onClick={() => abrir(c)} className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-1 text-xs font-semibold text-white hover:bg-green-700">
-                        <HandCoins className="h-3.5 w-3.5" /> Abonar
-                      </button>
+                    <td className="p-3">
+                      <div className="flex items-center justify-end gap-1">
+                        <button onClick={() => imprimirCuenta(c)} title="Estado de cuenta en PDF"
+                          className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-amber-600 dark:hover:bg-gray-700">
+                          <FileText className="h-4 w-4" />
+                        </button>
+                        <button onClick={() => abrir(c)} className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-1 text-xs font-semibold text-white hover:bg-green-700">
+                          <HandCoins className="h-3.5 w-3.5" /> Abonar
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -356,6 +407,12 @@ export default function CreditosPage() {
               </span>
               <span className="tabular-nums">{tasaNum > 0 ? formatearBs(usdABs(deudaTotal, tasaNum)) : 'sin tasa de hoy'}</span>
             </div>
+            {abonar && (
+              <button onClick={() => imprimirCuenta(abonar)}
+                className="mt-2 flex items-center gap-1 text-xs font-semibold text-amber-600 hover:underline">
+                <FileText className="h-3.5 w-3.5" /> Estado de cuenta en PDF
+              </button>
+            )}
             {montoUsd > 0 && !excede && (
               <p className="mt-2 border-t border-gray-200 pt-2 text-sm dark:border-gray-700">
                 {quedaCuenta <= 0

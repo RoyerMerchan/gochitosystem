@@ -12,6 +12,7 @@ import { ModalCobro, type LineaPagoEnvio } from '@/features/pos/ModalCobro';
 import { ModalCliente } from '@/features/pos/ModalCliente';
 import { METODOS_PAGO } from '@/features/pos/metodosPago';
 import { imprimirTicket } from '@/features/pos/ticket';
+import { NEGOCIO } from '@/config/negocio';
 import { useTasaStore } from '@/store/tasaStore';
 import { useAuthStore } from '@/store/authStore';
 import { toast } from '@/store/toastStore';
@@ -19,13 +20,6 @@ import { formatearUSD, formatearBs, formatearCantidad, usdABs } from '@/lib/form
 import { totalLineaUsd, impuestoDocumentoUsd } from '@/lib/calculoVenta';
 import { useDebounce } from '@/hooks/useDebounce';
 import type { Producto } from '@/lib/tipos';
-
-const NEGOCIO = {
-  nombre: 'MINI MARKET LOS GOCHITOS',
-  direccion: 'Residencia Kimura, Torre 10 Apto. PBD',
-  telefono: '0412-6837180',
-  pie: 'Gracias por su compra',
-};
 
 interface RespuestaVenta {
   numero: string;
