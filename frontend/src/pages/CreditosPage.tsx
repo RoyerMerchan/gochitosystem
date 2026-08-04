@@ -41,7 +41,15 @@ interface Abono {
   monto_moneda: string; tasa_aplicada: string; monto_usd: string; estado: string;
 }
 
-interface EstadoCuenta { resumen: ResumenCuenta; creditos: Deuda[]; abonos: Abono[] }
+/** Producto de una compra fiada, atado al crédito que la representa. */
+interface RenglonDeuda {
+  credito_id: number; linea: number; descripcion: string;
+  cantidad: string; precio_venta_unitario: string; total_linea: string;
+}
+
+interface EstadoCuenta {
+  resumen: ResumenCuenta; creditos: Deuda[]; renglones: RenglonDeuda[]; abonos: Abono[];
+}
 
 interface DetalleVenta {
   venta: { numero: string; fecha: string; total_usd: string; tasa_cambio: string };
@@ -184,6 +192,7 @@ export default function CreditosPage() {
         fecha: new Date(),
         tasa: tasaNum,
         deudas: pendientes,
+        renglones: datos.renglones ?? [],
         totalUsd: aNumero(datos.resumen?.deuda_usd ?? c.saldo_usd),
         abonos: (datos.abonos ?? []).slice(0, 10),
         atendidoPor: usuario?.nombreCompleto ?? null,

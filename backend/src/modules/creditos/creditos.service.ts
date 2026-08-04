@@ -82,7 +82,20 @@ export async function estadoCuenta(clienteId: Id): Promise<unknown> {
     [clienteId],
   );
 
-  return { cliente, resumen, creditos, abonos };
+  // Que se llevo en cada compra que todavia debe. Va en el estado de cuenta para
+  // que el cliente vea el detalle sin tener que abrir factura por factura (y sin
+  // pedir permiso de ventas, que es de otro modulo).
+  const renglones = await query(
+    `SELECT cr.id AS credito_id, vd.linea, vd.descripcion, vd.cantidad,
+            vd.precio_venta_unitario, vd.total_linea
+       FROM creditos cr
+       JOIN venta_detalle vd ON vd.venta_id = cr.venta_id
+      WHERE cr.cliente_id = ? AND cr.estado IN ('PENDIENTE','PARCIAL','VENCIDO') AND cr.saldo_usd > 0
+      ORDER BY cr.fecha_emision, cr.id, vd.linea`,
+    [clienteId],
+  );
+
+  return { cliente, resumen, creditos, renglones, abonos };
 }
 
 export interface AbonoEntrada {

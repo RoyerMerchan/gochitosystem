@@ -10,17 +10,27 @@
  */
 import {
   formatearUSD, formatearBs, formatearFecha, formatearFechaHora, formatearNumero,
-  usdABs, aNumero,
+  formatearCantidad, usdABs, aNumero,
 } from '@/lib/formato';
 import type { DatosNegocio } from '@/config/negocio';
 
 export interface DeudaImpresa {
+  id: number;
   documento: string | null;
   fecha_emision: string;
   fecha_vencimiento: string;
   dias_mora: number;
   monto_original_usd: string;
   saldo_usd: string;
+}
+
+/** Un producto de la compra que originó una deuda. */
+export interface RenglonImpreso {
+  credito_id: number;
+  descripcion: string;
+  cantidad: string;
+  precio_venta_unitario: string;
+  total_linea: string;
 }
 
 export interface AbonoImpreso {
@@ -39,6 +49,8 @@ export interface DatosEstadoCuenta {
   /** Tasa de HOY: la deuda vive en USD y en Bs vale lo que valga hoy. */
   tasa: number;
   deudas: DeudaImpresa[];
+  /** Productos de cada compra, para que el cliente vea qué se llevó. */
+  renglones?: RenglonImpreso[];
   totalUsd: number;
   /** Ultimos pagos recibidos, para que el cliente vea que se los abonaron. */
   abonos?: AbonoImpreso[];
@@ -72,18 +84,43 @@ export function imprimirEstadoCuenta(d: DatosEstadoCuenta, ventana?: Window | nu
   const hayTasa = d.tasa > 0;
   const bs = (usd: unknown) => (hayTasa ? formatearBs(usdABs(usd, d.tasa)) : '—');
 
+  // Productos agrupados por la deuda a la que pertenecen.
+  const porCredito = new Map<number, RenglonImpreso[]>();
+  for (const r of d.renglones ?? []) {
+    const lista = porCredito.get(r.credito_id);
+    if (lista) lista.push(r);
+    else porCredito.set(r.credito_id, [r]);
+  }
+
   const filas = d.deudas
     .map((x) => {
       const mora = x.dias_mora > 0;
+      const productos = porCredito.get(x.id) ?? [];
+      // El detalle va como sub-fila de la compra: se lee "esta factura trae esto".
+      const detalle = productos.length === 0 ? '' : `
+      <tr class="det">
+        <td colspan="6">
+          <table class="items">
+            ${productos.map((p) => `
+            <tr>
+              <td class="cant">${formatearCantidad(p.cantidad)} ×</td>
+              <td>${esc(p.descripcion)}</td>
+              <td class="r gris">${formatearUSD(p.precio_venta_unitario)} c/u</td>
+              <td class="r">${formatearUSD(p.total_linea)}</td>
+            </tr>`).join('')}
+          </table>
+        </td>
+      </tr>`;
+
       return `
-      <tr class="${mora ? 'mora' : ''}">
+      <tr class="doc ${mora ? 'mora' : ''}">
         <td>${esc(x.documento ?? 'Crédito')}</td>
         <td>${formatearFecha(x.fecha_emision)}</td>
         <td>${formatearFecha(x.fecha_vencimiento)}${mora ? `<span class="chip">${x.dias_mora} d. de mora</span>` : ''}</td>
         <td class="r">${formatearUSD(x.monto_original_usd)}</td>
         <td class="r b">${formatearUSD(x.saldo_usd)}</td>
         <td class="r gris">${bs(x.saldo_usd)}</td>
-      </tr>`;
+      </tr>${detalle}`;
     })
     .join('');
 
@@ -119,7 +156,14 @@ export function imprimirEstadoCuenta(d: DatosEstadoCuenta, ventana?: Window | nu
          border-bottom:1px solid #bbb; padding:5px 4px; text-align:left; }
     th.r { text-align:right; }
     td { padding:5px 4px; border-bottom:1px solid #eee; vertical-align:top; }
+    /* La compra y su detalle son un bloque: la linea fuerte va al cerrar el grupo. */
+    tr.doc td { border-bottom:1px solid #f2f2f2; font-weight:500; }
     tr.mora td { background:#fff6f6; }
+    /* Productos de la compra: sangrados y en gris, para que se lean como detalle. */
+    tr.det > td { padding:2px 4px 8px 16px; border-bottom:1px solid #ddd; }
+    table.items { width:100%; border-collapse:collapse; }
+    table.items td { border:0; padding:1px 4px; font-size:11px; color:#444; }
+    table.items td.cant { width:46px; text-align:right; color:#888; white-space:nowrap; }
     .chip { display:inline-block; margin-left:5px; padding:0 5px; border-radius:8px;
             background:#fee2e2; color:#b91c1c; font-size:10px; font-weight:600; }
     .total { margin-top:10px; display:flex; justify-content:flex-end; }
