@@ -34,6 +34,9 @@ const esquemaAbono = z.object({
   metodoPagoId: z.coerce.number().int().positive(),
   moneda: z.enum(['USD', 'VES']),
   montoMoneda: decimal.refine((v) => Number(v) > 0, 'El monto debe ser mayor que cero'),
+  // Lo que el cliente entrego. Si es mayor que montoMoneda, la diferencia es su
+  // vuelto. Ausente = pago justo.
+  montoRecibidoMoneda: decimal.optional(),
   // Facturas marcadas en pantalla; vacio = aplicar a toda la deuda en FIFO.
   creditoIds: z.array(z.coerce.number().int().positive()).max(200).optional(),
   referencia: z.string().trim().max(60).optional(),

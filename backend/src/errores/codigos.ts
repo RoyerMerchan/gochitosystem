@@ -324,6 +324,15 @@ export const CODIGOS_ERROR = {
     mensaje: 'El abono supera el saldo pendiente del cliente.',
     httpStatus: 422,
   },
+  RECIBIDO_MENOR_AL_ABONO: {
+    mensaje: 'Lo recibido del cliente no puede ser menor que el abono.',
+    httpStatus: 422,
+  },
+  VUELTO_SOLO_EN_EFECTIVO: {
+    mensaje:
+      'Ese metodo de pago no admite vuelto. Registre el monto exacto de la deuda o cobre en efectivo.',
+    httpStatus: 422,
+  },
   ABONO_YA_ANULADO: {
     mensaje: 'El abono ya fue anulado.',
     httpStatus: 409,

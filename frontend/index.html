@@ -15,6 +15,26 @@
     <meta name="apple-mobile-web-app-title" content="Los Gochitos" />
     <title>Los Gochitos — POS</title>
     <script>
+      /*
+       * Atrapa el evento de "se puede instalar" ANTES de que cargue la app.
+       *
+       * El navegador lo dispara al terminar de cargar la pagina, y el navbar de
+       * React monta mucho despues (login + rutas en diferido). Si nadie lo
+       * escucha aca, el evento se pierde para siempre y el boton de instalar no
+       * aparece nunca. Se guarda en window y se avisa, para que el boton lo tome
+       * cuando monte, llegue temprano o tarde.
+       */
+      window.__promptInstalar = null;
+      window.addEventListener('beforeinstallprompt', function (e) {
+        e.preventDefault();
+        window.__promptInstalar = e;
+        window.dispatchEvent(new Event('gochito:instalable'));
+      });
+      window.addEventListener('appinstalled', function () {
+        window.__promptInstalar = null;
+      });
+    </script>
+    <script>
       // Aplica el tema guardado antes del primer pintado para evitar el parpadeo blanco.
       (function () {
         try {

@@ -976,6 +976,10 @@ CREATE TABLE abonos (
   monto_usd          DECIMAL(14,2) NOT NULL CHECK (monto_usd > 0),
   monto_aplicado_usd DECIMAL(14,2) NOT NULL DEFAULT 0 CHECK (monto_aplicado_usd >= 0),
   saldo_a_favor_usd  DECIMAL(14,2) NOT NULL DEFAULT 0 CHECK (saldo_a_favor_usd >= 0),
+  -- Vuelto: el cliente debe 9,50 y entrega un billete de 10. `monto_moneda` es lo
+  -- que se abona y queda en la gaveta; aca queda el billete completo y lo devuelto.
+  monto_recibido_moneda DECIMAL(18,4),
+  cambio_moneda         DECIMAL(18,4),
   referencia         VARCHAR(60),
   observaciones      VARCHAR(255),
   estado             estado_abono NOT NULL DEFAULT 'APLICADO',
@@ -1004,6 +1008,16 @@ ALTER TABLE abonos ADD CONSTRAINT fk_abonos_metodo     FOREIGN KEY (metodo_pago_
 ALTER TABLE abonos ADD CONSTRAINT fk_abonos_usuario    FOREIGN KEY (usuario_id)     REFERENCES usuarios(id)     ON DELETE RESTRICT;
 ALTER TABLE abonos ADD CONSTRAINT fk_abonos_tasa       FOREIGN KEY (tasa_cambio_id) REFERENCES tasas_cambio(id) ON DELETE RESTRICT;
 ALTER TABLE abonos ADD CONSTRAINT fk_abonos_anulado    FOREIGN KEY (anulado_por)    REFERENCES usuarios(id)     ON DELETE RESTRICT;
+
+ALTER TABLE abonos ADD CONSTRAINT ck_abonos_cambio CHECK (cambio_moneda IS NULL OR cambio_moneda >= 0);
+-- El vuelto sale del billete que el cliente puso sobre el mostrador: lo recibido es
+-- siempre lo abonado mas lo devuelto, sin holgura. Si esta cuenta no cierra, el
+-- arqueo del turno tampoco va a cerrar.
+ALTER TABLE abonos ADD CONSTRAINT ck_abonos_recibido CHECK (
+  monto_recibido_moneda IS NULL
+  OR monto_recibido_moneda = monto_moneda + COALESCE(cambio_moneda, 0)
+);
+
 CREATE TRIGGER trg_abonos_actualizado BEFORE UPDATE ON abonos FOR EACH ROW EXECUTE FUNCTION actualizar_actualizado_en();
 
 CREATE TABLE abono_aplicaciones (

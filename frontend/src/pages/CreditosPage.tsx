@@ -39,6 +39,8 @@ interface ResumenCuenta {
 interface Abono {
   id: number; numero: string; fecha: string; moneda: string;
   monto_moneda: string; tasa_aplicada: string; monto_usd: string; estado: string;
+  /** Vuelto devuelto en ese abono, en la moneda del abono. Null en los históricos. */
+  cambio_moneda: string | null;
 }
 
 /** Producto de una compra fiada, atado al crédito que la representa. */
@@ -65,6 +67,15 @@ const ESTADOS_VIVOS = ['PENDIENTE', 'PARCIAL', 'VENCIDO'];
 const pisoCentavos = (n: number) => Math.floor(n * 100 + 1e-9) / 100;
 /** Centavos hacia arriba: Bs mínimos que cubren un saldo en USD sin quedar corto. */
 const techoCentavos = (n: number) => Math.ceil(n * 100 - 1e-9) / 100;
+/**
+ * Resta en centavos enteros. `10 - 9.5` en punto flotante da 0.4999999999999996 y
+ * el vuelto se enviaría con basura decimal, rompiendo la cuenta recibido = abono +
+ * vuelto que el backend valida.
+ */
+const restarCentavos = (a: number, b: number) => Math.round(a * 100 - b * 100) / 100;
+/** Formatea un monto en la moneda en la que se entrega de verdad. */
+const formatearMoneda = (v: number | string, moneda: 'USD' | 'VES') =>
+  (moneda === 'VES' ? formatearBs(v) : formatearUSD(v));
 
 export default function CreditosPage() {
   const qc = useQueryClient();
@@ -141,23 +152,39 @@ export default function CreditosPage() {
     : pisoCentavos(aNumero(monto));
   const montoUsd = Math.abs(montoUsdCrudo - saldoObjetivo) <= 0.01 ? saldoObjetivo : montoUsdCrudo;
   const montoBs = montoUsd * tasaNum;
-  const excede = montoUsd > saldoObjetivo;
+
+  /**
+   * El cliente casi nunca entrega el monto justo: debe 9,50 y da un billete de 10.
+   * Lo que se ABONA nunca pasa de la deuda marcada; lo que sobra del billete es su
+   * vuelto y se le devuelve de la gaveta.
+   */
+  const abonoUsd = Math.min(montoUsd, saldoObjetivo);
+  const vueltoUsd = restarCentavos(montoUsd, abonoUsd);
+  const hayVuelto = vueltoUsd > 0;
+  /** De una transferencia no sale efectivo: ahí el monto tiene que ser exacto. */
+  const vueltoImposible = hayVuelto && !metodo.permiteCambio;
   /** En cuánto queda la cuenta de la persona después de este abono. */
-  const quedaCuenta = Math.max(0, deudaTotal - montoUsd);
+  const quedaCuenta = Math.max(0, deudaTotal - abonoUsd);
 
   /**
    * Lo que se envía al backend va SIEMPRE en la moneda del método de pago (es la
    * plata que entra a caja). Si se escribió en la otra moneda, se convierte acá.
    */
-  const montoEnvio = metodo.moneda === 'VES'
-    ? (enBs ? monto : techoCentavos(montoUsd * tasaNum).toFixed(2))
-    : (enBs ? montoUsd.toFixed(2) : monto);
   const monedaDistinta = metodo.moneda !== monedaEntrada;
+  const aMonedaMetodo = (usd: number) => (metodo.moneda === 'VES'
+    ? techoCentavos(usd * tasaNum)
+    : usd);
+  /** El billete completo que entra por la gaveta. */
+  const recibidoEnvio = monedaDistinta ? aMonedaMetodo(montoUsd) : aNumero(monto);
+  /** Lo que se abona: si pagó de más, exactamente lo que salda la deuda marcada. */
+  const abonoEnvio = hayVuelto ? aMonedaMetodo(saldoObjetivo) : recibidoEnvio;
+  /** El resto del billete. Se calcula por resta para que recibido = abono + vuelto. */
+  const vueltoEnvio = Math.max(0, restarCentavos(recibidoEnvio, abonoEnvio));
 
   // Previsualización: cómo caería el abono factura por factura (FIFO).
   const aplicacion = useMemo(() => {
     const mapa = new Map<number, number>();
-    let resto = montoUsd;
+    let resto = abonoUsd;
     for (const d of objetivo) {
       if (resto <= 0) break;
       const saldo = aNumero(d.saldo_usd);
@@ -166,7 +193,7 @@ export default function CreditosPage() {
       resto -= aplica;
     }
     return mapa;
-  }, [objetivo, montoUsd]);
+  }, [objetivo, abonoUsd]);
 
   const abrir = (c: FilaCartera) => {
     setAbonar(c); setSeleccion([]); setMontoManual(null); setReferencia('');
@@ -222,12 +249,18 @@ export default function CreditosPage() {
   const registrarAbono = useMutation({
     mutationFn: () => crear('/abonos', {
       clienteId: abonar!.cliente_id, metodoPagoId: metodoId, moneda: metodo.moneda,
-      montoMoneda: montoEnvio,
+      montoMoneda: abonoEnvio.toFixed(2),
+      // Solo cuando hay vuelto: sin esto el backend asume pago justo, como siempre.
+      montoRecibidoMoneda: hayVuelto ? recibidoEnvio.toFixed(2) : undefined,
       creditoIds: seleccion.length > 0 ? seleccion : undefined,
       referencia: referencia || undefined,
     }),
     onSuccess: () => {
-      toast.exito('Abono registrado');
+      // El vuelto es lo primero que el cajero necesita saber: se lo tiene que
+      // entregar al cliente que está enfrente.
+      toast.exito(hayVuelto
+        ? `Abono registrado · Entrega de vuelto ${formatearMoneda(vueltoEnvio, metodo.moneda)}`
+        : 'Abono registrado');
       qc.invalidateQueries({ queryKey: ['cartera'] });
       qc.invalidateQueries({ queryKey: ['estado-cuenta'] });
       // El abono puede saldar la venta: su badge en Ventas pasa a "Pagada".
@@ -250,7 +283,7 @@ export default function CreditosPage() {
   }, [cartera.data, busqueda]);
 
   const totalCartera = (cartera.data ?? []).reduce((a, c) => a + Number(c.saldo_usd), 0);
-  const puedeRegistrar = montoUsd > 0 && !excede && !registrarAbono.isPending
+  const puedeRegistrar = abonoUsd > 0 && !vueltoImposible && !registrarAbono.isPending
     && (!metodo.requiereReferencia || Boolean(referencia))
     // Sin tasa del día no hay conversión posible en ninguno de los dos sentidos.
     && !((enBs || metodo.moneda === 'VES') && tasaNum <= 0);
@@ -388,11 +421,15 @@ export default function CreditosPage() {
                 {seleccion.length > 0 ? `${seleccion.length} compra(s) marcada(s):` : 'Cuenta completa:'}
               </span>{' '}
               <span className="font-semibold">{formatearUSD(saldoObjetivo)}</span>
-              {excede && <p className="text-xs font-medium text-red-500">El monto supera lo que se va a pagar</p>}
+              {vueltoImposible && (
+                <p className="text-xs font-medium text-red-500">
+                  Con {metodo.nombre} no se puede dar vuelto: cobra el monto exacto o recibe en efectivo
+                </p>
+              )}
             </div>
             <button onClick={() => registrarAbono.mutate()} disabled={!puedeRegistrar}
               className="w-full shrink-0 rounded-lg bg-green-600 px-5 py-2 font-semibold text-white hover:bg-green-700 disabled:opacity-50 sm:w-auto">
-              {registrarAbono.isPending ? 'Registrando…' : `Abonar ${formatearUSD(montoUsd)}`}
+              {registrarAbono.isPending ? 'Registrando…' : `Abonar ${formatearUSD(abonoUsd)}`}
             </button>
           </div>
         }>
@@ -422,7 +459,7 @@ export default function CreditosPage() {
                 <FileText className="h-3.5 w-3.5" /> Estado de cuenta en PDF
               </button>
             )}
-            {montoUsd > 0 && !excede && (
+            {abonoUsd > 0 && (
               <p className="mt-2 border-t border-gray-200 pt-2 text-sm dark:border-gray-700">
                 {quedaCuenta <= 0
                   ? <span className="font-semibold text-green-600">Con este abono la cuenta queda en cero</span>
@@ -550,11 +587,48 @@ export default function CreditosPage() {
               </p>
               {monedaDistinta && tasaNum > 0 && montoUsd > 0 && (
                 <p className="mt-1 text-xs text-amber-600">
-                  Entra por {metodo.nombre}: se registra {metodo.moneda === 'VES' ? formatearBs(montoEnvio) : formatearUSD(montoEnvio)}
+                  Entra por {metodo.nombre}: se registra {formatearMoneda(recibidoEnvio, metodo.moneda)}
                 </p>
               )}
             </div>
           </div>
+
+          {/*
+            El cliente debe 9,50 y da un billete de 10. Lo que el cajero necesita
+            ver de un vistazo no es el abono —ese lo salda el sistema— sino cuánto
+            tiene que sacar de la gaveta para devolverle.
+          */}
+          {hayVuelto && (
+            <div className={`rounded-lg border p-3 ${vueltoImposible
+              ? 'border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-900/20'
+              : 'border-green-300 bg-green-50 dark:border-green-800 dark:bg-green-900/20'}`}>
+              {vueltoImposible ? (
+                <p className="text-sm font-medium text-red-600 dark:text-red-400">
+                  Sobran {formatearUSD(vueltoUsd)} y {metodo.nombre} no da vuelto.
+                  <span className="mt-0.5 block text-xs font-normal">
+                    De una transferencia no sale efectivo. Cobra el monto exacto
+                    ({formatearMoneda(abonoEnvio, metodo.moneda)}) o recibe en efectivo.
+                  </span>
+                </p>
+              ) : (
+                <>
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-4">
+                    <span className="text-xs font-medium uppercase tracking-wide text-green-700 dark:text-green-400">
+                      Vuelto a entregar
+                    </span>
+                    <span className="text-xl font-bold tabular-nums text-green-700 dark:text-green-400">
+                      {formatearMoneda(vueltoEnvio, metodo.moneda)}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Recibes {formatearMoneda(recibidoEnvio, metodo.moneda)} · se abonan{' '}
+                    {formatearMoneda(abonoEnvio, metodo.moneda)} ({formatearUSD(abonoUsd)})
+                    {metodo.moneda === 'VES' && <> · el vuelto son {formatearUSD(vueltoUsd)}</>}
+                  </p>
+                </>
+              )}
+            </div>
+          )}
 
           {/* Abonos parciales rápidos sobre lo marcado */}
           {saldoObjetivo > 0 && (
