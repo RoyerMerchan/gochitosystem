@@ -15,7 +15,7 @@ import { pool } from './pool';
 import { logger, describirError } from '../utils/logger';
 
 /** Resuelve la carpeta de migraciones: variable de entorno o rutas por defecto. */
-function resolverDir(dirConfigurado: string | null): string | null {
+export function resolverDir(dirConfigurado: string | null): string | null {
   const candidatos = [
     dirConfigurado,
     path.resolve(process.cwd(), 'migraciones'), // contenedor: volumen en /app/migraciones
