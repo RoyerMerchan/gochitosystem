@@ -291,6 +291,18 @@ export const CODIGOS_ERROR = {
     mensaje: 'La compra ya fue anulada.',
     httpStatus: 409,
   },
+  COMPRA_SIN_SALDO: {
+    mensaje: 'La entrada ya esta pagada: no queda saldo por pagarle al proveedor.',
+    httpStatus: 409,
+  },
+  PAGO_MAYOR_AL_SALDO: {
+    mensaje: 'El pago supera el saldo pendiente de la entrada.',
+    httpStatus: 422,
+  },
+  METODO_PAGO_NO_VALIDO: {
+    mensaje: 'Ese metodo de pago no sirve para registrar este pago.',
+    httpStatus: 422,
+  },
   DEVOLUCION_EXCEDE_VENDIDO: {
     mensaje: 'La cantidad a devolver supera la cantidad vendida pendiente de devolucion.',
     httpStatus: 422,

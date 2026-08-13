@@ -59,6 +59,30 @@ router.post('/', requierePermiso('compras.crear'), validar({ body: esquemaCompra
   } catch (e) { next(e); }
 });
 
+/**
+ * Pago (total o parcial) de una entrada a credito.
+ *
+ * Va con `compras.crear`: quien puede ingresar la mercancia a credito es quien
+ * despues le paga al proveedor; no tiene sentido pedirle otro permiso aparte.
+ */
+const esquemaPagoCompra = z.object({
+  metodoPagoId: z.coerce.number().int().positive(),
+  moneda: z.enum(['USD', 'VES']),
+  montoMoneda: decimal.refine((v) => Number(v) > 0, 'El monto debe ser mayor que cero'),
+  referencia: z.string().trim().max(60).optional(),
+  observaciones: z.string().trim().max(255).optional(),
+});
+
+router.post('/:id/pagos', requierePermiso('compras.crear'),
+  validar({ params: esquemaParamsId, body: esquemaPagoCompra }), idempotencia('compra_pagos'),
+  async (req: Request, res, next) => {
+    try {
+      const id = datosParams<{ id: number }>(req).id;
+      const r = await compras.pagar(id, datosBody(req), usuarioActual(req), req.idempotencia?.clave ?? null);
+      enviarCreado(res, r);
+    } catch (e) { next(e); }
+  });
+
 router.post('/:id/anular', requierePermiso('compras.anular'),
   validar({ params: esquemaParamsId, body: z.object({ motivo: z.string().trim().min(3).max(200) }) }), async (req, res, next) => {
     try {

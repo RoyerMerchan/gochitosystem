@@ -24,6 +24,8 @@ export interface DatosTicket {
   tasa: number;
   pagos: { metodo: string; moneda: string; monto: number }[];
   vueltoUsd?: number;
+  /** Moneda en la que se le entregó el vuelto al cliente. */
+  monedaVuelto?: 'USD' | 'VES';
 }
 
 function esc(s: string): string {
@@ -51,6 +53,19 @@ export function imprimirTicket(d: DatosTicket): void {
   const pagos = d.pagos
     .map((p) => `<tr class="det"><td>${esc(p.metodo)}</td><td class="r">${p.moneda === 'USD' ? formatearUSD(p.monto) : formatearBs(p.monto)}</td></tr>`)
     .join('');
+
+  /*
+    Vuelto en las dos monedas: primero lo que se entregó de verdad (por eso lleva
+    la moneda en el rótulo) y debajo su equivalente, para que el cliente pueda
+    comprobar la cuenta en la moneda que maneja.
+  */
+  const vueltoUsd = d.vueltoUsd ?? 0;
+  const enBs = d.monedaVuelto === 'VES';
+  const vueltoBs = usdABs(vueltoUsd, d.tasa);
+  const vuelto = vueltoUsd > 0
+    ? `<tr class="det b"><td>Vuelto ${enBs ? 'Bs' : '$'}</td><td class="r">${enBs ? formatearBs(vueltoBs) : formatearUSD(vueltoUsd)}</td></tr>
+       <tr class="det"><td>Equivale a</td><td class="r">${enBs ? formatearUSD(vueltoUsd) : formatearBs(vueltoBs)}</td></tr>`
+    : '';
 
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>Ticket ${esc(d.numero)}</title>
   <style>
@@ -82,9 +97,7 @@ export function imprimirTicket(d: DatosTicket): void {
       <tr class="det"><td>Tasa</td><td class="r">Bs ${formatearNumero(d.tasa, 2)} / $</td></tr>
     </table>
     <div class="sep"></div>
-    <table>${pagos}
-      ${d.vueltoUsd && d.vueltoUsd > 0 ? `<tr class="det"><td>Vuelto</td><td class="r">${formatearUSD(d.vueltoUsd)}</td></tr>` : ''}
-    </table>
+    <table>${pagos}${vuelto}</table>
     <div class="sep"></div>
     <div class="c">${d.negocio.pie ? esc(d.negocio.pie) : 'Gracias por su compra'}</div>
     <br/>

@@ -8,7 +8,7 @@
  */
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { PackagePlus, Plus, Trash2, Search, Eye, Truck } from 'lucide-react';
+import { PackagePlus, Plus, Trash2, Search, Eye, Truck, HandCoins } from 'lucide-react';
 import { obtenerPaginado, obtener, crear } from '@/lib/axios';
 import { ErrorApi } from '@/lib/errores';
 import { Card, Cargando, Badge, EmptyState } from '@/components/ui/Feedback';
@@ -17,7 +17,8 @@ import { FiltroPeriodo } from '@/components/ui/FiltroPeriodo';
 import { toast } from '@/store/toastStore';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useTasaStore } from '@/store/tasaStore';
-import { formatearUSD, formatearBs, formatearFecha, aNumero, usdABs, redondearCentavos } from '@/lib/formato';
+import { formatearUSD, formatearBs, formatearFecha, formatearFechaHora, aNumero, usdABs, redondearCentavos } from '@/lib/formato';
+import { METODOS_PAGO } from '@/features/pos/metodosPago';
 import type { Producto } from '@/lib/tipos';
 
 interface EntradaFila {
@@ -34,10 +35,20 @@ interface DetalleCompra {
     condicion_pago: string; saldo_pendiente: string;
   };
   renglones: Array<{ linea: number; descripcion: string; cantidad: string; costo_unitario_neto: string; total_linea: string }>;
+  /** Lo que ya se le pagó al proveedor por esta entrada. */
+  pagos: Array<{
+    id: number; fecha: string; moneda: 'USD' | 'VES'; monto_moneda: string;
+    monto_usd: string; referencia: string | null; metodo_nombre: string; usuario: string;
+  }>;
 }
 
 /** Proveedor generico que usa el sistema cuando no se indica ninguno. */
 const PROVEEDOR_DIRECTO = 1;
+
+/** Centavos hacia abajo: el backend convierte Bs -> USD truncando, aquí igual. */
+const pisoCentavos = (n: number) => Math.floor(n * 100 + 1e-9) / 100;
+/** Centavos hacia arriba: Bs mínimos que cubren un saldo en USD sin quedar corto. */
+const techoCentavos = (n: number) => Math.ceil(n * 100 - 1e-9) / 100;
 
 export default function ComprasPage() {
   const qc = useQueryClient();
@@ -62,6 +73,18 @@ export default function ComprasPage() {
   // Alta rápida de proveedor, para no tener que salir a otra pantalla.
   const [creandoProv, setCreandoProv] = useState(false);
   const [provNuevo, setProvNuevo] = useState({ razonSocial: '', telefono: '' });
+  /*
+    Pago al proveedor de una entrada que quedó a crédito. La entrada se marca
+    pagada sola cuando el saldo llega a cero: no hay un "check" aparte, porque el
+    estado tiene que salir de la plata que se le entregó, no de un botón.
+  */
+  const [pagando, setPagando] = useState<EntradaFila | null>(null);
+  const [pagoMetodoId, setPagoMetodoId] = useState(2); // Efectivo USD
+  /** Moneda en la que se ESCRIBE el monto; puede no ser la del método. */
+  const [pagoMoneda, setPagoMoneda] = useState<'USD' | 'VES'>('USD');
+  /** null = pagar todo el saldo; string = el usuario escribió otro monto. */
+  const [pagoMonto, setPagoMonto] = useState<string | null>(null);
+  const [pagoRef, setPagoRef] = useState('');
 
   const paramsE = new URLSearchParams({ limite: '100' });
   if (desde) paramsE.set('desde', desde);
@@ -107,6 +130,67 @@ export default function ComprasPage() {
     },
     onError: (e) => toast.error(e instanceof ErrorApi ? e.message : 'No se pudo crear el proveedor'),
   });
+
+  /* ---------------------------------------------------------------- */
+  /* Pago de una entrada a crédito                                     */
+  /* ---------------------------------------------------------------- */
+  const metodoPago = METODOS_PAGO.find((m) => m.id === pagoMetodoId)!;
+  const saldoPagar = aNumero(pagando?.saldo_pendiente ?? 0);
+  const pagoEnBs = pagoMoneda === 'VES';
+  // Sugerido: pagar todo lo que se debe, en la moneda en la que se escribe.
+  const pagoSugerido = pagoEnBs && tasaNum > 0
+    ? techoCentavos(saldoPagar * tasaNum).toFixed(2)
+    : saldoPagar.toFixed(2);
+  const montoPago = pagoMonto ?? pagoSugerido;
+  // Equivalente en USD con la aritmética del backend: piso + tolerancia de 1 centavo.
+  const pagoUsdCrudo = pagoEnBs
+    ? (tasaNum > 0 ? pisoCentavos(aNumero(montoPago) / tasaNum) : 0)
+    : pisoCentavos(aNumero(montoPago));
+  const pagoUsd = Math.abs(pagoUsdCrudo - saldoPagar) <= 0.01 ? saldoPagar : pagoUsdCrudo;
+  /** Lo que se envía va SIEMPRE en la moneda del método: es la plata que sale. */
+  const pagoEnvio = metodoPago.moneda === pagoMoneda
+    ? aNumero(montoPago)
+    : (metodoPago.moneda === 'VES' ? techoCentavos(pagoUsd * tasaNum) : pagoUsd);
+  const quedaDebiendo = Math.max(0, redondearCentavos(saldoPagar - pagoUsd));
+  /** Al proveedor no se le puede pagar más de lo que se le debe por esta entrada. */
+  const pagoExcede = pagoUsd > saldoPagar;
+
+  const registrarPago = useMutation({
+    mutationFn: () => crear<{ pagada: boolean; saldo_pendiente: string }>(
+      `/compras/${pagando!.id}/pagos`,
+      {
+        metodoPagoId: pagoMetodoId,
+        moneda: metodoPago.moneda,
+        montoMoneda: pagoEnvio.toFixed(2),
+        referencia: pagoRef.trim() || undefined,
+      },
+    ),
+    onSuccess: (r) => {
+      toast.exito(r.pagada
+        ? 'Entrada pagada · no le queda saldo a este proveedor'
+        : `Pago registrado · queda debiendo ${formatearUSD(r.saldo_pendiente)}`);
+      qc.invalidateQueries({ queryKey: ['compras'] });
+      qc.invalidateQueries({ queryKey: ['compra-detalle'] });
+      // El pago baja la cuenta por pagar del proveedor y, si fue en efectivo,
+      // saca plata de la gaveta: el turno abierto queda desactualizado.
+      qc.invalidateQueries({ queryKey: ['proveedores'] });
+      qc.invalidateQueries({ queryKey: ['dashboard'] });
+      qc.invalidateQueries({ queryKey: ['turno-activo'] });
+      cerrarPago();
+    },
+    onError: (e) => toast.error(e instanceof ErrorApi ? e.message : 'No se pudo registrar el pago'),
+  });
+
+  const abrirPago = (c: EntradaFila) => {
+    setPagando(c);
+    setPagoMetodoId(2); setPagoMoneda('USD'); setPagoMonto(null); setPagoRef('');
+  };
+  const cerrarPago = () => { setPagando(null); setPagoMonto(null); setPagoRef(''); };
+
+  const puedePagar = pagoUsd > 0 && !pagoExcede && !registrarPago.isPending
+    && (!metodoPago.requiereReferencia || Boolean(pagoRef.trim()))
+    // Sin tasa del día no hay conversión posible en ninguno de los dos sentidos.
+    && !((pagoEnBs || metodoPago.moneda === 'VES') && tasaNum <= 0);
 
   const cerrar = () => {
     setModal(false); setRenglones([]); setTermino('');
@@ -181,16 +265,37 @@ export default function ComprasPage() {
                     {formatearUSD(c.total_usd)}
                     <span className="block text-xs text-gray-400">{formatearBs(c.total_bs)}</span>
                   </td>
+                  {/*
+                    Dos cosas distintas: la mercancía entró (estado) y al proveedor
+                    se le pagó o no (saldo). Una entrada a crédito ya pagada tiene
+                    que decirlo, que es lo que antes no se podía ni registrar.
+                  */}
                   <td className="p-3 text-center">
                     {c.estado === 'ANULADA' ? <Badge color="rojo">Anulada</Badge> : <Badge color="verde">Ingresada</Badge>}
-                    {c.estado !== 'ANULADA' && aNumero(c.saldo_pendiente) > 0 && (
-                      <span className="mt-1 block text-xs font-medium text-amber-600">Debes {formatearUSD(c.saldo_pendiente)}</span>
-                    )}
+                    {c.estado !== 'ANULADA' && (aNumero(c.saldo_pendiente) > 0 ? (
+                      <span className="mt-1 block text-xs font-medium text-amber-600">
+                        Debes {formatearUSD(c.saldo_pendiente)}
+                        {tasaNum > 0 && (
+                          <span className="block font-normal text-gray-400">{formatearBs(usdABs(c.saldo_pendiente, tasaNum))}</span>
+                        )}
+                      </span>
+                    ) : c.condicion_pago === 'CREDITO' && (
+                      <span className="mt-1 block text-xs font-medium text-green-600">Pagada</span>
+                    ))}
                   </td>
                   <td className="p-3 text-right">
-                    <button onClick={() => setVer(c)} className="text-gray-400 hover:text-amber-600" title="Ver productos">
-                      <Eye className="h-4 w-4" />
-                    </button>
+                    <div className="flex items-center justify-end gap-1">
+                      {c.estado !== 'ANULADA' && aNumero(c.saldo_pendiente) > 0 && (
+                        <button onClick={() => abrirPago(c)}
+                          className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-1 text-xs font-semibold text-white hover:bg-green-700"
+                          title="Registrar el pago al proveedor">
+                          <HandCoins className="h-3.5 w-3.5" /> Pagar
+                        </button>
+                      )}
+                      <button onClick={() => setVer(c)} className="p-1.5 text-gray-400 hover:text-amber-600" title="Ver productos">
+                        <Eye className="h-4 w-4" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -310,11 +415,41 @@ export default function ComprasPage() {
               <div>
                 <span className="text-gray-500">Pago:</span>{' '}
                 <span className="font-medium">{detalle.data.compra.condicion_pago === 'CREDITO' ? 'A crédito' : 'De contado'}</span>
-                {aNumero(detalle.data.compra.saldo_pendiente) > 0 && (
+                {aNumero(detalle.data.compra.saldo_pendiente) > 0 ? (
                   <span className="ml-1 font-medium text-amber-600">· debes {formatearUSD(detalle.data.compra.saldo_pendiente)}</span>
+                ) : detalle.data.compra.condicion_pago === 'CREDITO' && (
+                  <span className="ml-1 font-medium text-green-600">· pagada</span>
                 )}
               </div>
             </div>
+
+            {/* Lo que ya se le entregó al proveedor por esta entrada. */}
+            {detalle.data.pagos.length > 0 && (
+              <div className="rounded-lg border border-gray-200 p-2 dark:border-gray-700">
+                <p className="mb-1 text-[11px] uppercase tracking-wide text-gray-400">Pagos al proveedor</p>
+                <ul className="divide-y divide-gray-100 text-xs dark:divide-gray-700">
+                  {detalle.data.pagos.map((p) => (
+                    <li key={p.id} className="flex flex-wrap items-baseline justify-between gap-x-3 py-1">
+                      <span>
+                        {formatearFechaHora(p.fecha)} · {p.metodo_nombre}
+                        {p.referencia && <span className="text-gray-400"> · ref. {p.referencia}</span>}
+                      </span>
+                      <span className="tabular-nums font-medium">
+                        {p.moneda === 'VES' ? formatearBs(p.monto_moneda) : formatearUSD(p.monto_moneda)}
+                        {p.moneda === 'VES' && <span className="ml-1 font-normal text-gray-400">({formatearUSD(p.monto_usd)})</span>}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {ver && aNumero(detalle.data.compra.saldo_pendiente) > 0 && detalle.data.compra.estado !== 'ANULADA' && (
+              <button onClick={() => { const c = ver; setVer(null); abrirPago(c); }}
+                className="flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700">
+                <HandCoins className="h-4 w-4" /> Pagarle al proveedor
+              </button>
+            )}
             <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 text-xs uppercase text-gray-500 dark:bg-gray-700/50">
@@ -352,6 +487,121 @@ export default function ComprasPage() {
             </div>
           </div>
         )}
+      </Modal>
+
+      {/* Pago al proveedor: se puede pagar todo o una parte, en $ o en Bs. */}
+      <Modal abierto={pagando !== null} onCerrar={cerrarPago}
+        titulo={`Pagar entrada ${pagando?.numero ?? ''}`} ancho="md"
+        pie={
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-sm">
+              {pagoExcede ? (
+                <span className="font-medium text-red-500">
+                  No le puedes pagar más de lo que le debes ({formatearUSD(saldoPagar)})
+                </span>
+              ) : quedaDebiendo > 0 ? (
+                <>Queda debiendo <span className="font-semibold">{formatearUSD(quedaDebiendo)}</span></>
+              ) : (
+                <span className="font-semibold text-green-600">Con esto la entrada queda pagada</span>
+              )}
+            </div>
+            <button onClick={() => registrarPago.mutate()} disabled={!puedePagar}
+              className="w-full shrink-0 rounded-lg bg-green-600 px-5 py-2 font-semibold text-white hover:bg-green-700 disabled:opacity-50 sm:w-auto">
+              {registrarPago.isPending ? 'Registrando…' : `Pagar ${formatearUSD(pagoUsd)}`}
+            </button>
+          </div>
+        }>
+        <div className="space-y-4">
+          <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-900/40">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4">
+              <span className="text-xs font-medium uppercase tracking-wide text-gray-500">Le debes a {pagando?.proveedor}</span>
+              <span className="text-xl font-bold tabular-nums">{formatearUSD(saldoPagar)}</span>
+            </div>
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4 text-xs text-gray-500">
+              <span>Entrada del {pagando ? formatearFecha(pagando.fecha_recepcion) : ''} · total {formatearUSD(pagando?.total_usd ?? 0)}</span>
+              <span className="tabular-nums">{tasaNum > 0 ? formatearBs(usdABs(saldoPagar, tasaNum)) : 'sin tasa de hoy'}</span>
+            </div>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-500">Cómo le pagas</label>
+              <select value={pagoMetodoId}
+                onChange={(e) => {
+                  const id = Number(e.target.value);
+                  setPagoMetodoId(id);
+                  setPagoMoneda(METODOS_PAGO.find((m) => m.id === id)?.moneda ?? 'USD');
+                  setPagoMonto(null);
+                }} className={INP}>
+                {METODOS_PAGO.filter((m) => !m.esCredito).map((m) => (
+                  <option key={m.id} value={m.id}>{m.nombre} ({m.moneda})</option>
+                ))}
+              </select>
+              {metodoPago.permiteCambio && (
+                <p className="mt-1 text-xs text-gray-400">Sale de la caja: baja el efectivo esperado del turno.</p>
+              )}
+            </div>
+            <div>
+              <label className="mb-1 flex items-center justify-between text-xs font-medium text-gray-500">
+                <span>Monto</span>
+                {pagoMonto !== null && (
+                  <button onClick={() => setPagoMonto(null)} className="text-amber-600 hover:underline">Pagar todo</button>
+                )}
+              </label>
+              <div className="flex gap-2">
+                {/* Se escribe en $ o en Bs; abajo se ve siempre la conversión. */}
+                <div className="flex overflow-hidden rounded-lg border border-gray-300 dark:border-gray-600">
+                  {(['USD', 'VES'] as const).map((m) => (
+                    <button key={m} onClick={() => { setPagoMoneda(m); setPagoMonto(null); }}
+                      disabled={m === 'VES' && tasaNum <= 0}
+                      className={`px-3 py-2 text-sm font-bold disabled:opacity-40 ${pagoMoneda === m ? 'bg-amber-500 text-white' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700'}`}>
+                      {m === 'USD' ? '$' : 'Bs'}
+                    </button>
+                  ))}
+                </div>
+                <input type="number" step="0.01" min="0" value={montoPago}
+                  onChange={(e) => setPagoMonto(e.target.value)}
+                  onFocus={(e) => e.currentTarget.select()}
+                  className={`${INP} min-w-0 flex-1`} placeholder="0.00" />
+              </div>
+              <p className="mt-1 text-xs text-gray-400">
+                {tasaNum > 0
+                  ? `${formatearUSD(pagoUsd)} · ${formatearBs(usdABs(pagoUsd, tasaNum))} (tasa ${formatearBs(tasaNum)}/$)`
+                  : 'No hay tasa registrada hoy'}
+              </p>
+              {metodoPago.moneda !== pagoMoneda && tasaNum > 0 && pagoUsd > 0 && (
+                <p className="mt-1 text-xs text-amber-600">
+                  Sale por {metodoPago.nombre}: se registra{' '}
+                  {metodoPago.moneda === 'VES' ? formatearBs(pagoEnvio) : formatearUSD(pagoEnvio)}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Pagos parciales rápidos */}
+          {saldoPagar > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {[0.25, 0.5, 0.75, 1].map((f) => {
+                const usd = f === 1 ? saldoPagar : pisoCentavos(saldoPagar * f);
+                const valor = pagoEnBs && tasaNum > 0 ? techoCentavos(usd * tasaNum).toFixed(2) : usd.toFixed(2);
+                return (
+                  <button key={f} onClick={() => setPagoMonto(f === 1 ? null : valor)}
+                    className="rounded-lg border border-gray-300 px-3 py-1 text-xs font-semibold hover:border-amber-400 hover:bg-amber-50 dark:border-gray-600 dark:hover:bg-amber-900/20">
+                    {f === 1 ? 'Todo' : `${f * 100} %`} · {formatearUSD(usd)}
+                    {pagoEnBs && tasaNum > 0 && <span className="ml-1 text-gray-400">({formatearBs(valor)})</span>}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {metodoPago.requiereReferencia && (
+            <div>
+              <label className="mb-1 block text-xs font-medium text-gray-500">Referencia</label>
+              <input value={pagoRef} onChange={(e) => setPagoRef(e.target.value)} className={INP} placeholder="N.º de referencia" />
+            </div>
+          )}
+        </div>
       </Modal>
     </div>
   );

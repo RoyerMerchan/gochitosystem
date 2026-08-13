@@ -66,6 +66,9 @@ export function ModalCobro({ abierto, totalUsd, tasa, onCerrar, onConfirmar, pro
   const cubierto = pagadoUsd + creditoUsd;
   const faltante = Math.max(0, totalUsd - cubierto);
   const vuelto = Math.max(0, pagadoUsd - (totalUsd - creditoUsd));
+  /** El mismo vuelto en bolívares: el cajero paga con lo que tenga en la gaveta. */
+  const vueltoBs = usdABs(vuelto, tasa);
+  const hayVuelto = vuelto > 0.005;
 
   const agregarLinea = (metodo: MetodoPago) => {
     // Por defecto, el monto sugerido cubre el faltante en la moneda del metodo.
@@ -116,9 +119,13 @@ export function ModalCobro({ abierto, totalUsd, tasa, onCerrar, onConfirmar, pro
           <div className="text-sm">
             {faltante > 0.005 ? (
               <span className="font-medium text-amber-600">Faltan {formatearUSD(faltante)}</span>
-            ) : vuelto > 0.005 ? (
-              <span className="font-medium text-blue-600">
-                Vuelto {formatearUSD(vuelto)} / {formatearBs(usdABs(vuelto, tasa))}
+            ) : hayVuelto ? (
+              // Los dos montos, y en negrita el que se va a entregar de verdad.
+              <span className="text-blue-600">
+                Vuelto{' '}
+                <span className={monedaVuelto === 'USD' ? 'font-bold' : ''}>{formatearUSD(vuelto)}</span>
+                {' / '}
+                <span className={monedaVuelto === 'VES' ? 'font-bold' : ''}>{formatearBs(vueltoBs)}</span>
               </span>
             ) : (
               <span className="font-medium text-green-600">Pago completo</span>
@@ -194,21 +201,37 @@ export function ModalCobro({ abierto, totalUsd, tasa, onCerrar, onConfirmar, pro
         ))}
       </div>
 
-      {vuelto > 0.005 && (
-        <div className="mt-3 flex items-center gap-2 text-sm">
-          <span className="text-gray-500">Dar vuelto en:</span>
-          <button
-            onClick={() => setMonedaVuelto('VES')}
-            className={`rounded px-3 py-1 ${monedaVuelto === 'VES' ? 'bg-amber-500 text-white' : 'bg-gray-100 dark:bg-gray-700'}`}
-          >
-            Bs
-          </button>
-          <button
-            onClick={() => setMonedaVuelto('USD')}
-            className={`rounded px-3 py-1 ${monedaVuelto === 'USD' ? 'bg-amber-500 text-white' : 'bg-gray-100 dark:bg-gray-700'}`}
-          >
-            USD
-          </button>
+      {/*
+        Vuelto: el mismo monto en las dos monedas, siempre a la vista. Son $ 0,83 o
+        Bs 152,40 y el cajero elige con qué se lo devuelve; lo que toque es lo que
+        sale de la gaveta y lo que descuenta el arqueo.
+      */}
+      {hayVuelto && (
+        <div className="mt-3 rounded-lg border border-blue-300 bg-blue-50 p-3 dark:border-blue-800 dark:bg-blue-900/20">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-4">
+            <span className="text-xs font-medium uppercase tracking-wide text-blue-700 dark:text-blue-300">
+              Vuelto a entregar
+            </span>
+            <span className="text-xl font-bold tabular-nums text-blue-700 dark:text-blue-300">
+              {monedaVuelto === 'USD' ? formatearUSD(vuelto) : formatearBs(vueltoBs)}
+            </span>
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            {([
+              ['USD', 'En dólares', formatearUSD(vuelto)],
+              ['VES', 'En bolívares', formatearBs(vueltoBs)],
+            ] as const).map(([m, etiqueta, monto]) => (
+              <button key={m} onClick={() => setMonedaVuelto(m)}
+                className={`rounded-lg border px-3 py-2 text-left ${monedaVuelto === m
+                  ? 'border-blue-500 bg-white shadow-sm dark:bg-gray-800'
+                  : 'border-gray-200 bg-white/50 opacity-70 hover:opacity-100 dark:border-gray-700 dark:bg-gray-800/40'}`}>
+                <span className="block text-[11px] uppercase tracking-wide text-gray-500">
+                  {etiqueta}{monedaVuelto === m && ' · se entrega'}
+                </span>
+                <span className="block text-base font-bold tabular-nums">{monto}</span>
+              </button>
+            ))}
+          </div>
         </div>
       )}
     </Modal>

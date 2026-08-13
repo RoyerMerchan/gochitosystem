@@ -127,7 +127,11 @@ export default function PosPage() {
       });
       toast.exito(`Venta ${venta.numero} registrada · ${formatearUSD(venta.total_usd)}`);
       if (Number(venta.vuelto_usd) > 0) {
-        toast.info(`Vuelto: ${formatearUSD(venta.vuelto_usd)}`);
+        // Las dos monedas: el cajero tiene que sacar de la gaveta una u otra.
+        const vueltoBs = usdABs(venta.vuelto_usd, tasaNum);
+        toast.info(monedaVuelto === 'VES'
+          ? `Vuelto: ${formatearBs(vueltoBs)} (${formatearUSD(venta.vuelto_usd)})`
+          : `Vuelto: ${formatearUSD(venta.vuelto_usd)} (${formatearBs(vueltoBs)})`);
       }
       // Imprime el ticket.
       imprimirTicket({
@@ -145,6 +149,7 @@ export default function PosPage() {
           return { metodo: m?.nombre ?? 'Pago', moneda: m?.moneda ?? 'USD', monto: Number(p.montoMoneda) };
         }),
         vueltoUsd: Number(venta.vuelto_usd),
+        monedaVuelto,
       });
       carrito.limpiar();
       setCobrando(false);

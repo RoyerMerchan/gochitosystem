@@ -12,15 +12,19 @@ import {
   query, queryOne, ejecutar, insertar, withTransaction, type Ejecutor,
 } from '../../database/pool';
 import {
-  aCantidad, aUnitario, cantidadASql, unitarioASql, centavosASql,
+  aCentavos, aCantidad, aUnitario, cantidadASql, unitarioASql, centavosASql,
   multiplicarPorCantidad, dividirRedondeando, sumar, aTasa,
 } from '../../utils/dinero';
-import { aTasaCambio, usdABs, bsASql } from '../../utils/moneda';
+import {
+  aTasaCambio, usdABs, bsASql, aMontoMoneda, montoMonedaASql, montoMonedaAUsdPiso,
+  usdAMontoMoneda,
+} from '../../utils/moneda';
 import { siguienteConsecutivo } from '../../utils/consecutivos';
 import {
   TIPO_MOVIMIENTO_INVENTARIO, DOCUMENTO_TIPO_MOVIMIENTO, SIGNO_MOVIMIENTO_INVENTARIO,
   ESTADO_COMPRA, CONDICION_PAGO, TIPO_DOCUMENTO,
 } from '../../config/constantes';
+import { registrarMovimiento, turnoActivoDeUsuario } from '../caja/caja.service';
 import type { Id, UsuarioAutenticado } from '../../tipos/comunes';
 
 export interface RenglonCompraEntrada {
@@ -241,14 +245,194 @@ export async function detalle(id: number, sucursalId: number): Promise<unknown> 
   );
   if (!compra) throw new NoEncontrado('COMPRA_NO_ENCONTRADA');
   const renglones = await query(`SELECT * FROM compra_detalle WHERE compra_id = ? ORDER BY linea`, [id]);
-  return { compra, renglones };
+  // Lo que ya se le pago al proveedor por esta entrada, para que el saldo que se
+  // muestra tenga de donde salir a la vista.
+  const pagos = await query(
+    `SELECT cp.id, cp.fecha, cp.moneda, cp.monto_moneda, cp.tasa_aplicada, cp.monto_usd,
+            cp.referencia, mp.nombre AS metodo_nombre, u.nombre_completo AS usuario
+       FROM compra_pagos cp
+       JOIN metodos_pago mp ON mp.id = cp.metodo_pago_id
+       JOIN usuarios u ON u.id = cp.usuario_id
+      WHERE cp.compra_id = ? AND cp.estado = 'APLICADO'
+      ORDER BY cp.fecha`,
+    [id],
+  );
+  return { compra, renglones, pagos };
+}
+
+export interface PagoCompraEntrada {
+  metodoPagoId: Id;
+  /** Moneda en la que sale la plata. Debe ser la del metodo de pago. */
+  moneda: 'USD' | 'VES';
+  montoMoneda: string;
+  referencia?: string;
+  observaciones?: string;
+}
+
+/**
+ * Tolerancia de cierre: 1 centavo de USD.
+ *
+ * Pagandole al proveedor en Bs, dividir por la tasa casi nunca cae exacto sobre el
+ * saldo en USD. Sin tolerancia la entrada queda debiendo $ 0,01 imposibles de pagar
+ * —o rechaza el pago completo por un centavo—. La misma regla que en los abonos.
+ */
+const TOLERANCIA_CIERRE = 1n;
+
+/**
+ * Le paga (total o parcialmente) una entrada de mercancia al proveedor.
+ *
+ * Una entrada a credito abria `compras.saldo_pendiente` y ahi se quedaba: no habia
+ * forma de registrar que se le pago, asi que la entrada seguia diciendo "Debes $ X"
+ * para siempre. Esto es el espejo del abono del cliente, con la plata al reves:
+ *
+ *   - baja `compras.saldo_pendiente` (la entrada queda pagada cuando llega a 0),
+ *   - baja la cuenta por pagar del proveedor,
+ *   - si se paga en efectivo, saca la plata de la gaveta con su movimiento de caja
+ *     para que el arqueo del turno cuadre.
+ */
+export async function pagar(
+  compraId: number,
+  entrada: PagoCompraEntrada,
+  usuario: UsuarioAutenticado,
+  idempotencyKey: string | null,
+): Promise<{
+  id: Id; compra_id: number; moneda: string; monto_moneda: string;
+  monto_usd: string; saldo_pendiente: string; pagada: boolean;
+}> {
+  return withTransaction(async (cx) => {
+    const compra = await queryOne<{
+      id: number; estado: string; proveedor_id: number; prefijo: string; numero: number;
+      moneda_pago: 'USD' | 'VES'; tasa_cambio: string; total_pagado_moneda: string;
+      saldo_pendiente: string;
+    }>(
+      `SELECT id, estado, proveedor_id, prefijo, numero, moneda_pago, tasa_cambio,
+              total_pagado_moneda, saldo_pendiente
+         FROM compras WHERE id = ? AND sucursal_id = ? LIMIT 1 FOR UPDATE`,
+      [compraId, usuario.sucursalId], cx,
+    );
+    if (!compra) throw new NoEncontrado('COMPRA_NO_ENCONTRADA');
+    if (compra.estado === ESTADO_COMPRA.ANULADA) throw new Conflicto('COMPRA_YA_ANULADA');
+
+    const saldo = aCentavos(compra.saldo_pendiente);
+    if (saldo <= 0n) throw new Conflicto('COMPRA_SIN_SALDO');
+
+    // Metodo de pago: de aca sale si la plata pasa por la gaveta.
+    const metodo = await queryOne<{
+      moneda: 'USD' | 'VES'; requiere_referencia: boolean;
+      afecta_caja_efectivo: boolean; es_no_es_cobro: boolean; esta_activo: boolean;
+    }>(
+      `SELECT moneda, requiere_referencia, afecta_caja_efectivo, es_no_es_cobro, esta_activo
+         FROM metodos_pago WHERE id = ? AND eliminado_en IS NULL`,
+      [entrada.metodoPagoId], cx,
+    );
+    if (!metodo || !metodo.esta_activo) throw new NoEncontrado('NO_ENCONTRADO');
+    // "Credito (fiado)" no mueve plata: es justamente lo que se esta pagando.
+    if (metodo.es_no_es_cobro) throw new ReglaNegocio('METODO_PAGO_NO_VALIDO');
+    if (metodo.moneda !== entrada.moneda) throw new ReglaNegocio('MONEDA_NO_COINCIDE');
+    if (metodo.requiere_referencia && !entrada.referencia?.trim()) {
+      throw new ReglaNegocio('REFERENCIA_REQUERIDA');
+    }
+
+    // Tasa del dia para valorar el pago. Pagando en Bs es obligatoria; en dolares
+    // no hace falta convertir nada y sirve la tasa congelada de la entrada.
+    const tasaFila = await queryOne<{ tasa: string }>(
+      `SELECT tasa FROM tasas_cambio WHERE fecha = CURRENT_DATE AND eliminado_en IS NULL LIMIT 1`,
+      [], cx,
+    );
+    if (!tasaFila && entrada.moneda === 'VES') throw new ReglaNegocio('SIN_TASA_DEL_DIA');
+    const tasa = tasaFila?.tasa ?? compra.tasa_cambio;
+    const tasaEsc = aTasaCambio(tasa);
+
+    const montoMonedaEsc = aMontoMoneda(entrada.montoMoneda);
+    // Piso, igual que en los abonos: nunca se da por pagado mas de lo que cubre la
+    // plata que salio de verdad.
+    let montoUsd = montoMonedaAUsdPiso(montoMonedaEsc, entrada.moneda, tasaEsc);
+    if (montoUsd <= 0n) throw new ReglaNegocio('MONTO_INVALIDO');
+
+    if (montoUsd > saldo) {
+      if (montoUsd - saldo > TOLERANCIA_CIERRE) throw new ReglaNegocio('PAGO_MAYOR_AL_SALDO');
+      montoUsd = saldo; // diferencia de redondeo de la tasa: se toma como pago exacto
+    } else if (saldo - montoUsd <= TOLERANCIA_CIERRE) {
+      montoUsd = saldo; // cierra la entrada en vez de dejar 0,01 de deuda fantasma
+    }
+
+    // Efectivo: la plata sale de la gaveta, asi que exige turno abierto.
+    const turno = metodo.afecta_caja_efectivo
+      ? await turnoActivoDeUsuario(usuario.id, usuario.sucursalId)
+      : null;
+    if (metodo.afecta_caja_efectivo && !turno) throw new Conflicto('CAJA_NO_ABIERTA');
+
+    const pagoId = await insertar(
+      `INSERT INTO compra_pagos
+        (compra_id, sucursal_id, turno_caja_id, metodo_pago_id, usuario_id, moneda,
+         monto_moneda, tasa_aplicada, monto_usd, referencia, observaciones,
+         estado, clave_idempotencia)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'APLICADO', ?)`,
+      [
+        compraId, usuario.sucursalId, turno?.id ?? null, entrada.metodoPagoId, usuario.id,
+        entrada.moneda, montoMonedaASql(montoMonedaEsc), tasa, centavosASql(montoUsd),
+        entrada.referencia?.trim() ?? null, entrada.observaciones?.trim() ?? null, idempotencyKey,
+      ],
+      cx,
+    );
+
+    const saldoNuevo = saldo - montoUsd;
+    // `total_pagado_moneda` lleva lo pagado EN LA MONEDA DE LA ENTRADA: si se paga
+    // en la otra, se convierte, para que la columna signifique una sola cosa.
+    const pagadoEnMonedaCompra = compra.moneda_pago === entrada.moneda
+      ? montoMonedaEsc
+      : usdAMontoMoneda(montoUsd, compra.moneda_pago, tasaEsc);
+    await ejecutar(
+      `UPDATE compras SET saldo_pendiente = ?, total_pagado_moneda = total_pagado_moneda + ? WHERE id = ?`,
+      [centavosASql(saldoNuevo), montoMonedaASql(pagadoEnMonedaCompra), compraId], cx,
+    );
+
+    // Cuenta por pagar del proveedor.
+    await ejecutar(
+      `UPDATE proveedores SET saldo_actual = GREATEST(0, saldo_actual - ?) WHERE id = ?`,
+      [centavosASql(montoUsd), compra.proveedor_id], cx,
+    );
+
+    // Movimiento de caja: la plata sale de la gaveta y baja lo esperado al cierre.
+    if (turno) {
+      const concepto = `Pago entrada ${compra.prefijo}${compra.numero}`;
+      await registrarMovimiento(
+        cx, turno.id, usuario.sucursalId, 'EGRESO', -1, entrada.moneda,
+        montoMonedaASql(montoMonedaEsc), tasa, centavosASql(montoUsd),
+        concepto, usuario.id, entrada.metodoPagoId, 'MANUAL', compraId,
+      );
+      if (entrada.moneda === 'USD') {
+        await ejecutar(
+          `UPDATE turnos_caja SET total_egresos_usd = total_egresos_usd + ?, esperado_usd = esperado_usd - ? WHERE id = ?`,
+          [centavosASql(montoUsd), centavosASql(montoUsd), turno.id], cx,
+        );
+      } else {
+        const bs = dividirRedondeando(montoMonedaEsc, 100n); // escala 4 -> 2
+        await ejecutar(
+          `UPDATE turnos_caja SET total_egresos_bs = total_egresos_bs + ?, esperado_bs = esperado_bs - ? WHERE id = ?`,
+          [bsASql(bs), bsASql(bs), turno.id], cx,
+        );
+      }
+    }
+
+    return {
+      id: pagoId,
+      compra_id: compraId,
+      moneda: entrada.moneda,
+      monto_moneda: montoMonedaASql(montoMonedaEsc),
+      monto_usd: centavosASql(montoUsd),
+      saldo_pendiente: centavosASql(saldoNuevo),
+      pagada: saldoNuevo <= 0n,
+    };
+  });
 }
 
 /** Anula una compra recibida: revierte stock y cuenta por pagar (reversion documental). */
 export async function anular(id: number, sucursalId: number, usuario: UsuarioAutenticado, motivo: string): Promise<void> {
   await withTransaction(async (cx) => {
-    const compra = await queryOne<{ id: number; estado: string; proveedor_id: number; condicion_pago: string; total_usd: string }>(
-      `SELECT id, estado, proveedor_id, condicion_pago, total_usd FROM compras WHERE id = ? AND sucursal_id = ? LIMIT 1 FOR UPDATE`,
+    const compra = await queryOne<{ id: number; estado: string; proveedor_id: number; condicion_pago: string; total_usd: string; saldo_pendiente: string }>(
+      `SELECT id, estado, proveedor_id, condicion_pago, total_usd, saldo_pendiente
+         FROM compras WHERE id = ? AND sucursal_id = ? LIMIT 1 FOR UPDATE`,
       [id, sucursalId], cx,
     );
     if (!compra) throw new NoEncontrado('COMPRA_NO_ENCONTRADA');
@@ -289,15 +473,19 @@ export async function anular(id: number, sucursalId: number, usuario: UsuarioAut
       );
     }
 
+    // Al proveedor se le devuelve lo que TODAVIA se le debe, no el total de la
+    // entrada: si ya se le habia pagado una parte, ese pago ya bajo su cuenta y
+    // restar el total otra vez lo dejaria con saldo a favor de la nada.
     if (compra.condicion_pago === CONDICION_PAGO.CREDITO) {
       await ejecutar(
         `UPDATE proveedores SET saldo_actual = GREATEST(0, saldo_actual - ?) WHERE id = ?`,
-        [compra.total_usd, compra.proveedor_id], cx,
+        [compra.saldo_pendiente, compra.proveedor_id], cx,
       );
     }
 
     await ejecutar(
-      `UPDATE compras SET estado = 'ANULADA', anulada_en = NOW(), anulada_por = ?, motivo_anulacion = ? WHERE id = ?`,
+      `UPDATE compras SET estado = 'ANULADA', saldo_pendiente = 0, anulada_en = NOW(),
+              anulada_por = ?, motivo_anulacion = ? WHERE id = ?`,
       [usuario.id, motivo, id], cx,
     );
   });

@@ -8,7 +8,9 @@ import {
   query, queryOne, ejecutar, insertar, withTransaction, type Ejecutor,
 } from '../../database/pool';
 import { aCentavos, centavosASql, dividirRedondeando } from '../../utils/dinero';
-import { aTasaCambio, montoMonedaAUsdPiso, aMontoMoneda, montoMonedaASql } from '../../utils/moneda';
+import {
+  aTasaCambio, montoMonedaAUsdPiso, aMontoMoneda, montoMonedaASql, usdAMontoMoneda,
+} from '../../utils/moneda';
 import { siguienteConsecutivo } from '../../utils/consecutivos';
 import { ESTADO_CREDITO, TIPO_DOCUMENTO } from '../../config/constantes';
 import { registrarMovimiento, turnoActivoDeUsuario } from '../caja/caja.service';
@@ -77,7 +79,8 @@ export async function estadoCuenta(clienteId: Id): Promise<unknown> {
 
   const abonos = await query(
     `SELECT a.id, a.prefijo || a.numero AS numero, a.fecha, a.moneda, a.monto_moneda,
-            a.tasa_aplicada, a.monto_usd, a.cambio_moneda, a.estado
+            a.tasa_aplicada, a.monto_usd, a.cambio_moneda,
+            COALESCE(a.cambio_moneda_codigo, a.moneda) AS cambio_moneda_codigo, a.estado
        FROM abonos a WHERE a.cliente_id = ? ORDER BY a.fecha DESC LIMIT 50`,
     [clienteId],
   );
@@ -111,6 +114,14 @@ export interface AbonoEntrada {
    */
   montoRecibidoMoneda?: string;
   /**
+   * Moneda en la que se le entrega el vuelto. Ausente = la misma del abono.
+   *
+   * Paga con 4.000 Bs y se le devuelve en dolares porque no hay billetes chicos de
+   * Bs: la plata que entra y la que sale son de gavetas distintas y el arqueo las
+   * cuadra por separado.
+   */
+  monedaVuelto?: 'USD' | 'VES';
+  /**
    * Facturas a las que se aplica el abono (las que el cliente marco como "pago esto").
    * Vacio o ausente = toda la deuda, FIFO.
    */
@@ -137,7 +148,8 @@ export async function registrarAbono(
   idempotencyKey: string | null,
 ): Promise<{
   id: Id; numero: string; moneda: string; monto_usd: string; aplicado_usd: string;
-  recibido_moneda: string; vuelto_moneda: string; vuelto_usd: string; saldo_restante: string;
+  recibido_moneda: string; vuelto_moneda: string; vuelto_moneda_codigo: string;
+  vuelto_usd: string; saldo_restante: string;
 }> {
   return withTransaction(async (cx) => {
     // Tasa del dia del abono.
@@ -183,6 +195,29 @@ export async function registrarAbono(
       ? montoMonedaAUsdPiso(cambioMonedaEsc, entrada.moneda, tasaEsc)
       : 0n;
 
+    /**
+     * En que moneda sale el vuelto de la gaveta.
+     *
+     * Casi siempre es la del cobro, pero el cajero puede no tener billetes chicos:
+     * el cliente paga con 4.000 Bs y se le devuelve el vuelto en dolares. La plata
+     * que entra y la que sale son de gavetas distintas y el arqueo las cuadra por
+     * separado, asi que hay que guardar en cual salio.
+     *
+     * Si el sobrante no llega a un centavo de dolar no hay forma de devolverlo en
+     * la otra moneda (seria entregar $ 0,00): se devuelve en la del cobro, que es
+     * lo unico que cuadra la gaveta al centimo.
+     */
+    const monedaVuelto: 'USD' | 'VES' =
+      cambioMonedaEsc > 0n && cambioUsd > 0n
+        ? (entrada.monedaVuelto ?? entrada.moneda)
+        : entrada.moneda;
+    /** Lo que el cajero saca de la gaveta, en la moneda del vuelto (escala 4). */
+    const vueltoEntregadoEsc = cambioMonedaEsc === 0n
+      ? 0n
+      : monedaVuelto === entrada.moneda
+        ? cambioMonedaEsc
+        : usdAMontoMoneda(cambioUsd, monedaVuelto, tasaEsc);
+
     // Cliente y su saldo (bloqueado).
     const cliente = await queryOne<{ saldo_actual: string; dias_plazo: number }>(
       `SELECT saldo_actual, dias_plazo FROM clientes WHERE id = ? AND eliminado_en IS NULL FOR UPDATE`,
@@ -214,14 +249,15 @@ export async function registrarAbono(
       `INSERT INTO abonos
         (sucursal_id, cliente_id, turno_caja_id, metodo_pago_id, usuario_id, prefijo, numero, anio,
          moneda, monto_moneda, tasa_aplicada, monto_usd, monto_aplicado_usd,
-         monto_recibido_moneda, cambio_moneda, referencia, observaciones,
+         monto_recibido_moneda, cambio_moneda, cambio_moneda_codigo, referencia, observaciones,
          estado, clave_idempotencia)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'APLICADO', ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'APLICADO', ?)`,
       [
         usuario.sucursalId, entrada.clienteId, turno?.id ?? 1, entrada.metodoPagoId, usuario.id,
         prefijo, numero, anio, entrada.moneda, montoMonedaASql(montoMonedaEsc), tasaFila.tasa,
         centavosASql(montoUsd), centavosASql(montoUsd),
-        montoMonedaASql(montoRecibidoEsc), montoMonedaASql(cambioMonedaEsc),
+        montoMonedaASql(montoRecibidoEsc), montoMonedaASql(vueltoEntregadoEsc),
+        cambioMonedaEsc > 0n ? monedaVuelto : null,
         entrada.referencia ?? null, entrada.observaciones ?? null, idempotencyKey,
       ],
       cx,
@@ -284,18 +320,19 @@ export async function registrarAbono(
           [centavosASql(bs), centavosASql(bs), turno.id], cx);
       }
 
-      // Vuelto: sale de la gaveta y baja lo esperado al cierre.
-      if (cambioMonedaEsc > 0n) {
+      // Vuelto: sale de la gaveta y baja lo esperado al cierre. Se descuenta de la
+      // moneda en la que se entrego de verdad, que puede no ser la del cobro.
+      if (vueltoEntregadoEsc > 0n) {
         await registrarMovimiento(
-          cx, turno.id, usuario.sucursalId, 'VUELTAS', -1, entrada.moneda,
-          montoMonedaASql(cambioMonedaEsc), tasaFila.tasa, centavosASql(cambioUsd),
+          cx, turno.id, usuario.sucursalId, 'VUELTAS', -1, monedaVuelto,
+          montoMonedaASql(vueltoEntregadoEsc), tasaFila.tasa, centavosASql(cambioUsd),
           `Vuelto abono ${prefijo}${numero}`, usuario.id, entrada.metodoPagoId, 'ABONO', abonoId,
         );
-        if (entrada.moneda === 'USD') {
+        if (monedaVuelto === 'USD') {
           await ejecutar(`UPDATE turnos_caja SET total_vueltas_usd = total_vueltas_usd + ?, esperado_usd = esperado_usd - ? WHERE id = ?`,
             [centavosASql(cambioUsd), centavosASql(cambioUsd), turno.id], cx);
         } else {
-          const bsVuelto = dividirRedondeando(cambioMonedaEsc, 100n);
+          const bsVuelto = dividirRedondeando(vueltoEntregadoEsc, 100n);
           await ejecutar(`UPDATE turnos_caja SET total_vueltas_bs = total_vueltas_bs + ?, esperado_bs = esperado_bs - ? WHERE id = ?`,
             [centavosASql(bsVuelto), centavosASql(bsVuelto), turno.id], cx);
         }
@@ -313,7 +350,8 @@ export async function registrarAbono(
       id: abonoId, numero: `${prefijo}${numero}`, moneda: entrada.moneda,
       monto_usd: centavosASql(montoUsd), aplicado_usd: centavosASql(aplicado),
       recibido_moneda: montoMonedaASql(montoRecibidoEsc),
-      vuelto_moneda: montoMonedaASql(cambioMonedaEsc),
+      vuelto_moneda: montoMonedaASql(vueltoEntregadoEsc),
+      vuelto_moneda_codigo: monedaVuelto,
       vuelto_usd: centavosASql(cambioUsd),
       saldo_restante: saldoRestante?.deuda_usd ?? '0',
     };

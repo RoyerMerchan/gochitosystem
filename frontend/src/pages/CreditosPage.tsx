@@ -39,8 +39,10 @@ interface ResumenCuenta {
 interface Abono {
   id: number; numero: string; fecha: string; moneda: string;
   monto_moneda: string; tasa_aplicada: string; monto_usd: string; estado: string;
-  /** Vuelto devuelto en ese abono, en la moneda del abono. Null en los históricos. */
+  /** Vuelto devuelto en ese abono. Null en los históricos. */
   cambio_moneda: string | null;
+  /** Moneda en la que se entregó ese vuelto; puede no ser la del abono. */
+  cambio_moneda_codigo: 'USD' | 'VES' | null;
 }
 
 /** Producto de una compra fiada, atado al crédito que la representa. */
@@ -95,6 +97,12 @@ export default function CreditosPage() {
    * sistema registra los Bs que entran de verdad.
    */
   const [monedaEntrada, setMonedaEntrada] = useState<'USD' | 'VES'>('VES');
+  /**
+   * Moneda en la que se le ENTREGA el vuelto. No tiene por qué ser la del cobro:
+   * el cliente paga con un billete de Bs y el cajero le devuelve en dólares porque
+   * no tiene sencillo en bolívares (o al revés).
+   */
+  const [monedaVuelto, setMonedaVuelto] = useState<'USD' | 'VES'>('VES');
   /** Deuda cuyo detalle de productos está desplegado. */
   const [verProductos, setVerProductos] = useState<number | null>(null);
   /**
@@ -181,6 +189,25 @@ export default function CreditosPage() {
   /** El resto del billete. Se calcula por resta para que recibido = abono + vuelto. */
   const vueltoEnvio = Math.max(0, restarCentavos(recibidoEnvio, abonoEnvio));
 
+  /*
+    El mismo vuelto visto en las dos monedas: el cajero necesita saber cuánto le
+    devuelve en dólares Y cuánto es eso en bolívares, porque puede pagar con
+    cualquiera de los dos.
+
+    Los dólares salen del SOBRANTE con piso, exactamente como los calcula el
+    backend (`montoMonedaAUsdPiso` sobre el excedente), no restando conversiones:
+    si no, la pantalla y el movimiento de caja se separan por un centavo.
+  */
+  const vueltoUsdReal = metodo.moneda === 'USD'
+    ? vueltoEnvio
+    : (tasaNum > 0 ? pisoCentavos(vueltoEnvio / tasaNum) : 0);
+  const vueltoBsReal = metodo.moneda === 'VES' ? vueltoEnvio : usdABs(vueltoUsdReal, tasaNum);
+  /** Sin tasa no hay forma de devolver en la otra moneda. */
+  const puedeCambiarMonedaVuelto = tasaNum > 0 && vueltoUsdReal > 0;
+  const monedaVueltoReal = puedeCambiarMonedaVuelto ? monedaVuelto : metodo.moneda;
+  /** Lo que el cajero saca de la gaveta, en la moneda elegida. */
+  const vueltoEntregado = monedaVueltoReal === 'USD' ? vueltoUsdReal : vueltoBsReal;
+
   // Previsualización: cómo caería el abono factura por factura (FIFO).
   const aplicacion = useMemo(() => {
     const mapa = new Map<number, number>();
@@ -197,7 +224,8 @@ export default function CreditosPage() {
 
   const abrir = (c: FilaCartera) => {
     setAbonar(c); setSeleccion([]); setMontoManual(null); setReferencia('');
-    setMonedaEntrada(metodo.moneda); setVerProductos(null); setVerDetalle(false);
+    setMonedaEntrada(metodo.moneda); setMonedaVuelto(metodo.moneda);
+    setVerProductos(null); setVerDetalle(false);
   };
   /**
    * Estado de cuenta imprimible (PDF) de una persona. Sirve desde la lista y
@@ -252,6 +280,8 @@ export default function CreditosPage() {
       montoMoneda: abonoEnvio.toFixed(2),
       // Solo cuando hay vuelto: sin esto el backend asume pago justo, como siempre.
       montoRecibidoMoneda: hayVuelto ? recibidoEnvio.toFixed(2) : undefined,
+      // En qué moneda se le entregó el vuelto, que puede no ser la del cobro.
+      monedaVuelto: hayVuelto ? monedaVueltoReal : undefined,
       creditoIds: seleccion.length > 0 ? seleccion : undefined,
       referencia: referencia || undefined,
     }),
@@ -259,7 +289,7 @@ export default function CreditosPage() {
       // El vuelto es lo primero que el cajero necesita saber: se lo tiene que
       // entregar al cliente que está enfrente.
       toast.exito(hayVuelto
-        ? `Abono registrado · Entrega de vuelto ${formatearMoneda(vueltoEnvio, metodo.moneda)}`
+        ? `Abono registrado · Entrega de vuelto ${formatearMoneda(vueltoEntregado, monedaVueltoReal)}`
         : 'Abono registrado');
       qc.invalidateQueries({ queryKey: ['cartera'] });
       qc.invalidateQueries({ queryKey: ['estado-cuenta'] });
@@ -550,8 +580,11 @@ export default function CreditosPage() {
                 onChange={(e) => {
                   const id = Number(e.target.value);
                   setMetodoId(id);
-                  // El monto se escribe por defecto en la moneda del método elegido.
-                  setMonedaEntrada(METODOS_PAGO.find((m) => m.id === id)?.moneda ?? 'VES');
+                  // El monto se escribe por defecto en la moneda del método elegido,
+                  // y el vuelto se devuelve en esa misma moneda salvo que se cambie.
+                  const monedaMetodo = METODOS_PAGO.find((m) => m.id === id)?.moneda ?? 'VES';
+                  setMonedaEntrada(monedaMetodo);
+                  setMonedaVuelto(monedaMetodo);
                   setMontoManual(null);
                 }} className={INP}>
                 {METODOS_PAGO.filter((m) => !m.esCredito).map((m) => <option key={m.id} value={m.id}>{m.nombre} ({m.moneda})</option>)}
@@ -617,13 +650,42 @@ export default function CreditosPage() {
                       Vuelto a entregar
                     </span>
                     <span className="text-xl font-bold tabular-nums text-green-700 dark:text-green-400">
-                      {formatearMoneda(vueltoEnvio, metodo.moneda)}
+                      {formatearMoneda(vueltoEntregado, monedaVueltoReal)}
                     </span>
                   </div>
-                  <p className="mt-1 text-xs text-gray-500">
+                  {/*
+                    Las dos monedas SIEMPRE a la vista: el mismo vuelto son $ 0,83 o
+                    Bs 152,40 y el cajero decide con qué billetes lo paga. La que se
+                    entrega va resaltada; la otra queda como referencia.
+                  */}
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    {([
+                      ['USD', 'En dólares', formatearUSD(vueltoUsdReal)],
+                      ['VES', 'En bolívares', formatearBs(vueltoBsReal)],
+                    ] as const).map(([m, etiqueta, monto]) => (
+                      <button key={m}
+                        onClick={() => setMonedaVuelto(m)}
+                        disabled={!puedeCambiarMonedaVuelto}
+                        title={puedeCambiarMonedaVuelto
+                          ? `Entregar el vuelto en ${m === 'USD' ? 'dólares' : 'bolívares'}`
+                          : 'Sin tasa de hoy el vuelto sale en la moneda del cobro'}
+                        className={`rounded-lg border px-3 py-2 text-left disabled:cursor-default ${
+                          monedaVueltoReal === m
+                            ? 'border-green-500 bg-white shadow-sm dark:bg-gray-800'
+                            : 'border-gray-200 bg-white/50 opacity-70 hover:opacity-100 dark:border-gray-700 dark:bg-gray-800/40'}`}>
+                        <span className="block text-[11px] uppercase tracking-wide text-gray-500">
+                          {etiqueta}{monedaVueltoReal === m && ' · se entrega'}
+                        </span>
+                        <span className="block text-base font-bold tabular-nums">{monto}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-xs text-gray-500">
                     Recibes {formatearMoneda(recibidoEnvio, metodo.moneda)} · se abonan{' '}
                     {formatearMoneda(abonoEnvio, metodo.moneda)} ({formatearUSD(abonoUsd)})
-                    {metodo.moneda === 'VES' && <> · el vuelto son {formatearUSD(vueltoUsd)}</>}
+                    {puedeCambiarMonedaVuelto && (
+                      <> · toca una de las dos para elegir con qué le devuelves</>
+                    )}
                   </p>
                 </>
               )}
