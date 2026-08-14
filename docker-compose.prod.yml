@@ -35,9 +35,17 @@ services:
       TASA_BCV_API_KEY: ${TASA_BCV_API_KEY:-}
       TASA_BCV_URL: ${TASA_BCV_URL:-https://api.cotizave.com/v1/fx/rates/reference}
       TASA_BCV_AUTH_HEADER: ${TASA_BCV_AUTH_HEADER:-X-API-Key}
-      EJECUTAR_MIGRACIONES: "false"
+      # Las migraciones SQL de database/migraciones se aplican al arrancar, que es
+      # lo que desplegar.sh dice que pasa. Estaba en "false" y la carpeta ni
+      # siquiera entraba al contenedor: cada migracion nueva quedaba sin aplicar y
+      # nadie se enteraba hasta que una pantalla reventaba en el mostrador (paso
+      # con la 0005 y con la 0006). Todas son idempotentes y el migrador registra
+      # el fallo y sigue, asi que arrancar nunca depende de ellas.
+      EJECUTAR_MIGRACIONES: "true"
     volumes:
       - gochito_uploads:/app/uploads
+      # Solo lectura: el migrador las lee de /app/migraciones (ver migrador.ts).
+      - ./database/migraciones:/app/migraciones:ro
     networks:
       - interna
     logging:

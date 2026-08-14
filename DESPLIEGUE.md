@@ -160,6 +160,36 @@ cat respaldo_2026-07-20.sql | docker exec -i gochito_mariadb sh -c 'mariadb -uro
 
 ---
 
+## Migraciones de la base
+
+Los archivos `database/migraciones/NNNN_*.sql` se aplican **solos al arrancar el
+backend**: el contenedor los monta en `/app/migraciones` y el migrador corre las
+que falten, en orden, registrándolas en la tabla `migraciones`. Todas son
+idempotentes: correrlas dos veces no hace nada la segunda.
+
+Así que para aplicar una migración nueva basta con desplegar:
+```bash
+bash desplegar.sh
+```
+
+**Comprobar cuáles se aplicaron** (en los logs del arranque):
+```bash
+docker compose -f docker-compose.prod.yml logs backend | grep -i migrac
+```
+
+> ⚠️ Un fallo de migración **no tumba el servidor**: se registra en el log y la app
+> arranca igual. Es a propósito (mejor la caja abierta que la app caída), pero
+> significa que hay que **mirar ese log después de cada despliegue**. Si una
+> pantalla empieza a decir "falta aplicar una migración pendiente", es esto.
+
+**Forzar la aplicación sin reconstruir** (por si ya está desplegado el código):
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.produccion up -d backend
+docker compose -f docker-compose.prod.yml logs --tail=30 backend
+```
+
+---
+
 ## Notas
 
 - El volumen `gochito_db_data` guarda la base: sobrevive a `down`, reinicios y

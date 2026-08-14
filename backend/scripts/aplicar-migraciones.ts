@@ -4,10 +4,15 @@
  *   npm run db:apply
  *
  * package.json ya apuntaba a este archivo, pero el archivo no existia: en
- * produccion el backend arranca con EJECUTAR_MIGRACIONES=false (la base es
- * externa y el esquema se toca a mano, aparte del deploy), asi que no habia
+ * produccion el backend arrancaba con EJECUTAR_MIGRACIONES=false (la base es
+ * externa y el esquema se tocaba a mano, aparte del deploy), asi que no habia
  * NINGUNA forma de aplicar una migracion. Por eso 0005 se quedo sin aplicar y el
  * estado de cuenta reventaba con "column a.cambio_moneda does not exist".
+ *
+ * Desde entonces el despliegue las aplica solo (docker-compose.prod.yml monta
+ * database/migraciones en el contenedor y pone EJECUTAR_MIGRACIONES=true). Este
+ * comando sigue siendo el camino para aplicarlas a mano contra la base que diga
+ * el .env, sin reiniciar nada.
  *
  * A diferencia del arranque del servidor —donde una migracion rota se registra y
  * se sigue, para no dejar la app caida—, aca una que falle termina en codigo de
