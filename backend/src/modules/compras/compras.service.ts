@@ -11,6 +11,7 @@ import { Conflicto, NoEncontrado, ReglaNegocio } from '../../errores/AppError';
 import {
   query, queryOne, ejecutar, insertar, withTransaction, type Ejecutor,
 } from '../../database/pool';
+import { existeTabla } from '../../database/esquema';
 import {
   aCentavos, aCantidad, aUnitario, cantidadASql, unitarioASql, centavosASql,
   multiplicarPorCantidad, dividirRedondeando, sumar, aTasa,
@@ -246,17 +247,21 @@ export async function detalle(id: number, sucursalId: number): Promise<unknown> 
   if (!compra) throw new NoEncontrado('COMPRA_NO_ENCONTRADA');
   const renglones = await query(`SELECT * FROM compra_detalle WHERE compra_id = ? ORDER BY linea`, [id]);
   // Lo que ya se le pago al proveedor por esta entrada, para que el saldo que se
-  // muestra tenga de donde salir a la vista.
-  const pagos = await query(
-    `SELECT cp.id, cp.fecha, cp.moneda, cp.monto_moneda, cp.tasa_aplicada, cp.monto_usd,
-            cp.referencia, mp.nombre AS metodo_nombre, u.nombre_completo AS usuario
-       FROM compra_pagos cp
-       JOIN metodos_pago mp ON mp.id = cp.metodo_pago_id
-       JOIN usuarios u ON u.id = cp.usuario_id
-      WHERE cp.compra_id = ? AND cp.estado = 'APLICADO'
-      ORDER BY cp.fecha`,
-    [id],
-  );
+  // muestra tenga de donde salir a la vista. Si la migracion que crea la tabla
+  // todavia no corrio, el detalle de la entrada se muestra igual: ver que se
+  // ingreso no puede depender de una funcion nueva.
+  const pagos = await existeTabla('compra_pagos')
+    ? await query(
+      `SELECT cp.id, cp.fecha, cp.moneda, cp.monto_moneda, cp.tasa_aplicada, cp.monto_usd,
+              cp.referencia, mp.nombre AS metodo_nombre, u.nombre_completo AS usuario
+         FROM compra_pagos cp
+         JOIN metodos_pago mp ON mp.id = cp.metodo_pago_id
+         JOIN usuarios u ON u.id = cp.usuario_id
+        WHERE cp.compra_id = ? AND cp.estado = 'APLICADO'
+        ORDER BY cp.fecha`,
+      [id],
+    )
+    : [];
   return { compra, renglones, pagos };
 }
 
@@ -300,6 +305,10 @@ export async function pagar(
   monto_usd: string; saldo_pendiente: string; pagada: boolean;
 }> {
   return withTransaction(async (cx) => {
+    // Sin la tabla no hay donde anotar el pago, y bajarle el saldo al proveedor sin
+    // dejar rastro es peor que no cobrar: mejor decir que falta la migracion.
+    if (!(await existeTabla('compra_pagos', cx))) throw new Conflicto('MIGRACION_PENDIENTE');
+
     const compra = await queryOne<{
       id: number; estado: string; proveedor_id: number; prefijo: string; numero: number;
       moneda_pago: 'USD' | 'VES'; tasa_cambio: string; total_pagado_moneda: string;

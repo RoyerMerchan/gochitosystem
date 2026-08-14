@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { CreditCard, HandCoins, Eye, Search, FileText } from 'lucide-react';
 import { obtener, crear } from '@/lib/axios';
-import { ErrorApi } from '@/lib/errores';
+import { ErrorApi, mensajeDeError } from '@/lib/errores';
 import { Card, Cargando, EmptyState, Badge } from '@/components/ui/Feedback';
 import { Modal } from '@/components/ui/Modal';
 import { toast } from '@/store/toastStore';
@@ -464,6 +464,40 @@ export default function CreditosPage() {
           </div>
         }>
         <div className="space-y-4">
+          {/*
+            Si el estado de cuenta no cargó hay que DECIRLO. Antes el modal se
+            quedaba mudo: "Sin facturas pendientes" y "Cuenta completa: $ 0,00"
+            sobre un cliente que sí debe, sin ninguna pista de que la petición
+            había fallado. El cajero creía que la deuda se había borrado sola.
+          */}
+          {cuenta.isError && (
+            <div className="rounded-lg border border-red-300 bg-red-50 p-3 dark:border-red-800 dark:bg-red-900/20">
+              <p className="text-sm font-medium text-red-600 dark:text-red-400">
+                No se pudo cargar el estado de cuenta de este cliente.
+              </p>
+              {/* El mensaje del backend tal cual: trae el código y la causa real. */}
+              <p className="mt-0.5 text-xs text-red-500">{mensajeDeError(cuenta.error)}</p>
+              <button onClick={() => cuenta.refetch()}
+                className="mt-2 rounded-lg border border-red-400 px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-100 dark:hover:bg-red-900/40">
+                Reintentar
+              </button>
+            </div>
+          )}
+          {/*
+            Cargó bien pero la deuda no cuadra con las facturas: la cartera dice
+            que debe y no vino ninguna. Es un descuadre de datos, no una cuenta en
+            cero, y cobrar a ciegas sería peor.
+          */}
+          {!cuenta.isLoading && !cuenta.isError && deudas.length === 0 && deudaTotal > 0 && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-800 dark:bg-amber-900/20">
+              <p className="font-medium text-amber-700 dark:text-amber-400">
+                Este cliente aparece debiendo {formatearUSD(deudaTotal)} pero no llegó ninguna factura pendiente.
+              </p>
+              <p className="mt-0.5 text-xs text-amber-600">
+                No se puede abonar hasta que cuadre. Revisa sus créditos antes de cobrarle.
+              </p>
+            </div>
+          )}
           {/*
             La cuenta de la persona como UNA sola deuda: la suma de todo lo que
             debe y en qué queda después de este abono. El desglose compra por

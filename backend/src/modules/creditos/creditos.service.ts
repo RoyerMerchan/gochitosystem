@@ -7,6 +7,7 @@ import { Conflicto, NoEncontrado, ReglaNegocio } from '../../errores/AppError';
 import {
   query, queryOne, ejecutar, insertar, withTransaction, type Ejecutor,
 } from '../../database/pool';
+import { existeColumna } from '../../database/esquema';
 import { aCentavos, centavosASql, dividirRedondeando } from '../../utils/dinero';
 import {
   aTasaCambio, montoMonedaAUsdPiso, aMontoMoneda, montoMonedaASql, usdAMontoMoneda,
@@ -77,10 +78,23 @@ export async function estadoCuenta(clienteId: Id): Promise<unknown> {
     [clienteId],
   );
 
+  /*
+    Las columnas del vuelto se leen a traves de to_jsonb a proposito.
+
+    Son un dato secundario del historial, pero nombrarlas directo hace que TODA la
+    consulta reviente si la migracion que las agrega todavia no corrio en esta base
+    —y el migrador se traga los fallos, asi que eso pasa sin que nadie se entere—.
+    Cuando eso ocurria, el cajero abria el abono y veia la cuenta en blanco: sin
+    facturas que marcar y sin poder cobrar, por una columna de adorno.
+
+    Con to_jsonb, si la columna no existe llega null y el estado de cuenta —que es
+    lo que se necesita para cobrar— sigue en pie.
+  */
   const abonos = await query(
     `SELECT a.id, a.prefijo || a.numero AS numero, a.fecha, a.moneda, a.monto_moneda,
-            a.tasa_aplicada, a.monto_usd, a.cambio_moneda,
-            COALESCE(a.cambio_moneda_codigo, a.moneda) AS cambio_moneda_codigo, a.estado
+            a.tasa_aplicada, a.monto_usd, a.estado,
+            (to_jsonb(a) ->> 'cambio_moneda')::NUMERIC AS cambio_moneda,
+            COALESCE(to_jsonb(a) ->> 'cambio_moneda_codigo', a.moneda::TEXT) AS cambio_moneda_codigo
        FROM abonos a WHERE a.cliente_id = ? ORDER BY a.fecha DESC LIMIT 50`,
     [clienteId],
   );
@@ -245,20 +259,33 @@ export async function registrarAbono(
     const anio = new Date().getFullYear();
     const { numero, prefijo } = await siguienteConsecutivo(cx, usuario.sucursalId, TIPO_DOCUMENTO.ABONO, anio);
 
+    /*
+      Si la base todavia no tiene `cambio_moneda_codigo` (migracion 0006 sin
+      aplicar), el cobro se registra igual: lo unico que no se puede es devolver el
+      vuelto en una moneda distinta a la del cobro, porque no habria donde anotarlo
+      y el arqueo terminaria descontandolo de la gaveta equivocada.
+    */
+    const guardaMonedaVuelto = await existeColumna('abonos', 'cambio_moneda_codigo', cx);
+    if (!guardaMonedaVuelto && monedaVuelto !== entrada.moneda) {
+      throw new Conflicto('MIGRACION_PENDIENTE');
+    }
+    const colVuelto = guardaMonedaVuelto ? ', cambio_moneda_codigo' : '';
+    const valVuelto = guardaMonedaVuelto ? ', ?' : '';
+
     const abonoId = await insertar(
       `INSERT INTO abonos
         (sucursal_id, cliente_id, turno_caja_id, metodo_pago_id, usuario_id, prefijo, numero, anio,
          moneda, monto_moneda, tasa_aplicada, monto_usd, monto_aplicado_usd,
-         monto_recibido_moneda, cambio_moneda, cambio_moneda_codigo, referencia, observaciones,
-         estado, clave_idempotencia)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'APLICADO', ?)`,
+         monto_recibido_moneda, cambio_moneda, referencia, observaciones,
+         estado, clave_idempotencia${colVuelto})
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'APLICADO', ?${valVuelto})`,
       [
         usuario.sucursalId, entrada.clienteId, turno?.id ?? 1, entrada.metodoPagoId, usuario.id,
         prefijo, numero, anio, entrada.moneda, montoMonedaASql(montoMonedaEsc), tasaFila.tasa,
         centavosASql(montoUsd), centavosASql(montoUsd),
         montoMonedaASql(montoRecibidoEsc), montoMonedaASql(vueltoEntregadoEsc),
-        cambioMonedaEsc > 0n ? monedaVuelto : null,
         entrada.referencia ?? null, entrada.observaciones ?? null, idempotencyKey,
+        ...(guardaMonedaVuelto ? [cambioMonedaEsc > 0n ? monedaVuelto : null] : []),
       ],
       cx,
     );

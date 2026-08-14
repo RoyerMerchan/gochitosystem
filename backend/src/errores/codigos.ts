@@ -463,6 +463,12 @@ export const CODIGOS_ERROR = {
     mensaje: 'La configuracion del sistema es invalida.',
     httpStatus: 500,
   },
+  MIGRACION_PENDIENTE: {
+    mensaje:
+      'La base de datos esta desactualizada: falta aplicar una migracion pendiente. '
+      + 'Reinicie el servidor o corra las migraciones para habilitar esta funcion.',
+    httpStatus: 409,
+  },
 
   // ---------------------------------------------------------------------------
   // Exportaciones
