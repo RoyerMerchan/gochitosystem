@@ -69,6 +69,14 @@ export function ModalCobro({ abierto, totalUsd, tasa, onCerrar, onConfirmar, pro
   /** El mismo vuelto en bolívares: el cajero paga con lo que tenga en la gaveta. */
   const vueltoBs = usdABs(vuelto, tasa);
   const hayVuelto = vuelto > 0.005;
+  /**
+   * El fiado se guarda en dolares (la deuda no se devalua), pero el cliente
+   * pregunta "cuanto quedo debiendo" en bolivares: se muestran los dos, a la
+   * tasa del ticket, para no tener que sacar la calculadora.
+   */
+  const creditoBs = usdABs(creditoUsd, tasa);
+  const hayCredito = creditoUsd > 0.005;
+  const faltanteBs = usdABs(faltante, tasa);
 
   const agregarLinea = (metodo: MetodoPago) => {
     // Por defecto, el monto sugerido cubre el faltante en la moneda del metodo.
@@ -118,7 +126,9 @@ export function ModalCobro({ abierto, totalUsd, tasa, onCerrar, onConfirmar, pro
         <div className="flex items-center justify-between gap-3">
           <div className="text-sm">
             {faltante > 0.005 ? (
-              <span className="font-medium text-amber-600">Faltan {formatearUSD(faltante)}</span>
+              <span className="font-medium text-amber-600">
+                Faltan {formatearUSD(faltante)} · {formatearBs(faltanteBs)}
+              </span>
             ) : hayVuelto ? (
               // Los dos montos, y en negrita el que se va a entregar de verdad.
               <span className="text-blue-600">
@@ -126,6 +136,13 @@ export function ModalCobro({ abierto, totalUsd, tasa, onCerrar, onConfirmar, pro
                 <span className={monedaVuelto === 'USD' ? 'font-bold' : ''}>{formatearUSD(vuelto)}</span>
                 {' / '}
                 <span className={monedaVuelto === 'VES' ? 'font-bold' : ''}>{formatearBs(vueltoBs)}</span>
+              </span>
+            ) : hayCredito ? (
+              <span className="font-medium text-green-600">
+                Pago completo · queda debiendo{' '}
+                <span className="text-amber-600">
+                  {formatearUSD(creditoUsd)} · {formatearBs(creditoBs)}
+                </span>
               </span>
             ) : (
               <span className="font-medium text-green-600">Pago completo</span>
@@ -193,7 +210,13 @@ export function ModalCobro({ abierto, totalUsd, tasa, onCerrar, onConfirmar, pro
                 placeholder="Referencia"
               />
             )}
-            <span className="ml-auto text-xs text-gray-400">≈ {formatearUSD(lineaEnUsd(l, tasa))}</span>
+            {/* El equivalente en la otra moneda: lo que se tecleo ya esta a la vista. */}
+            <span className="ml-auto text-xs text-gray-400">
+              ≈{' '}
+              {l.metodo.moneda === 'USD'
+                ? formatearBs(usdABs(aNumero(l.monto), tasa))
+                : formatearUSD(lineaEnUsd(l, tasa))}
+            </span>
             <button onClick={() => quitar(idx)} className="text-gray-400 hover:text-red-500">
               <Trash2 className="h-4 w-4" />
             </button>
@@ -231,6 +254,31 @@ export function ModalCobro({ abierto, totalUsd, tasa, onCerrar, onConfirmar, pro
                 <span className="block text-base font-bold tabular-nums">{monto}</span>
               </button>
             ))}
+          </div>
+        </div>
+      )}
+      {/*
+        Fiado: la deuda se registra en dolares, pero aqui se ve tambien en
+        bolivares a la tasa del ticket. Es la respuesta al "y cuanto quedo
+        debiendo?" en el mostrador, sin ir a la calculadora.
+      */}
+      {hayCredito && (
+        <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-900/20">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-4">
+            <span className="text-xs font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300">
+              Queda debiendo
+            </span>
+            <span className="text-xl font-bold tabular-nums text-amber-700 dark:text-amber-300">
+              {formatearUSD(creditoUsd)}
+            </span>
+          </div>
+          <div className="mt-1 flex flex-wrap items-baseline justify-between gap-x-4">
+            <span className="text-[11px] text-amber-700/70 dark:text-amber-300/70">
+              a tasa {tasa.toFixed(2)}
+            </span>
+            <span className="text-base font-semibold tabular-nums text-amber-700 dark:text-amber-300">
+              {formatearBs(creditoBs)}
+            </span>
           </div>
         </div>
       )}
