@@ -9,6 +9,7 @@
  *
  * Escalas:
  *   - USD:        centavos (escala 2)   -> ESCALA.TOTAL
+ *   - Saldo USD:  diezmilesimas (esc.4) -> ESCALA.SALDO_USD  (libro de creditos)
  *   - Bs:         centimos (escala 2)   -> ESCALA.BS
  *   - Tasa:       millonesimas (esc. 6) -> ESCALA.TASA_CAMBIO  (Bs por 1 USD)
  *   - MontoMoneda escala 4              -> ESCALA.MONTO_MONEDA
@@ -94,6 +95,49 @@ export function montoMonedaAUsdPiso(
   if (tasaEscalada <= 0n) throw new Error('La tasa de cambio debe ser mayor que cero');
   const bs = dividirTruncando(montoEscala4, 100n); // escala 4 -> 2
   return dividirTruncando(bs * 10n ** BigInt(ESCALA.TASA_CAMBIO), tasaEscalada);
+}
+
+// -----------------------------------------------------------------------------
+// Libro de creditos (USD escala 4)
+// -----------------------------------------------------------------------------
+//
+// El saldo de un credito es un apunte contable, no un billete: se lleva en escala 4
+// para que el residuo de dividir un abono en Bs por la tasa quepa dentro. A 777 Bs/$
+// un centavo de dolar vale Bs 7,77 y ese residuo se perdia, siempre en contra del
+// cliente. Ver ESCALA.SALDO_USD.
+//
+// Lo que SI es un billete —el vuelto, el arqueo— se queda en centavos: nadie entrega
+// $ 9,0041 en efectivo. Por eso conviven estas funciones con las de escala 2.
+
+/**
+ * Convierte un monto en su moneda (escala 4) a saldo USD (escala 4), truncando.
+ *
+ * Mismo piso que `montoMonedaAUsdPiso` —jamas se acreditan dolares que el cliente no
+ * entrego— pero con grano de $ 0,0001 en vez de $ 0,01: lo que se descarta vale
+ * Bs 0,08 en lugar de Bs 7,77.
+ */
+export function montoMonedaASaldoUsdPiso(
+  montoEscala4: bigint,
+  moneda: Moneda,
+  tasaEscalada: bigint,
+): bigint {
+  if (moneda === MONEDA.USD) return montoEscala4; // ya viene en escala 4
+  if (tasaEscalada <= 0n) throw new Error('La tasa de cambio debe ser mayor que cero');
+  // monto(4) * 10^6 -> escala 10; dividir por tasa(6) deja escala 4.
+  return dividirTruncando(montoEscala4 * 10n ** BigInt(ESCALA.TASA_CAMBIO), tasaEscalada);
+}
+
+/** Convierte Bs (escala 2) a saldo USD (escala 4) con la tasa dada. */
+export function bsASaldoUsd(bsEscalado: bigint, tasaEscalada: bigint): bigint {
+  if (tasaEscalada <= 0n) throw new Error('La tasa de cambio debe ser mayor que cero');
+  // bs(2) * 10^8 -> escala 10; dividir por tasa(6) deja escala 4.
+  return dividirRedondeando(bsEscalado * 10n ** 8n, tasaEscalada);
+}
+
+/** Convierte un saldo USD (escala 4) a Bs (escala 2) con la tasa dada. */
+export function saldoUsdABs(saldoUsd4: bigint, tasaEscalada: bigint): bigint {
+  // saldo(4) * tasa(6) = escala 10 -> se reescala a 2 con redondeo half-up.
+  return dividirRedondeando(saldoUsd4 * tasaEscalada, 10n ** 8n);
 }
 
 /**

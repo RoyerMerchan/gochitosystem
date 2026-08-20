@@ -8,9 +8,12 @@ import {
   query, queryOne, ejecutar, insertar, withTransaction, type Ejecutor,
 } from '../../database/pool';
 import { existeColumna } from '../../database/esquema';
-import { aCentavos, centavosASql, dividirRedondeando } from '../../utils/dinero';
 import {
-  aTasaCambio, montoMonedaAUsdPiso, aMontoMoneda, montoMonedaASql, usdAMontoMoneda,
+  aSaldoUsd, saldoUsdASql, centavosASql, dividirRedondeando,
+} from '../../utils/dinero';
+import {
+  aTasaCambio, montoMonedaAUsdPiso, montoMonedaASaldoUsdPiso, bsASaldoUsd,
+  aMontoMoneda, montoMonedaASql, usdAMontoMoneda,
 } from '../../utils/moneda';
 import { siguienteConsecutivo } from '../../utils/consecutivos';
 import { ESTADO_CREDITO, TIPO_DOCUMENTO } from '../../config/constantes';
@@ -145,15 +148,29 @@ export interface AbonoEntrada {
 }
 
 /**
- * Tolerancia de cierre: 1 centavo de USD.
+ * Tolerancia de cierre: la moneda mas chica que el cliente puede poner sobre el
+ * mostrador, valorada en USD escala 4.
  *
- * Pagando en Bs la division por la tasa casi nunca cae exacta sobre el saldo en USD
- * (3.132,00 Bs / 743 = 4,2153...). Sin tolerancia el cliente que quiere quedar en cero
- * o recibe "el abono supera el saldo" por un centavo, o queda con una deuda fantasma de
- * 0,01 imposible de pagar. Si el abono cae a un centavo del saldo objetivo se toma como
- * pago exacto de ese saldo.
+ * Pagando en Bs la division por la tasa casi nunca cae exacta sobre el saldo
+ * (3.132,00 Bs / 743 = 4,2153...). Sin tolerancia, el cliente que quiere quedar en
+ * cero o recibe "el abono supera el saldo", o queda con una deuda fantasma que no
+ * puede pagar porque no existe el billete. Si el abono cae dentro de la tolerancia
+ * del saldo objetivo, se toma como pago exacto.
+ *
+ * Antes era 1 centavo de dolar fijo. A 777 Bs/$ eso son Bs 7,77 —demasiado para
+ * "una diferencia de redondeo": perdonaba (o cobraba) plata de verdad—. Ahora se
+ * mide en la moneda con la que se paga:
+ *
+ *   VES -> Bs 1,00, que es lo mas chico que circula (no hay centimos).
+ *   USD -> $ 0,01, el centavo de siempre.
+ *
+ * Asi la tolerancia sigue el poder adquisitivo real de cada moneda en vez de
+ * inflarse cada vez que sube la tasa.
  */
-const TOLERANCIA_CIERRE = 1n;
+function toleranciaCierre(moneda: 'USD' | 'VES', tasaEsc: bigint): bigint {
+  if (moneda === 'USD') return 100n; // $ 0,01 en escala 4
+  return bsASaldoUsd(100n, tasaEsc); // Bs 1,00 -> USD escala 4
+}
 
 /** Registra un abono y lo aplica FIFO a los creditos pendientes del cliente. */
 export async function registrarAbono(
@@ -186,9 +203,26 @@ export async function registrarAbono(
     if (metodo.requiere_referencia && !entrada.referencia?.trim()) throw new ReglaNegocio('REFERENCIA_REQUERIDA');
 
     const montoMonedaEsc = aMontoMoneda(entrada.montoMoneda);
-    // Piso, no half-up: jamas se acreditan mas dolares de los que cubren los Bs recibidos.
-    let montoUsd = montoMonedaAUsdPiso(montoMonedaEsc, entrada.moneda, tasaEsc);
+    /*
+      Lo que se le abona a la deuda, en USD escala 4.
+
+      Sigue siendo piso y no half-up —jamas se acreditan dolares que el cliente no
+      entrego— pero ahora el piso muerde $ 0,0001 (Bs 0,08) en vez de $ 0,01. En
+      centavos, Bs 7.000,00 a 777,42 se truncaban de $ 9,004142 a $ 9,00 y esos
+      Bs 3,22 se los quedaba la tienda en cada abono.
+    */
+    let montoUsd = montoMonedaASaldoUsdPiso(montoMonedaEsc, entrada.moneda, tasaEsc);
     if (montoUsd <= 0n) throw new ReglaNegocio('MONTO_INVALIDO');
+
+    /*
+      La misma plata valorada en centavos, solo para la caja.
+
+      La gaveta se cuenta en billetes, no en diezmilesimas: el arqueo en Bs usa
+      `monto_moneda` tal cual y el equivalente en USD es un dato de reporte. Se
+      calcula con el piso de siempre para no valorar la gaveta por encima de lo que
+      realmente entro por ella.
+    */
+    const montoUsdCaja = montoMonedaAUsdPiso(montoMonedaEsc, entrada.moneda, tasaEsc);
 
     // El billete que el cliente puso sobre el mostrador. Lo que sobre despues de
     // abonar es su vuelto.
@@ -203,8 +237,14 @@ export async function registrarAbono(
     if (cambioMonedaEsc > 0n && !metodo.es_permite_cambio) {
       throw new ReglaNegocio('VUELTO_SOLO_EN_EFECTIVO');
     }
-    // Se valora con la misma tasa y el mismo piso que el abono, para que
-    // (abono + vuelto) sea exactamente lo que entro por la gaveta.
+    /*
+      El vuelto se queda en CENTAVOS, no en escala 4 como el saldo.
+
+      Es plata fisica: si sale en dolares hay que poner billetes y monedas sobre el
+      mostrador, y $ 9,0041 no se puede entregar. El saldo es un apunte contable y
+      admite el grano fino; la gaveta no. Se valora con la misma tasa y el mismo piso
+      que el abono para que (abono + vuelto) sea lo que entro por la gaveta.
+    */
     const cambioUsd = cambioMonedaEsc > 0n
       ? montoMonedaAUsdPiso(cambioMonedaEsc, entrada.moneda, tasaEsc)
       : 0n;
@@ -244,12 +284,13 @@ export async function registrarAbono(
     const creditos = await creditosObjetivo(cx, entrada.clienteId, seleccion);
     if (creditos.length === 0) throw new ReglaNegocio('CREDITO_YA_PAGADO');
 
-    const saldoObjetivo = creditos.reduce((acc, cr) => acc + aCentavos(cr.saldo_usd), 0n);
+    const saldoObjetivo = creditos.reduce((acc, cr) => acc + aSaldoUsd(cr.saldo_usd), 0n);
+    const tolerancia = toleranciaCierre(entrada.moneda, tasaEsc);
     if (montoUsd > saldoObjetivo) {
-      if (montoUsd - saldoObjetivo > TOLERANCIA_CIERRE) throw new ReglaNegocio('ABONO_MAYOR_A_SALDO');
+      if (montoUsd - saldoObjetivo > tolerancia) throw new ReglaNegocio('ABONO_MAYOR_A_SALDO');
       montoUsd = saldoObjetivo; // diferencia de redondeo de la tasa: se toma como pago exacto
-    } else if (saldoObjetivo - montoUsd <= TOLERANCIA_CIERRE) {
-      montoUsd = saldoObjetivo; // cierra la factura en vez de dejar 0,01 de deuda fantasma
+    } else if (saldoObjetivo - montoUsd <= tolerancia) {
+      montoUsd = saldoObjetivo; // cierra la factura en vez de dejar una deuda fantasma
     }
 
     // Turno de caja (para el movimiento de efectivo).
@@ -282,7 +323,7 @@ export async function registrarAbono(
       [
         usuario.sucursalId, entrada.clienteId, turno?.id ?? 1, entrada.metodoPagoId, usuario.id,
         prefijo, numero, anio, entrada.moneda, montoMonedaASql(montoMonedaEsc), tasaFila.tasa,
-        centavosASql(montoUsd), centavosASql(montoUsd),
+        saldoUsdASql(montoUsd), saldoUsdASql(montoUsd),
         montoMonedaASql(montoRecibidoEsc), montoMonedaASql(vueltoEntregadoEsc),
         entrada.referencia ?? null, entrada.observaciones ?? null, idempotencyKey,
         ...(guardaMonedaVuelto ? [cambioMonedaEsc > 0n ? monedaVuelto : null] : []),
@@ -294,20 +335,20 @@ export async function registrarAbono(
     let restante = montoUsd;
     for (const cr of creditos) {
       if (restante <= 0n) break;
-      const saldoCred = aCentavos(cr.saldo_usd);
+      const saldoCred = aSaldoUsd(cr.saldo_usd);
       const aplicar = restante >= saldoCred ? saldoCred : restante;
       const saldoNuevo = saldoCred - aplicar;
 
       await insertar(
         `INSERT INTO abono_aplicaciones (abono_id, credito_id, monto_aplicado_usd)
          VALUES (?, ?, ?)`,
-        [abonoId, cr.id, centavosASql(aplicar)], cx,
+        [abonoId, cr.id, saldoUsdASql(aplicar)], cx,
       );
 
       const nuevoEstado = saldoNuevo <= 0n ? ESTADO_CREDITO.PAGADO : ESTADO_CREDITO.PARCIAL;
       await ejecutar(
         `UPDATE creditos SET saldo_usd = ?, estado = ?, pagado_en = ? WHERE id = ?`,
-        [centavosASql(saldoNuevo), nuevoEstado, saldoNuevo <= 0n ? new Date().toISOString().slice(0, 19).replace('T', ' ') : null, cr.id],
+        [saldoUsdASql(saldoNuevo), nuevoEstado, saldoNuevo <= 0n ? new Date().toISOString().slice(0, 19).replace('T', ' ') : null, cr.id],
         cx,
       );
       restante -= aplicar;
@@ -317,12 +358,12 @@ export async function registrarAbono(
     const aplicado = montoUsd - restante;
     await ejecutar(
       `UPDATE clientes SET saldo_actual = GREATEST(0, saldo_actual - ?) WHERE id = ?`,
-      [centavosASql(aplicado), entrada.clienteId], cx,
+      [saldoUsdASql(aplicado), entrada.clienteId], cx,
     );
     // Si sobro (pago de mas), queda como saldo a favor.
     if (restante > 0n) {
       await ejecutar(`UPDATE abonos SET saldo_a_favor_usd = ?, monto_aplicado_usd = ? WHERE id = ?`,
-        [centavosASql(restante), centavosASql(aplicado), abonoId], cx);
+        [saldoUsdASql(restante), saldoUsdASql(aplicado), abonoId], cx);
     }
 
     // Movimiento de caja si el abono fue en efectivo.
@@ -332,7 +373,7 @@ export async function registrarAbono(
     // el neto seria mas corto pero mentiria: el arqueo debe reflejar los dos gestos
     // reales del cajero, no un numero que no coincide con ningun billete.
     if (turno && metodo.afecta_caja_efectivo) {
-      const recibidoUsd = montoUsd + cambioUsd;
+      const recibidoUsd = montoUsdCaja + cambioUsd;
       await registrarMovimiento(
         cx, turno.id, usuario.sucursalId, 'ABONO', 1, entrada.moneda,
         montoMonedaASql(montoRecibidoEsc), tasaFila.tasa, centavosASql(recibidoUsd),
@@ -375,7 +416,7 @@ export async function registrarAbono(
     );
     return {
       id: abonoId, numero: `${prefijo}${numero}`, moneda: entrada.moneda,
-      monto_usd: centavosASql(montoUsd), aplicado_usd: centavosASql(aplicado),
+      monto_usd: saldoUsdASql(montoUsd), aplicado_usd: saldoUsdASql(aplicado),
       recibido_moneda: montoMonedaASql(montoRecibidoEsc),
       vuelto_moneda: montoMonedaASql(vueltoEntregadoEsc),
       vuelto_moneda_codigo: monedaVuelto,

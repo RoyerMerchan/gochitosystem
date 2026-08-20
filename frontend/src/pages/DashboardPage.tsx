@@ -13,7 +13,7 @@ import { useAuthStore } from '@/store/authStore';
 import { useTasaStore } from '@/store/tasaStore';
 import {
   formatearUSD, formatearBs, formatearFechaHora, formatearNumero, formatearPorcentaje,
-  calcularMargen, aNumero, usdABs,
+  calcularMargen, aNumero, saldoUsdABs,
 } from '@/lib/formato';
 
 interface VentaResumen {
@@ -164,7 +164,7 @@ export default function DashboardPage() {
                     no un hecho pasado. La tasa congelada es solo para lo ya ocurrido. */}
                 {tasaNum > 0 ? (
                   <p className="text-sm tabular-nums text-gray-500">
-                    {formatearBs(usdABs(deuda, tasaNum))}
+                    {formatearBs(saldoUsdABs(deuda, tasaNum))}
                     <span className="ml-1 text-xs text-gray-400">a la tasa de hoy</span>
                   </p>
                 ) : (

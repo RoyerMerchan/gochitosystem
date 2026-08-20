@@ -6,6 +6,7 @@
  *
  * Representacion interna: `bigint` con la cantidad ya escalada.
  *   - Totales      DECIMAL(14,2) -> escala 2 (centavos)
+ *   - Saldos       DECIMAL(14,4) -> escala 4 (diezmilesimas; libro de creditos)
  *   - Unitarios    DECIMAL(14,4) -> escala 4 (diezmilesimas)
  *   - Cantidades   DECIMAL(14,3) -> escala 3 (milesimas)
  *   - Tasas        DECIMAL(6,3)  -> escala 3 (milesimas de punto porcentual)
@@ -71,6 +72,12 @@ export const aCentavos = (v: DecimalSql | number | bigint): bigint =>
   aEntero(v, ESCALA.TOTAL);
 /** centavos -> DECIMAL(14,2). */
 export const centavosASql = (v: bigint): DecimalSql => aDecimalSql(v, ESCALA.TOTAL);
+
+/** DECIMAL(14,4) del libro de creditos -> diezmilesimas de dolar. */
+export const aSaldoUsd = (v: DecimalSql | number | bigint): bigint =>
+  aEntero(v, ESCALA.SALDO_USD);
+/** diezmilesimas de dolar -> DECIMAL(14,4). */
+export const saldoUsdASql = (v: bigint): DecimalSql => aDecimalSql(v, ESCALA.SALDO_USD);
 
 /** DECIMAL(14,4) -> diezmilesimas. */
 export const aUnitario = (v: DecimalSql | number | bigint): bigint =>

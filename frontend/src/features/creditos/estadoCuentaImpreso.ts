@@ -10,7 +10,7 @@
  */
 import {
   formatearUSD, formatearBs, formatearFecha, formatearFechaHora, formatearNumero,
-  formatearCantidad, usdABs, aNumero,
+  formatearCantidad, saldoUsdABs, aNumero,
 } from '@/lib/formato';
 import type { DatosNegocio } from '@/config/negocio';
 
@@ -82,7 +82,7 @@ export function abrirVentanaImpresion(): Window | null {
 
 export function imprimirEstadoCuenta(d: DatosEstadoCuenta, ventana?: Window | null): void {
   const hayTasa = d.tasa > 0;
-  const bs = (usd: unknown) => (hayTasa ? formatearBs(usdABs(usd, d.tasa)) : '—');
+  const bs = (usd: unknown) => (hayTasa ? formatearBs(saldoUsdABs(usd, d.tasa)) : '—');
 
   // Productos agrupados por la deuda a la que pertenecen.
   const porCredito = new Map<number, RenglonImpreso[]>();

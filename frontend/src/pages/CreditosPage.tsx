@@ -9,7 +9,7 @@ import { Modal } from '@/components/ui/Modal';
 import { toast } from '@/store/toastStore';
 import { useTasaStore } from '@/store/tasaStore';
 import { useAuthStore } from '@/store/authStore';
-import { formatearUSD, formatearBs, formatearFecha, formatearCantidad, aNumero, usdABs } from '@/lib/formato';
+import { formatearUSD, formatearBs, formatearFecha, formatearCantidad, aNumero, usdABs, saldoUsdABs, redondearDiezmilesimas } from '@/lib/formato';
 import { METODOS_PAGO } from '@/features/pos/metodosPago';
 import { NEGOCIO } from '@/config/negocio';
 import { imprimirEstadoCuenta, abrirVentanaImpresion } from '@/features/creditos/estadoCuentaImpreso';
@@ -67,6 +67,15 @@ const ESTADOS_VIVOS = ['PENDIENTE', 'PARCIAL', 'VENCIDO'];
 
 /** Centavos hacia abajo: el backend convierte Bs -> USD truncando, aquí igual. */
 const pisoCentavos = (n: number) => Math.floor(n * 100 + 1e-9) / 100;
+/**
+ * Diezmilésimas hacia abajo, para lo que se le abona a la deuda.
+ *
+ * El saldo de un crédito vive en escala 4 (`ESCALA.SALDO_USD`) y el backend trunca
+ * ahí, no en centavos. Truncar en centavos acá haría que la pantalla prometiera un
+ * saldo distinto del que se va a guardar: Bs 7.000,00 a 777,42 son $ 9,004142, y
+ * verlos como $ 9,00 infla el "queda debiendo" en Bs 3,22.
+ */
+const pisoDiezmilesimas = (n: number) => Math.floor(n * 10000 + 1e-9) / 10000;
 /** Centavos hacia arriba: Bs mínimos que cubren un saldo en USD sin quedar corto. */
 const techoCentavos = (n: number) => Math.ceil(n * 100 - 1e-9) / 100;
 /**
@@ -154,11 +163,20 @@ export default function CreditosPage() {
     : saldoObjetivo.toFixed(2);
   const monto = montoManual ?? montoSugerido;
 
-  // Equivalente en USD con la misma aritmética del backend (piso + tolerancia de 1 centavo).
+  /*
+    Equivalente en USD con la misma aritmética del backend: piso en escala 4 y
+    tolerancia de cierre medida en la moneda con la que se paga —Bs 1,00 si abona en
+    bolívares, $ 0,01 si abona en dólares—, que es lo más chico que puede poner sobre
+    el mostrador. Antes la tolerancia era 1 centavo de dólar fijo: a 777 Bs/$ eso son
+    Bs 7,77 dados por "diferencia de redondeo".
+  */
   const montoUsdCrudo = enBs
-    ? (tasaNum > 0 ? pisoCentavos(aNumero(monto) / tasaNum) : 0)
-    : pisoCentavos(aNumero(monto));
-  const montoUsd = Math.abs(montoUsdCrudo - saldoObjetivo) <= 0.01 ? saldoObjetivo : montoUsdCrudo;
+    ? (tasaNum > 0 ? pisoDiezmilesimas(aNumero(monto) / tasaNum) : 0)
+    : redondearDiezmilesimas(aNumero(monto));
+  const toleranciaCierre = enBs && tasaNum > 0 ? 1 / tasaNum : 0.01;
+  const montoUsd = Math.abs(montoUsdCrudo - saldoObjetivo) <= toleranciaCierre
+    ? saldoObjetivo
+    : montoUsdCrudo;
   const montoBs = montoUsd * tasaNum;
 
   /**
@@ -327,7 +345,7 @@ export default function CreditosPage() {
           <p className="text-sm text-gray-500">
             Deuda total: {formatearUSD(totalCartera)}
             {tasaNum > 0
-              ? <> · {formatearBs(usdABs(totalCartera, tasaNum))} <span className="text-xs text-gray-400">a la tasa de hoy</span></>
+              ? <> · {formatearBs(saldoUsdABs(totalCartera, tasaNum))} <span className="text-xs text-gray-400">a la tasa de hoy</span></>
               : <span className="font-medium text-red-500"> · sin tasa de hoy, no se puede valorar en Bs</span>}
           </p>
         </div>
@@ -360,7 +378,7 @@ export default function CreditosPage() {
                     </div>
                     <div className="shrink-0 text-right">
                       <p className="font-bold tabular-nums">{formatearUSD(c.saldo_usd)}</p>
-                      <p className="text-xs tabular-nums text-gray-400">{tasaNum > 0 ? formatearBs(usdABs(c.saldo_usd, tasaNum)) : '—'}</p>
+                      <p className="text-xs tabular-nums text-gray-400">{tasaNum > 0 ? formatearBs(saldoUsdABs(c.saldo_usd, tasaNum)) : '—'}</p>
                     </div>
                   </div>
                   {/* Solo los tramos con deuda: ahorra espacio y resalta la mora. */}
@@ -421,7 +439,7 @@ export default function CreditosPage() {
                     <td className="p-3 text-right tabular-nums font-semibold text-red-600">{formatearUSD(c.d90_mas, false)}</td>
                     <td className="p-3 text-right tabular-nums font-bold">
                       {formatearUSD(c.saldo_usd)}
-                      <span className="block text-xs font-normal text-gray-400">{tasaNum > 0 ? formatearBs(usdABs(c.saldo_usd, tasaNum)) : '—'}</span>
+                      <span className="block text-xs font-normal text-gray-400">{tasaNum > 0 ? formatearBs(saldoUsdABs(c.saldo_usd, tasaNum)) : '—'}</span>
                     </td>
                     <td className="p-3">
                       <div className="flex items-center justify-end gap-1">
@@ -515,7 +533,7 @@ export default function CreditosPage() {
                   <span className="ml-1 font-medium text-red-500">· {formatearUSD(vencidoTotal)} vencido</span>
                 )}
               </span>
-              <span className="tabular-nums">{tasaNum > 0 ? formatearBs(usdABs(deudaTotal, tasaNum)) : 'sin tasa de hoy'}</span>
+              <span className="tabular-nums">{tasaNum > 0 ? formatearBs(saldoUsdABs(deudaTotal, tasaNum)) : 'sin tasa de hoy'}</span>
             </div>
             {abonar && (
               <button onClick={() => imprimirCuenta(abonar)}
@@ -528,7 +546,7 @@ export default function CreditosPage() {
                 {quedaCuenta <= 0
                   ? <span className="font-semibold text-green-600">Con este abono la cuenta queda en cero</span>
                   : <>Con este abono queda debiendo <span className="font-semibold">{formatearUSD(quedaCuenta)}</span>
-                      {tasaNum > 0 && <span className="text-gray-400"> · {formatearBs(usdABs(quedaCuenta, tasaNum))}</span>}</>}
+                      {tasaNum > 0 && <span className="text-gray-400"> · {formatearBs(saldoUsdABs(quedaCuenta, tasaNum))}</span>}</>}
               </p>
             )}
           </div>
@@ -588,7 +606,7 @@ export default function CreditosPage() {
                         )}
                         <div className="text-right tabular-nums">
                           <p className="font-semibold">{formatearUSD(saldo)}</p>
-                          <p className="text-xs text-gray-400">{tasaNum > 0 ? formatearBs(usdABs(saldo, tasaNum)) : '—'}</p>
+                          <p className="text-xs text-gray-400">{tasaNum > 0 ? formatearBs(saldoUsdABs(saldo, tasaNum)) : '—'}</p>
                         </div>
                         {/* En teléfono baja a su propia línea en vez de apretar la fila. */}
                         <div className="w-full text-right sm:w-24">

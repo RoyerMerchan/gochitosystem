@@ -567,7 +567,10 @@ interface ResultadoPagos {
  * centavo de sobra generaba un movimiento de vueltas de ~Bs 7 que el cajero nunca
  * entrego y descuadraba el arqueo.
  *
- * Es la misma tolerancia que TOLERANCIA_CIERRE en creditos.service.
+ * Aqui SI va en centavos: el total de una venta vive en escala 2 y el centavo es su
+ * grano natural. No confundir con `toleranciaCierre` de creditos.service, que mide lo
+ * mismo sobre un SALDO en escala 4 y por eso se expresa en la moneda del pago
+ * (Bs 1,00 o $ 0,01) en vez de un centavo de dolar fijo.
  */
 const TOLERANCIA_REDONDEO = 1n;
 

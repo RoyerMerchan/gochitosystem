@@ -368,6 +368,16 @@ export const IDEMPOTENCIA_HORAS_VIGENCIA = 48;
 export const ESCALA = {
   /** Totales de documento en USD: DECIMAL(14,2). */
   TOTAL: 2,
+  /**
+   * Saldos del libro de creditos en USD: DECIMAL(14,4).
+   *
+   * Mas fino que un total de documento a proposito. La factura se emite en centavos
+   * redondos, pero se abona en bolivares: con la tasa a 777 Bs/$ un centavo de dolar
+   * vale Bs 7,77, y el residuo de dividir un abono en Bs por la tasa no cabia en el
+   * saldo —se lo tragaba el redondeo y el cliente terminaba debiendo de mas—.
+   * A escala 4 el grano es $ 0,0001 (Bs 0,08) y el residuo cabe.
+   */
+  SALDO_USD: 4,
   /** Precios y costos unitarios en USD: DECIMAL(14,4). */
   UNITARIO: 4,
   /** Cantidades: DECIMAL(14,3). */

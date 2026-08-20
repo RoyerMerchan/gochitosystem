@@ -86,6 +86,30 @@ export function usdABs(usd: unknown, tasa: unknown): number {
   return redondearCentavos(redondearCentavos(usd) * aNumero(tasa));
 }
 
+/** Redondea a diezmilesimas, la escala del libro de creditos (`ESCALA.SALDO_USD`). */
+export function redondearDiezmilesimas(valor: unknown): number {
+  const n = aNumero(valor);
+  const signo = n < 0 ? -1 : 1;
+  return (signo * Math.round(Math.abs(n) * 10000 + 1e-9)) / 10000;
+}
+
+/**
+ * Convierte un SALDO de credito a Bs. Distinto de `usdABs` a proposito.
+ *
+ * Un saldo no es el total de un documento: vive en escala 4 porque se abona en
+ * bolivares y el residuo de dividir por la tasa no cabe en un centavo de dolar.
+ * Redondearlo a centavos antes de multiplicar —lo que hace `usdABs`— vuelve a
+ * meter el error que la escala 4 vino a quitar: un saldo de $ 0,0159 (Bs 12,36) se
+ * convertiria en $ 0,02 y de ahi en Bs 15,55, cobrandole al cliente Bs 3,19 de mas.
+ *
+ * Para totales de venta se sigue usando `usdABs`: ahi el redondeo a centavos SI es
+ * correcto, porque la factura se emite en centavos redondos y el ticket impreso
+ * tiene que dar el mismo Bs que la pantalla.
+ */
+export function saldoUsdABs(saldoUsd: unknown, tasa: unknown): number {
+  return redondearCentavos(redondearDiezmilesimas(saldoUsd) * aNumero(tasa));
+}
+
 /** Dolares compactos para tarjetas: $ 1,3 K */
 export function formatearUSDCompacto(valor: unknown): string {
   const n = aNumero(valor);
