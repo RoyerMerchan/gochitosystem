@@ -145,6 +145,29 @@ export async function buscarPos(
   return conEquivalenteBs(porNombre, tasa);
 }
 
+/**
+ * Los productos de una lista de ids, con existencia y precio VIGENTES.
+ *
+ * La usa el POS al retomar una venta en espera: el carrito guardado trae una foto
+ * de precios y stock del momento en que se aparco, y entre medio pudo subir el
+ * precio o venderse la ultima unidad. Devuelve solo los que siguen vivos y activos;
+ * el que falte se avisa en pantalla en vez de arrastrarse en silencio.
+ */
+export async function listarPorIds(
+  ids: readonly number[],
+  sucursalId: number,
+  tasa: string | null,
+): Promise<ProductoListado[]> {
+  if (ids.length === 0) return [];
+  const marcas = ids.map(() => '?').join(',');
+  const filas = await query<ProductoListado>(
+    `${SELECT_BASE}
+     WHERE p.id IN (${marcas}) AND p.eliminado_en IS NULL AND p.esta_activo = TRUE`,
+    [sucursalId, ...ids],
+  );
+  return conEquivalenteBs(filas, tasa);
+}
+
 export async function obtenerPorId(
   id: Id,
   sucursalId: number,

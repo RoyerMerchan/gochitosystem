@@ -68,11 +68,14 @@ const REPORTES: { grupo: string; items: DefReporte[] }[] = [
       { clave: 'stockbajo', titulo: 'Stock bajo', url: '/reportes/ventas/stock-bajo', columnas: [
         { campo: 'sku', etiqueta: 'SKU' }, { campo: 'nombre', etiqueta: 'Producto' },
         { campo: 'cantidad', etiqueta: 'Stock', tipo: 'cant' }, { campo: 'stock_minimo', etiqueta: 'Mínimo', tipo: 'cant' }] },
-      { clave: 'metodospago', titulo: 'Métodos de pago', url: '/reportes/ventas/metodos-pago', columnas: [
-        { campo: 'metodo', etiqueta: 'Método' }, { campo: 'moneda', etiqueta: 'Moneda' },
-        { campo: 'transacciones', etiqueta: 'Transacciones', tipo: 'cant' },
-        { campo: 'total_moneda', etiqueta: 'Total en su moneda', tipo: 'cant' },
-        { campo: 'total_usd', etiqueta: 'Total USD', tipo: 'usd' }] },
+      { clave: 'metodospago', titulo: 'Métodos de pago', url: '/reportes/ventas/metodos-pago',
+        nota: 'Incluye los cobros de fiado. La columna Origen separa lo que vino de una venta del día de lo que vino de la cartera.',
+        columnas: [
+          { campo: 'metodo', etiqueta: 'Método' }, { campo: 'moneda', etiqueta: 'Moneda' },
+          { campo: 'origen', etiqueta: 'Origen' },
+          { campo: 'transacciones', etiqueta: 'Transacciones', tipo: 'cant' },
+          { campo: 'total_moneda', etiqueta: 'Total en su moneda', tipo: 'cant' },
+          { campo: 'total_usd', etiqueta: 'Total USD', tipo: 'usd' }] },
     ],
   },
   {

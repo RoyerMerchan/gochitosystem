@@ -34,6 +34,7 @@ interface EstadoCarrito {
   aplicarMayorTodo: (activar: boolean) => void;
   quitar: (productoId: number) => void;
   fijarCliente: (id: number | null, nombre: string) => void;
+  cargar: (items: ItemCarrito[], clienteId: number | null, clienteNombre: string) => void;
   limpiar: () => void;
 
   totalUsd: () => number;
@@ -121,6 +122,15 @@ export const useCarrito = create<EstadoCarrito>()(
       quitar: (id) => set((s) => ({ items: s.items.filter((i) => i.productoId !== id) })),
 
       fijarCliente: (id, nombre) => set({ clienteId: id, clienteNombre: nombre }),
+
+      /**
+       * Reemplaza el carrito completo. La usa el POS al retomar una venta en espera.
+       *
+       * Reemplaza y no mezcla a proposito: si el cajero tiene algo a medias y trae
+       * la compra de otra persona, fundir los dos carritos le cobraria al segundo lo
+       * del primero. La pantalla obliga a resolver el carrito actual antes.
+       */
+      cargar: (items, clienteId, clienteNombre) => set({ items, clienteId, clienteNombre }),
 
       limpiar: () => set({ items: [], clienteId: null, clienteNombre: 'CONSUMIDOR FINAL' }),
 

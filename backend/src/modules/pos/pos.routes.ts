@@ -1,6 +1,6 @@
 /**
  * Rutas del POS y del historial de ventas.
- *   default        -> /api/v1/pos      (POST /ventas: registrar venta)
+ *   default        -> /api/v1/pos      (POST /ventas, ventas en espera)
  *   rutasVentas    -> /api/v1/ventas   (historial y detalle)
  */
 import { Router, type Request } from 'express';
@@ -18,6 +18,7 @@ import { idempotencia } from '../../middlewares/idempotencia';
 import { esquemaPaginacion, normalizarPaginacion, construirMeta } from '../../utils/paginacion';
 import { enviarCreado, enviarOk } from '../../utils/respuesta';
 import * as pos from './pos.service';
+import * as espera from './espera.service';
 import type { VentaEntrada } from './pos.types';
 
 const decimal = z
@@ -73,6 +74,78 @@ router.post(
     }
   },
 );
+
+// -----------------------------------------------------------------------------
+// Ventas en espera: carritos aparcados
+//
+// Cuelgan del router del POS y no de `/ventas` a proposito: no son documentos, son
+// borradores de la pantalla de cobro. Piden el mismo permiso que vender, porque
+// aparcar y retomar es parte de atender la caja.
+// -----------------------------------------------------------------------------
+const esquemaEspera = z.object({
+  nombre: z.string().trim().min(1, 'Indique con que nombre guardarla').max(80),
+  clienteId: z.coerce.number().int().positive().nullable().optional(),
+  nota: z.string().trim().max(200).optional(),
+  totalUsd: decimal,
+  items: z.array(z.object({
+    productoId: z.coerce.number().int().positive(),
+    sku: z.string(),
+    nombre: z.string(),
+    precioUnitario: z.number(),
+    precioDetal: z.number(),
+    precioMayorista: z.number().nullable(),
+    esMayor: z.boolean(),
+    costoUnitario: z.number(),
+    impuestoTasa: z.number(),
+    esPrecioIncluyeImpuesto: z.boolean(),
+    cantidad: z.number().positive(),
+    descuentoUnitario: z.number(),
+    esPesable: z.boolean(),
+    stock: z.number(),
+  })).min(1, 'No hay nada que dejar en espera'),
+});
+
+router.get('/espera', requierePermiso('pos.vender'), async (req, res, next) => {
+  try {
+    enviarOk(res, await espera.listar(usuarioActual(req).sucursalId));
+  } catch (e) {
+    next(e);
+  }
+});
+
+router.post('/espera', requierePermiso('pos.vender'), validar({ body: esquemaEspera }), async (req, res, next) => {
+  try {
+    const entrada = datosBody<z.infer<typeof esquemaEspera>>(req);
+    enviarCreado(res, await espera.guardar(entrada, usuarioActual(req)));
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
+ * POST y no GET: retomar SACA la venta de la gaveta (ver espera.service), asi que
+ * muta. Un GET aqui invitaria a que un prefetch del navegador vaciara la lista.
+ */
+router.post('/espera/:id/retomar', requierePermiso('pos.vender'),
+  validar({ params: esquemaParamsId }), async (req, res, next) => {
+    try {
+      const { id } = datosParams<{ id: number }>(req);
+      enviarOk(res, await espera.retomar(id, usuarioActual(req).sucursalId));
+    } catch (e) {
+      next(e);
+    }
+  });
+
+router.delete('/espera/:id', requierePermiso('pos.vender'),
+  validar({ params: esquemaParamsId }), async (req, res, next) => {
+    try {
+      const { id } = datosParams<{ id: number }>(req);
+      await espera.descartar(id, usuarioActual(req).sucursalId);
+      enviarOk(res, { mensaje: 'Venta en espera descartada' });
+    } catch (e) {
+      next(e);
+    }
+  });
 
 // -----------------------------------------------------------------------------
 // Router Ventas: historial y detalle

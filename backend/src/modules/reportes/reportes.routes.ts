@@ -215,23 +215,45 @@ router.get('/ventas/stock-bajo', requierePermiso('reportes.ver'), async (req, re
 // ---------------------------------------------------------------------------
 // PAGOS: estadistica por metodo de pago
 // ---------------------------------------------------------------------------
+/**
+ * Cuanto entro por cada metodo de pago, separando de donde vino la plata.
+ *
+ * Los abonos NO viven en `pagos` (esa tabla es solo de ventas): tienen su propia
+ * tabla. Leyendo unicamente `pagos`, cobrar un fiado en efectivo $ no aparecia en
+ * ninguna fila y el reporte no cuadraba con la gaveta. De ahi el UNION.
+ *
+ * La columna `origen` los mantiene separados: el mismo metodo puede traer plata de
+ * una venta del dia y de una cartera vieja, y para cuadrar la caja hace falta el
+ * total, pero para leer el negocio hace falta la distincion.
+ *
+ * En abonos se toma `monto_usd` completo, no el neto de `saldo_a_favor_usd`: por la
+ * gaveta entro todo, aunque una parte quedara como saldo a favor del cliente.
+ */
 router.get('/ventas/metodos-pago', requierePermiso('reportes.ver'), validar({ query: esquemaRango }), async (req, res, next) => {
   try {
     const q = datosQuery<Rango>(req); const u = usuarioActual(req);
-    const cond = ["v.estado = 'CERRADA'", 'v.sucursal_id = ?', "pg.estado = 'APLICADO'"];
-    const params: (string | number)[] = [u.sucursalId];
-    if (q.desde) { cond.push('v.fecha >= ?'); params.push(`${q.desde} 00:00:00`); }
-    if (q.hasta) { cond.push('v.fecha <= ?'); params.push(`${q.hasta} 23:59:59`); }
+    const { where: whereV, params: paramsV } = rangoVentas(q, u.sucursalId);
+    const { where: whereAb, params: paramsAb } = rangoAbonos(q, u.sucursalId);
     const datos = await queryReporte(
-      `SELECT mp.nombre AS metodo, mp.moneda, COUNT(*) AS transacciones,
-              SUM(pg.monto_moneda) AS total_moneda, SUM(pg.monto_usd) AS total_usd
-         FROM pagos pg
-         JOIN metodos_pago mp ON mp.id = pg.metodo_pago_id
-         JOIN ventas v ON v.id = pg.venta_id
-        WHERE ${cond.join(' AND ')}
-        GROUP BY mp.id, mp.nombre, mp.moneda
-        ORDER BY total_usd DESC`,
-      params,
+      `WITH cobros AS (
+         SELECT pg.metodo_pago_id, 'Venta' AS origen,
+                pg.monto_moneda, pg.monto_usd
+           FROM pagos pg JOIN ventas v ON v.id = pg.venta_id
+          WHERE ${whereV} AND pg.estado = 'APLICADO'
+         UNION ALL
+         SELECT a.metodo_pago_id, 'Abono de fiado' AS origen,
+                a.monto_moneda, ROUND(a.monto_usd, 2)
+           FROM abonos a
+          WHERE ${whereAb}
+       )
+       SELECT mp.nombre AS metodo, mp.moneda, c.origen, COUNT(*) AS transacciones,
+              SUM(c.monto_moneda) AS total_moneda, SUM(c.monto_usd) AS total_usd
+         FROM cobros c JOIN metodos_pago mp ON mp.id = c.metodo_pago_id
+        GROUP BY mp.id, mp.nombre, mp.moneda, c.origen
+        -- Las dos filas de un mismo metodo quedan juntas: se ordena por el total
+        -- del METODO (ventana sobre el agregado), no por el de cada renglon.
+        ORDER BY SUM(SUM(c.monto_usd)) OVER (PARTITION BY mp.id) DESC, mp.nombre, c.origen`,
+      [...paramsV, ...paramsAb],
     );
     enviarOk(res, datos);
   } catch (e) { next(e); }

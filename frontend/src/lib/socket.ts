@@ -22,7 +22,9 @@ const MAPA_INVALIDACION: Record<string, string[]> = {
   // saldo que te deben se quedaba congelado hasta recargar la página.
   // 'estado-cuenta' es la cuenta de una persona abierta en el modal de abono: si
   // otra caja le fia o le cobra, tiene que verse ahi sin recargar.
-  pos: ['ventas', 'venta-detalle', 'existencias', 'productos', 'prodBuscar', 'cajas-estado', 'turno-activo', 'cartera', 'estado-cuenta', 'clientes', 'dashboard'],
+  // 'ventas-espera': la gaveta de carritos aparcados es compartida por la sucursal;
+  // si otra caja guarda o retoma uno, el contador del POS tiene que moverse solo.
+  pos: ['ventas', 'venta-detalle', 'existencias', 'productos', 'prodBuscar', 'cajas-estado', 'turno-activo', 'cartera', 'estado-cuenta', 'clientes', 'dashboard', 'ventas-espera'],
   ventas: ['ventas', 'venta-detalle', 'existencias', 'productos', 'prodBuscar', 'cajas-estado', 'turno-activo', 'cartera', 'estado-cuenta', 'dashboard'],
   // 'dashboard' trae el gasto en mercancía y lo que se le debe a proveedores.
   compras: ['compras', 'compra-detalle', 'existencias', 'productos', 'prodBuscar', 'proveedores', 'dashboard'],

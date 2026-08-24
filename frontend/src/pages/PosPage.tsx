@@ -1,15 +1,17 @@
 /**
  * Punto de venta. Buscador con scanner, carrito y cobro bimonetario.
- * Atajos: F2 buscar, F9 cobrar, Esc limpiar buscador.
+ * Atajos: F2 buscar, F3 cliente, F4 ventas en espera, F9 cobrar, Esc limpiar buscador.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Trash2, Plus, Minus, ShoppingCart, AlertTriangle } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { Search, Trash2, Plus, Minus, ShoppingCart, AlertTriangle, PauseCircle } from 'lucide-react';
 import { obtener, crear } from '@/lib/axios';
 import { ErrorApi } from '@/lib/errores';
 import { useCarrito } from '@/features/pos/carritoStore';
 import { ModalCobro, type LineaPagoEnvio } from '@/features/pos/ModalCobro';
 import { ModalCliente } from '@/features/pos/ModalCliente';
+import { ModalEspera } from '@/features/pos/ModalEspera';
 import { METODOS_PAGO } from '@/features/pos/metodosPago';
 import { imprimirTicket } from '@/features/pos/ticket';
 import { NEGOCIO } from '@/config/negocio';
@@ -40,8 +42,19 @@ export default function PosPage() {
   const [buscando, setBuscando] = useState(false);
   const [cobrando, setCobrando] = useState(false);
   const [eligiendoCliente, setEligiendoCliente] = useState(false);
+  const [viendoEspera, setViendoEspera] = useState(false);
   const [procesando, setProcesando] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  /**
+   * Cuantas ventas hay aparcadas. Solo alimenta el contador del boton; la lista
+   * completa la trae el modal cuando se abre, con esta misma clave de cache.
+   */
+  const enEspera = useQuery({
+    queryKey: ['ventas-espera'],
+    queryFn: () => obtener<unknown[]>('/pos/espera'),
+  });
+  const cuantasEnEspera = enEspera.data?.length ?? 0;
 
   const totalUsd = carrito.totalUsd();
   const items = carrito.items;
@@ -83,6 +96,9 @@ export default function PosPage() {
       } else if (e.key === 'F3') {
         e.preventDefault();
         setEligiendoCliente(true);
+      } else if (e.key === 'F4') {
+        e.preventDefault();
+        setViendoEspera(true);
       } else if (e.key === 'F9') {
         e.preventDefault();
         if (items.length > 0 && tasaNum > 0) setCobrando(true);
@@ -362,6 +378,21 @@ export default function PosPage() {
           COBRAR (F9)
         </button>
 
+        {/* La gaveta de carritos aparcados. Siempre visible: con el carrito lleno
+            sirve para guardar, y vacio para retomar lo que quedo pendiente. */}
+        <button
+          onClick={() => setViendoEspera(true)}
+          className="flex items-center justify-center gap-2 rounded-xl border border-amber-400 py-2.5 text-sm font-semibold text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/20"
+        >
+          <PauseCircle className="h-4 w-4" />
+          {items.length > 0 ? 'Dejar en espera (F4)' : 'Ventas en espera (F4)'}
+          {cuantasEnEspera > 0 && (
+            <span className="rounded-full bg-amber-500 px-2 py-0.5 text-xs font-bold text-white">
+              {cuantasEnEspera}
+            </span>
+          )}
+        </button>
+
         {items.length > 0 && (
           <button
             onClick={() => carrito.limpiar()}
@@ -386,6 +417,8 @@ export default function PosPage() {
         onCerrar={() => setEligiendoCliente(false)}
         onSeleccionar={(id, nombre) => carrito.fijarCliente(id, nombre)}
       />
+
+      <ModalEspera abierto={viendoEspera} onCerrar={() => setViendoEspera(false)} />
     </div>
   );
 }
