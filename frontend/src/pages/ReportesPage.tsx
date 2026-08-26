@@ -9,7 +9,13 @@ import { Card, Cargando, EmptyState } from '@/components/ui/Feedback';
 import { FiltroPeriodo } from '@/components/ui/FiltroPeriodo';
 import { formatearUSD, formatearBs, formatearCantidad, formatearFecha, formatearFechaHora, aNumero } from '@/lib/formato';
 
-type TipoCol = 'usd' | 'bs' | 'cant' | 'texto' | 'fecha' | 'dia';
+/**
+ * 'bs'     = bolivares VALORADOS (un monto en USD llevado a Bs con la tasa del dia).
+ *            Cada dia tiene su tasa, asi que sumarlos entre dias no da una cifra real.
+ * 'bsreal' = bolivares FISICOS, los que de verdad entraron a la gaveta. Son billetes:
+ *            se pueden sumar entre dias como cualquier otro numero.
+ */
+type TipoCol = 'usd' | 'bs' | 'bsreal' | 'cant' | 'texto' | 'fecha' | 'dia';
 
 interface DefReporte {
   clave: string;
@@ -21,41 +27,46 @@ interface DefReporte {
 }
 
 /** Columnas que se suman en la fila de totales. */
-const SUMABLES: TipoCol[] = ['usd', 'bs', 'cant'];
+const SUMABLES: TipoCol[] = ['usd', 'bs', 'bsreal', 'cant'];
 
 const REPORTES: { grupo: string; items: DefReporte[] }[] = [
   {
     grupo: 'Ventas',
     items: [
       { clave: 'pordia', titulo: 'Cierre por día', url: '/reportes/ventas/por-dia',
-        nota: 'Base cobrada: lo que salió a crédito NO suma; entra el día que el cliente abona.',
+        nota: 'Base cobrada: lo que salió a crédito NO suma; entra el día que el cliente abona, y ahí aparece en Abonos. «Entró en $» y «Entró en Bs» son el dinero real de cada gaveta (ventas + fiados cobrados, ya descontado el vuelto); no se netean entre sí. «COBRADO USD» es lo mismo pero todo valorado en dólares.',
         columnas: [
           { campo: 'dia', etiqueta: 'Día', tipo: 'dia' }, { campo: 'ventas', etiqueta: 'N.º ventas', tipo: 'cant' },
           { campo: 'contado_usd', etiqueta: 'Contado USD', tipo: 'usd' },
           { campo: 'abonos_usd', etiqueta: 'Abonos USD', tipo: 'usd' },
           { campo: 'cobrado_usd', etiqueta: 'COBRADO USD', tipo: 'usd' },
-          { campo: 'cobrado_bs', etiqueta: 'Cobrado Bs', tipo: 'bs' },
+          { campo: 'entro_usd', etiqueta: 'Entró en $', tipo: 'usd' },
+          { campo: 'entro_bs', etiqueta: 'Entró en Bs', tipo: 'bsreal' },
           { campo: 'credito_usd', etiqueta: 'Salió a crédito', tipo: 'usd' },
           { campo: 'utilidad_usd', etiqueta: 'Utilidad USD', tipo: 'usd' }] },
       { clave: 'detalle', titulo: 'Detalle de ventas', url: '/reportes/ventas/detalle',
-        nota: 'Ventas de contado y a crédito juntas. La columna Contado es lo que entró ese día; Crédito quedó por cobrar.',
+        nota: 'Estado es el de COBRO: un fiado ya pagado dice PAGADA. Recuperado es cuánto de esa venta se ha cobrado hasta hoy (contado + abonos), aunque el abono haya entrado otro día; el día en que entró la plata está en «Abonos cobrados».',
         columnas: [
           { campo: 'fecha', etiqueta: 'Fecha', tipo: 'fecha' }, { campo: 'numero', etiqueta: 'N.º' },
           { campo: 'tipo', etiqueta: 'Tipo' },
+          { campo: 'estado_pago', etiqueta: 'Estado' },
           { campo: 'cliente', etiqueta: 'Cliente' }, { campo: 'cajero', etiqueta: 'Cajero' },
           { campo: 'metodo', etiqueta: 'Método de pago' },
           { campo: 'total_usd', etiqueta: 'Total USD', tipo: 'usd' },
           { campo: 'contado_usd', etiqueta: 'Contado USD', tipo: 'usd' },
           { campo: 'credito_usd', etiqueta: 'Crédito USD', tipo: 'usd' },
+          { campo: 'cobrado_usd', etiqueta: 'Recuperado USD', tipo: 'usd' },
           { campo: 'saldo_usd', etiqueta: 'Saldo pendiente', tipo: 'usd' },
           { campo: 'utilidad_usd', etiqueta: 'Utilidad USD', tipo: 'usd' }] },
       { clave: 'abonos', titulo: 'Abonos cobrados', url: '/reportes/ventas/abonos',
-        nota: 'Créditos que se cobraron en el período. Esto sí es venta del día en que se recibió.',
+        nota: 'Fiados que se cobraron en el período: es plata del día en que se recibió. «Entró $» y «Entró Bs» son el dinero real en cada moneda (un pago en dólares deja Bs en cero). «Abonado USD» es lo que se le descontó a la deuda. «Saldó» dice cuántas facturas quedaron pagadas con ese abono.',
         columnas: [
           { campo: 'fecha', etiqueta: 'Fecha', tipo: 'fecha' }, { campo: 'numero', etiqueta: 'N.º' },
           { campo: 'cliente', etiqueta: 'Cliente' }, { campo: 'metodo', etiqueta: 'Método' },
-          { campo: 'abonado_usd', etiqueta: 'Abonado USD', tipo: 'usd' },
-          { campo: 'abonado_bs', etiqueta: 'Abonado Bs', tipo: 'bs' },
+          { campo: 'entro_usd', etiqueta: 'Entró $', tipo: 'usd' },
+          { campo: 'entro_bs', etiqueta: 'Entró Bs', tipo: 'bsreal' },
+          { campo: 'abonado_usd', etiqueta: 'Abonado a la deuda USD', tipo: 'usd' },
+          { campo: 'facturas_saldadas', etiqueta: 'Saldó', tipo: 'cant' },
           { campo: 'cajero', etiqueta: 'Cajero' }] },
       { clave: 'mas', titulo: 'Más vendidos', url: '/reportes/ventas/mas-vendidos', columnas: [
         { campo: 'producto', etiqueta: 'Producto' }, { campo: 'cantidad', etiqueta: 'Cantidad', tipo: 'cant' },
@@ -153,7 +164,7 @@ export default function ReportesPage() {
 
   const formatear = (valor: unknown, tipo?: TipoCol) => {
     if (tipo === 'usd') return formatearUSD(valor);
-    if (tipo === 'bs') return formatearBs(valor);
+    if (tipo === 'bs' || tipo === 'bsreal') return formatearBs(valor);
     if (tipo === 'cant') return formatearCantidad(valor);
     if (tipo === 'fecha') return formatearFechaHora(valor as string);
     if (tipo === 'dia') return formatearFecha(valor as string);
@@ -188,7 +199,8 @@ export default function ReportesPage() {
     const acc: Record<string, number> = {};
     for (const c of sel.columnas) {
       if (!c.tipo || !SUMABLES.includes(c.tipo)) continue;
-      // Bs de varios días mezcla tasas distintas: no se suma, se deja vacío.
+      // Bs VALORADOS de varios días mezclan tasas distintas: no se suman, se deja
+      // vacío. Los 'bsreal' son billetes y sí se suman siempre.
       if (c.tipo === 'bs' && !puedeSumarBs) continue;
       acc[c.campo] = filas.reduce((a, f) => a + aNumero(f[c.campo] as string), 0);
     }

@@ -72,8 +72,28 @@ async function masVendidos(q: Rango, sucursalId: number, orden: 'DESC' | 'ASC') 
  * ventas de ese dia mas los abonos recibidos ese dia. El credito otorgado va en
  * su columna, informativo, sin sumar a lo cobrado.
  *
- * FULL JOIN porque un dia puede tener solo abonos (nadie compro, pero pagaron
- * fiado) o solo ventas; con un JOIN normal ese dia se perderia del reporte.
+ * DOS LECTURAS DE LA MISMA PLATA, que no hay que confundir:
+ *
+ *   cobrado_usd            cuanto VALE lo que entro, siempre en USD. Es la moneda
+ *                          de cuenta del negocio: sirve para comparar dias.
+ *   entro_usd / entro_bs   el DINERO REAL, cada billete en su moneda. Es lo que se
+ *                          cuenta en cada gaveta al cerrar, y no se netean entre si.
+ *
+ * Antes habia un `cobrado_bs` que era cobrado_usd x tasa: un dia cobrado
+ * integramente en dolares mostraba bolivares que nunca entraron a la caja. Lo
+ * reemplaza el par entro_usd / entro_bs, que sale de los cobros de verdad.
+ *
+ * De donde sale cada moneda:
+ *   - `pagos` de las ventas del dia, BRUTO (monto_moneda es el billete completo).
+ *   - menos el vuelto de esas ventas, que sale de la gaveta y puede entregarse en
+ *     la otra moneda (de ahi que se lea de movimientos_caja y no de la venta).
+ *   - mas los abonos del dia: AHI ESTA LA DEUDA SALDADA, en la moneda con la que el
+ *     cliente pago. Su `monto_moneda` ya viene neto del vuelto (creditos.service lo
+ *     calcula asi), por eso a los abonos no se les resta nada.
+ *
+ * El vuelto se junta con `ventas` en vez de filtrarse solo por fecha porque anular
+ * una venta no revierte ni sus pagos ni sus movimientos de caja: sin ese JOIN, el
+ * vuelto de una venta anulada seguiria restando de la gaveta.
  */
 router.get('/ventas/por-dia', requierePermiso('reportes.ver'), validar({ query: esquemaRangoDetalle }), async (req, res, next) => {
   try {
@@ -88,42 +108,91 @@ router.get('/ventas/por-dia', requierePermiso('reportes.ver'), validar({ query: 
          SELECT TO_CHAR(DATE(v.fecha), 'YYYY-MM-DD') AS dia, COUNT(*) AS ventas,
                 SUM(v.total_usd) AS facturado_usd,
                 SUM(v.total_usd - v.total_credito) AS contado_usd,
-                SUM(ROUND((v.total_usd - v.total_credito) * v.tasa_cambio, 2)) AS contado_bs,
                 SUM(v.total_credito) AS credito_usd,
                 SUM(v.utilidad_total) AS utilidad_usd
            FROM ventas v WHERE ${where} GROUP BY 1
        ), dias_abono AS (
          SELECT TO_CHAR(DATE(a.fecha), 'YYYY-MM-DD') AS dia,
-                SUM(a.monto_usd - a.saldo_a_favor_usd) AS abonos_usd,
-                SUM(ROUND((a.monto_usd - a.saldo_a_favor_usd) * a.tasa_aplicada, 2)) AS abonos_bs
+                SUM(a.monto_usd - a.saldo_a_favor_usd) AS abonos_usd
            FROM abonos a WHERE ${whereAb} GROUP BY 1
+       ), caja AS (
+         -- Lo que entro por las ventas, cada cobro en SU moneda (bruto: el billete).
+         SELECT TO_CHAR(DATE(v.fecha), 'YYYY-MM-DD') AS dia,
+                CASE WHEN p.moneda = 'USD' THEN p.monto_moneda ELSE 0 END AS usd,
+                CASE WHEN p.moneda = 'VES' THEN p.monto_moneda ELSE 0 END AS bs
+           FROM pagos p JOIN ventas v ON v.id = p.venta_id
+          WHERE ${where} AND p.estado = 'APLICADO'
+         UNION ALL
+         -- El vuelto de esas ventas sale de la gaveta: resta, y en su propia moneda.
+         SELECT TO_CHAR(DATE(v.fecha), 'YYYY-MM-DD'),
+                CASE WHEN m.moneda = 'USD' THEN -m.monto_moneda ELSE 0 END,
+                CASE WHEN m.moneda = 'VES' THEN -m.monto_moneda ELSE 0 END
+           FROM movimientos_caja m JOIN ventas v ON v.id = m.documento_id
+          WHERE ${where} AND m.documento_tipo = 'VENTA' AND m.tipo = 'VUELTAS'
+         UNION ALL
+         -- Los fiados cobrados ese dia, en la moneda con la que el cliente pago.
+         SELECT TO_CHAR(DATE(a.fecha), 'YYYY-MM-DD'),
+                CASE WHEN a.moneda = 'USD' THEN a.monto_moneda ELSE 0 END,
+                CASE WHEN a.moneda = 'VES' THEN a.monto_moneda ELSE 0 END
+           FROM abonos a WHERE ${whereAb}
+       ), dias_caja AS (
+         SELECT dia, SUM(usd) AS entro_usd, SUM(bs) AS entro_bs FROM caja GROUP BY 1
+       ), dias AS (
+         -- Un dia puede tener solo abonos (nadie compro, pero pagaron fiado) o solo
+         -- ventas: la lista de dias es la union de los dos y de ahi cuelga el resto.
+         SELECT dia FROM dias_venta UNION SELECT dia FROM dias_abono
        )
-       SELECT COALESCE(dv.dia, da.dia) AS dia,
+       SELECT d.dia,
               COALESCE(dv.ventas, 0) AS ventas,
               COALESCE(dv.contado_usd, 0) AS contado_usd,
               COALESCE(da.abonos_usd, 0) AS abonos_usd,
               COALESCE(dv.contado_usd, 0) + COALESCE(da.abonos_usd, 0) AS cobrado_usd,
-              COALESCE(dv.contado_bs, 0) + COALESCE(da.abonos_bs, 0) AS cobrado_bs,
+              COALESCE(dc.entro_usd, 0) AS entro_usd,
+              COALESCE(dc.entro_bs, 0) AS entro_bs,
               COALESCE(dv.credito_usd, 0) AS credito_usd,
               COALESCE(dv.facturado_usd, 0) AS facturado_usd,
               COALESCE(dv.utilidad_usd, 0) AS utilidad_usd
-         FROM dias_venta dv FULL JOIN dias_abono da ON da.dia = dv.dia
-        ORDER BY 1 DESC LIMIT ?`,
-      [...params, ...paramsAb, q.limite],
+         FROM dias d
+         LEFT JOIN dias_venta dv ON dv.dia = d.dia
+         LEFT JOIN dias_abono da ON da.dia = d.dia
+         LEFT JOIN dias_caja  dc ON dc.dia = d.dia
+        ORDER BY d.dia DESC LIMIT ?`,
+      // El orden importa: los placeholders se numeran por posicion en el TEXTO del
+      // SQL, y aqui `where` aparece tres veces (dias_venta, pagos, vueltas) y
+      // `whereAb` dos (dias_abono, abonos de caja).
+      [...params, ...paramsAb, ...params, ...params, ...paramsAb, q.limite],
     ));
   } catch (e) { next(e); }
 });
 
-/** Abonos cobrados en el rango: el detalle de lo que se recuperó de la cartera. */
+/**
+ * Abonos cobrados en el rango: el detalle de lo que se recuperó de la cartera.
+ *
+ * `entro_usd` / `entro_bs` es la plata REAL, cada una en su moneda: si el cliente
+ * pago Bs 7.000, entro_bs son 7.000 y entro_usd es 0. Antes habia una sola columna
+ * "Abonado Bs" que era el equivalente (USD x tasa) del abono, asi que un pago en
+ * dolares mostraba bolivares que nunca entraron a la caja. Ahora cada columna suma
+ * lo que de verdad hay que contar en su gaveta.
+ *
+ * `abonado_usd` es otra cosa y por eso convive: es lo que se le DESCONTO A LA DEUDA,
+ * que siempre se lleva en USD sin importar con que se pago.
+ *
+ * `facturas_saldadas` responde "¿esta deuda quedo pagada?": cuantos de los creditos
+ * a los que se aplico este abono quedaron en cero.
+ */
 router.get('/ventas/abonos', requierePermiso('reportes.ver'), validar({ query: esquemaRangoDetalle }), async (req, res, next) => {
   try {
     const q = datosQuery<Rango>(req);
     const { where, params } = rangoAbonos(q, usuarioActual(req).sucursalId);
     enviarOk(res, await queryReporte(
       `SELECT a.fecha, a.prefijo || a.numero AS numero, c.nombre AS cliente,
-              mp.nombre AS metodo, a.moneda, a.monto_moneda,
+              mp.nombre AS metodo, a.moneda,
+              CASE WHEN a.moneda = 'USD' THEN a.monto_moneda ELSE 0 END AS entro_usd,
+              CASE WHEN a.moneda = 'VES' THEN a.monto_moneda ELSE 0 END AS entro_bs,
               (a.monto_usd - a.saldo_a_favor_usd) AS abonado_usd,
-              ROUND((a.monto_usd - a.saldo_a_favor_usd) * a.tasa_aplicada, 2) AS abonado_bs,
+              (SELECT COUNT(*) FROM abono_aplicaciones aa
+                 JOIN creditos cr ON cr.id = aa.credito_id
+                WHERE aa.abono_id = a.id AND cr.estado = 'PAGADO') AS facturas_saldadas,
               u.nombre_completo AS cajero
          FROM abonos a
          JOIN clientes c ON c.id = a.cliente_id
@@ -135,36 +204,56 @@ router.get('/ventas/abonos', requierePermiso('reportes.ver'), validar({ query: e
   } catch (e) { next(e); }
 });
 
-/** Detalle venta por venta del rango: lo que se saca para cuadrar el dia. */
+/**
+ * Detalle venta por venta del rango: lo que se saca para cuadrar el dia.
+ *
+ * Trae el ESTADO DE COBRO, no el del documento. Un fiado que el cliente ya pago
+ * sigue siendo una venta a credito, pero la plata ya entro: si el reporte solo
+ * dijera "CREDITO" no habria forma de distinguir la deuda viva de la saldada, que
+ * es justo lo que se mira al cerrar el dia. Misma regla que el badge de la pantalla
+ * de Ventas (pos.service, listarVentas): se deriva del saldo vivo, no de un campo.
+ *
+ * OJO con la fecha: la venta esta fechada el dia que se FIO. El dinero del abono
+ * entro el dia que el cliente pago y se ve en "Abonos cobrados" con esa otra fecha.
+ * Por eso `cobrado_usd` dice "recuperado a hoy" y no "cobrado este dia".
+ */
 router.get('/ventas/detalle', requierePermiso('reportes.ver'), validar({ query: esquemaRangoDetalle }), async (req, res, next) => {
   try {
     const q = datosQuery<Rango>(req);
     const { where, params } = rangoVentas(q, usuarioActual(req).sucursalId);
     enviarOk(res, await queryReporte(
-      `SELECT v.fecha, v.prefijo || v.numero AS numero,
-              COALESCE(c.nombre, 'CONSUMIDOR FINAL') AS cliente,
-              u.nombre_completo AS cajero,
-              COALESCE((SELECT STRING_AGG(DISTINCT mp.nombre, ', ')
-                          FROM pagos pg JOIN metodos_pago mp ON mp.id = pg.metodo_pago_id
-                         WHERE pg.venta_id = v.id), '') ||
-                CASE WHEN v.es_credito THEN
-                  CASE WHEN EXISTS (SELECT 1 FROM pagos pg2 WHERE pg2.venta_id = v.id)
-                       THEN ' + Credito' ELSE 'Credito' END
-                ELSE '' END AS metodo,
-              CASE WHEN v.es_credito THEN 'CREDITO' ELSE 'CONTADO' END AS tipo,
-              v.total_usd,
-              -- Contado y credito de la MISMA venta: una venta a credito puede
-              -- llevar abono inicial, asi que las dos columnas conviven.
-              (v.total_usd - v.total_credito) AS contado_usd,
-              v.total_credito AS credito_usd,
-              COALESCE((SELECT SUM(cr.saldo_usd) FROM creditos cr
-                         WHERE cr.venta_id = v.id AND cr.estado <> 'ANULADO'), 0) AS saldo_usd,
-              v.total_bs, v.utilidad_total AS utilidad_usd
-         FROM ventas v
-         LEFT JOIN clientes c ON c.id = v.cliente_id
-         JOIN usuarios u ON u.id = v.usuario_id
-        WHERE ${where}
-        ORDER BY v.fecha DESC LIMIT ?`,
+      // El saldo se calcula una sola vez en la subconsulta y afuera se derivan el
+      // estado y lo recuperado: repetir el SUM en tres columnas seria tres pasadas
+      // sobre `creditos` por cada venta del dia.
+      `SELECT d.*,
+              CASE WHEN d.saldo_usd > 0 THEN 'POR COBRAR' ELSE 'PAGADA' END AS estado_pago,
+              (d.total_usd - d.saldo_usd) AS cobrado_usd
+         FROM (
+           SELECT v.fecha, v.prefijo || v.numero AS numero,
+                  COALESCE(c.nombre, 'CONSUMIDOR FINAL') AS cliente,
+                  u.nombre_completo AS cajero,
+                  COALESCE((SELECT STRING_AGG(DISTINCT mp.nombre, ', ')
+                              FROM pagos pg JOIN metodos_pago mp ON mp.id = pg.metodo_pago_id
+                             WHERE pg.venta_id = v.id), '') ||
+                    CASE WHEN v.es_credito THEN
+                      CASE WHEN EXISTS (SELECT 1 FROM pagos pg2 WHERE pg2.venta_id = v.id)
+                           THEN ' + Credito' ELSE 'Credito' END
+                    ELSE '' END AS metodo,
+                  CASE WHEN v.es_credito THEN 'CREDITO' ELSE 'CONTADO' END AS tipo,
+                  v.total_usd,
+                  -- Contado y credito de la MISMA venta: una venta a credito puede
+                  -- llevar abono inicial, asi que las dos columnas conviven.
+                  (v.total_usd - v.total_credito) AS contado_usd,
+                  v.total_credito AS credito_usd,
+                  COALESCE((SELECT SUM(cr.saldo_usd) FROM creditos cr
+                             WHERE cr.venta_id = v.id AND cr.estado <> 'ANULADO'), 0) AS saldo_usd,
+                  v.total_bs, v.utilidad_total AS utilidad_usd
+             FROM ventas v
+             LEFT JOIN clientes c ON c.id = v.cliente_id
+             JOIN usuarios u ON u.id = v.usuario_id
+            WHERE ${where}
+         ) d
+        ORDER BY d.fecha DESC LIMIT ?`,
       [...params, q.limite],
     ));
   } catch (e) { next(e); }
