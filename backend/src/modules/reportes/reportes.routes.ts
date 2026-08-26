@@ -39,6 +39,20 @@ function rangoVentas(q: Rango, sucursalId: number): { where: string; params: (st
   return { where: cond.join(' AND '), params };
 }
 
+/*
+  Las columnas del vuelto de un abono se leen por to_jsonb, igual que en
+  creditos.service: nombrarlas directo hace reventar TODA la consulta si la
+  migracion que las agrega todavia no corrio en esta base —y el migrador se traga
+  los fallos, asi que pasa sin que nadie se entere—. Con to_jsonb llegan en null y
+  el reporte sigue en pie.
+*/
+/** El billete que el cliente puso sobre el mostrador, en la moneda del cobro. */
+const ABONO_RECIBIDO = `COALESCE((to_jsonb(a) ->> 'monto_recibido_moneda')::NUMERIC, a.monto_moneda)`;
+/** Lo que se le devolvio de vuelto. */
+const ABONO_VUELTO = `COALESCE((to_jsonb(a) ->> 'cambio_moneda')::NUMERIC, 0)`;
+/** En que moneda salio ese vuelto: puede NO ser la del cobro (paga en Bs, recibe $). */
+const ABONO_VUELTO_MONEDA = `COALESCE(to_jsonb(a) ->> 'cambio_moneda_codigo', a.moneda::TEXT)`;
+
 /** Mismo rango, sobre abonos aplicados (lo cobrado de la cartera). */
 function rangoAbonos(q: Rango, sucursalId: number): { where: string; params: (string | number)[] } {
   const cond = ["a.estado = 'APLICADO'", 'a.sucursal_id = ?'];
@@ -87,9 +101,12 @@ async function masVendidos(q: Rango, sucursalId: number, orden: 'DESC' | 'ASC') 
  *   - `pagos` de las ventas del dia, BRUTO (monto_moneda es el billete completo).
  *   - menos el vuelto de esas ventas, que sale de la gaveta y puede entregarse en
  *     la otra moneda (de ahi que se lea de movimientos_caja y no de la venta).
- *   - mas los abonos del dia: AHI ESTA LA DEUDA SALDADA, en la moneda con la que el
- *     cliente pago. Su `monto_moneda` ya viene neto del vuelto (creditos.service lo
- *     calcula asi), por eso a los abonos no se les resta nada.
+ *   - mas los abonos del dia: AHI ESTA LA DEUDA SALDADA. Se tratan igual que las
+ *     ventas —el billete completo menos su vuelto— y NO con `monto_moneda`. Ese
+ *     campo es el neto pero SOLO en la moneda del cobro: si el cliente paga con un
+ *     billete de Bs y se le devuelve en dolares, la gaveta de Bs sube por el billete
+ *     entero y la de dolares baja por el vuelto, y `monto_moneda` no cuenta ninguna
+ *     de las dos cosas.
  *
  * El vuelto se junta con `ventas` en vez de filtrarse solo por fecha porque anular
  * una venta no revierte ni sus pagos ni sus movimientos de caja: sin ese JOIN, el
@@ -130,10 +147,16 @@ router.get('/ventas/por-dia', requierePermiso('reportes.ver'), validar({ query: 
            FROM movimientos_caja m JOIN ventas v ON v.id = m.documento_id
           WHERE ${where} AND m.documento_tipo = 'VENTA' AND m.tipo = 'VUELTAS'
          UNION ALL
-         -- Los fiados cobrados ese dia, en la moneda con la que el cliente pago.
+         -- Los fiados cobrados ese dia: el billete completo, en la moneda del cobro.
          SELECT TO_CHAR(DATE(a.fecha), 'YYYY-MM-DD'),
-                CASE WHEN a.moneda = 'USD' THEN a.monto_moneda ELSE 0 END,
-                CASE WHEN a.moneda = 'VES' THEN a.monto_moneda ELSE 0 END
+                CASE WHEN a.moneda = 'USD' THEN ${ABONO_RECIBIDO} ELSE 0 END,
+                CASE WHEN a.moneda = 'VES' THEN ${ABONO_RECIBIDO} ELSE 0 END
+           FROM abonos a WHERE ${whereAb}
+         UNION ALL
+         -- Y su vuelto, que sale de la gaveta de la moneda en que se entrego.
+         SELECT TO_CHAR(DATE(a.fecha), 'YYYY-MM-DD'),
+                CASE WHEN ${ABONO_VUELTO_MONEDA} = 'USD' THEN -${ABONO_VUELTO} ELSE 0 END,
+                CASE WHEN ${ABONO_VUELTO_MONEDA} = 'VES' THEN -${ABONO_VUELTO} ELSE 0 END
            FROM abonos a WHERE ${whereAb}
        ), dias_caja AS (
          SELECT dia, SUM(usd) AS entro_usd, SUM(bs) AS entro_bs FROM caja GROUP BY 1
@@ -158,9 +181,9 @@ router.get('/ventas/por-dia', requierePermiso('reportes.ver'), validar({ query: 
          LEFT JOIN dias_caja  dc ON dc.dia = d.dia
         ORDER BY d.dia DESC LIMIT ?`,
       // El orden importa: los placeholders se numeran por posicion en el TEXTO del
-      // SQL, y aqui `where` aparece tres veces (dias_venta, pagos, vueltas) y
-      // `whereAb` dos (dias_abono, abonos de caja).
-      [...params, ...paramsAb, ...params, ...params, ...paramsAb, q.limite],
+      // SQL. `where` aparece tres veces (dias_venta, pagos, vueltas de venta) y
+      // `whereAb` tres (dias_abono, billete del abono, vuelto del abono).
+      [...params, ...paramsAb, ...params, ...params, ...paramsAb, ...paramsAb, q.limite],
     ));
   } catch (e) { next(e); }
 });
@@ -168,14 +191,17 @@ router.get('/ventas/por-dia', requierePermiso('reportes.ver'), validar({ query: 
 /**
  * Abonos cobrados en el rango: el detalle de lo que se recuperó de la cartera.
  *
- * `entro_usd` / `entro_bs` es la plata REAL, cada una en su moneda: si el cliente
- * pago Bs 7.000, entro_bs son 7.000 y entro_usd es 0. Antes habia una sola columna
- * "Abonado Bs" que era el equivalente (USD x tasa) del abono, asi que un pago en
- * dolares mostraba bolivares que nunca entraron a la caja. Ahora cada columna suma
- * lo que de verdad hay que contar en su gaveta.
+ * Tres cifras distintas por abono, y confundirlas es justo lo que hace que el
+ * cajero crea que el sistema se comio plata:
  *
- * `abonado_usd` es otra cosa y por eso convive: es lo que se le DESCONTO A LA DEUDA,
- * que siempre se lleva en USD sin importar con que se pago.
+ *   recibido_*   el billete que el cliente puso, en la moneda con la que pago.
+ *   vuelto_*     lo que se le devolvio. Puede salir de la OTRA gaveta: paga con un
+ *                billete de Bs y se le devuelve en dolares porque no hay sencillo.
+ *   abonado_usd  lo que se le DESCONTO A LA DEUDA, siempre en USD.
+ *
+ * Debe $ 1,98, entrega $ 2: recibido 2,00, vuelto 0,02, abonado 1,98. Antes solo se
+ * veia el 1,98 y no habia forma de saber que los otros 2 centavos volvieron a su
+ * mano. Las columnas van separadas por moneda para que cada una sume su gaveta.
  *
  * `facturas_saldadas` responde "¿esta deuda quedo pagada?": cuantos de los creditos
  * a los que se aplico este abono quedaron en cero.
@@ -187,8 +213,10 @@ router.get('/ventas/abonos', requierePermiso('reportes.ver'), validar({ query: e
     enviarOk(res, await queryReporte(
       `SELECT a.fecha, a.prefijo || a.numero AS numero, c.nombre AS cliente,
               mp.nombre AS metodo, a.moneda,
-              CASE WHEN a.moneda = 'USD' THEN a.monto_moneda ELSE 0 END AS entro_usd,
-              CASE WHEN a.moneda = 'VES' THEN a.monto_moneda ELSE 0 END AS entro_bs,
+              CASE WHEN a.moneda = 'USD' THEN ${ABONO_RECIBIDO} ELSE 0 END AS recibido_usd,
+              CASE WHEN a.moneda = 'VES' THEN ${ABONO_RECIBIDO} ELSE 0 END AS recibido_bs,
+              CASE WHEN ${ABONO_VUELTO_MONEDA} = 'USD' THEN ${ABONO_VUELTO} ELSE 0 END AS vuelto_usd,
+              CASE WHEN ${ABONO_VUELTO_MONEDA} = 'VES' THEN ${ABONO_VUELTO} ELSE 0 END AS vuelto_bs,
               (a.monto_usd - a.saldo_a_favor_usd) AS abonado_usd,
               (SELECT COUNT(*) FROM abono_aplicaciones aa
                  JOIN creditos cr ON cr.id = aa.credito_id
@@ -315,8 +343,15 @@ router.get('/ventas/stock-bajo', requierePermiso('reportes.ver'), async (req, re
  * una venta del dia y de una cartera vieja, y para cuadrar la caja hace falta el
  * total, pero para leer el negocio hace falta la distincion.
  *
- * En abonos se toma `monto_usd` completo, no el neto de `saldo_a_favor_usd`: por la
- * gaveta entro todo, aunque una parte quedara como saldo a favor del cliente.
+ * Los dos origenes van en BRUTO: lo que el cliente puso sobre el mostrador, sin
+ * descontar el vuelto. Es lo que el cajero tecleo, y por eso es lo que tiene que
+ * ver de vuelta —si abona $ 2 sobre una deuda de $ 1,98, aqui dice 2—. En ventas
+ * `pagos.monto_moneda` ya es el billete completo; en abonos hay que pedir
+ * `monto_recibido_moneda`, porque su `monto_moneda` es el neto.
+ *
+ * Lo que QUEDO en la gaveta, ya descontado el vuelto, esta en el Cierre por dia
+ * (columnas «Entro en $» y «Entro en Bs»). Son dos preguntas distintas: por aqui
+ * paso, contra aqui quedo.
  */
 router.get('/ventas/metodos-pago', requierePermiso('reportes.ver'), validar({ query: esquemaRango }), async (req, res, next) => {
   try {
@@ -331,7 +366,10 @@ router.get('/ventas/metodos-pago', requierePermiso('reportes.ver'), validar({ qu
           WHERE ${whereV} AND pg.estado = 'APLICADO'
          UNION ALL
          SELECT a.metodo_pago_id, 'Abono de fiado' AS origen,
-                a.monto_moneda, ROUND(a.monto_usd, 2)
+                ${ABONO_RECIBIDO},
+                -- El equivalente en USD del billete. No sirve monto_usd: ese es lo
+                -- aplicado a la deuda, o sea el neto.
+                ROUND(${ABONO_RECIBIDO} / CASE WHEN a.moneda = 'VES' THEN a.tasa_aplicada ELSE 1 END, 2)
            FROM abonos a
           WHERE ${whereAb}
        )
