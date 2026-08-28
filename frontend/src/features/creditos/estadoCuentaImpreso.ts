@@ -10,7 +10,7 @@
  */
 import {
   formatearUSD, formatearBs, formatearFecha, formatearFechaHora, formatearNumero,
-  formatearCantidad, saldoUsdABs, aNumero,
+  formatearCantidad, saldoUsdABs, usdABs, aNumero,
 } from '@/lib/formato';
 import type { DatosNegocio } from '@/config/negocio';
 
@@ -83,6 +83,20 @@ export function abrirVentanaImpresion(): Window | null {
 export function imprimirEstadoCuenta(d: DatosEstadoCuenta, ventana?: Window | null): void {
   const hayTasa = d.tasa > 0;
   const bs = (usd: unknown) => (hayTasa ? formatearBs(saldoUsdABs(usd, d.tasa)) : '—');
+  /**
+   * Bs de un IMPORTE de documento, no de un saldo. Redondea a centavos antes de
+   * convertir, igual que el ticket del POS y la pantalla de Ventas (`usdABs`): el
+   * cliente debe $ 4,05 y los bolivares salen de esos $ 4,05, no de $ 4,046. El
+   * saldo de la deuda usa `bs()`, que trabaja en escala 4 porque se abona en Bs y
+   * el residuo de dividir por la tasa no cabe en un centavo de dolar.
+   */
+  const bsImporte = (usd: unknown) => formatearBs(usdABs(usd, d.tasa));
+  /**
+   * El precio unitario NO se redondea a centavos antes de convertir: un producto
+   * pesable puede valer $ 0,0345 y verlo como $ 0,03 x tasa da un precio por kilo
+   * que no se parece al que se cobro. Mismo criterio que el ticket.
+   */
+  const bsUnitario = (usd: unknown) => formatearBs(aNumero(usd) * d.tasa);
 
   // Productos agrupados por la deuda a la que pertenecen.
   const porCredito = new Map<number, RenglonImpreso[]>();
@@ -105,8 +119,10 @@ export function imprimirEstadoCuenta(d: DatosEstadoCuenta, ventana?: Window | nu
             <tr>
               <td class="cant">${formatearCantidad(p.cantidad)} ×</td>
               <td>${esc(p.descripcion)}</td>
-              <td class="r gris">${formatearUSD(p.precio_venta_unitario)} c/u</td>
-              <td class="r">${formatearUSD(p.total_linea)}</td>
+              <td class="r gris">${formatearUSD(p.precio_venta_unitario)} c/u${
+                hayTasa ? `<div class="mini">${bsUnitario(p.precio_venta_unitario)} c/u</div>` : ''}</td>
+              <td class="r">${formatearUSD(p.total_linea)}${
+                hayTasa ? `<div class="mini">${bsImporte(p.total_linea)}</div>` : ''}</td>
             </tr>`).join('')}
           </table>
         </td>
@@ -117,7 +133,8 @@ export function imprimirEstadoCuenta(d: DatosEstadoCuenta, ventana?: Window | nu
         <td>${esc(x.documento ?? 'Crédito')}</td>
         <td>${formatearFecha(x.fecha_emision)}</td>
         <td>${formatearFecha(x.fecha_vencimiento)}${mora ? `<span class="chip">${x.dias_mora} d. de mora</span>` : ''}</td>
-        <td class="r">${formatearUSD(x.monto_original_usd)}</td>
+        <td class="r">${formatearUSD(x.monto_original_usd)}${
+          hayTasa ? `<div class="mini">${bsImporte(x.monto_original_usd)}</div>` : ''}</td>
         <td class="r b">${formatearUSD(x.saldo_usd)}</td>
         <td class="r gris">${bs(x.saldo_usd)}</td>
       </tr>${detalle}`;
@@ -164,6 +181,9 @@ export function imprimirEstadoCuenta(d: DatosEstadoCuenta, ventana?: Window | nu
     table.items { width:100%; border-collapse:collapse; }
     table.items td { border:0; padding:1px 4px; font-size:11px; color:#444; }
     table.items td.cant { width:46px; text-align:right; color:#888; white-space:nowrap; }
+    /* El equivalente en Bs cuelga debajo del importe en dolares: el cliente paga en
+       bolivares y necesita poder revisar renglon por renglon, no solo el total. */
+    .mini { color:#888; font-size:10px; font-weight:400; white-space:nowrap; }
     .chip { display:inline-block; margin-left:5px; padding:0 5px; border-radius:8px;
             background:#fee2e2; color:#b91c1c; font-size:10px; font-weight:600; }
     .total { margin-top:10px; display:flex; justify-content:flex-end; }
