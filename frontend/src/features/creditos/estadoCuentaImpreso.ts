@@ -109,24 +109,28 @@ export function imprimirEstadoCuenta(d: DatosEstadoCuenta, ventana?: Window | nu
   const filas = d.deudas
     .map((x) => {
       const mora = x.dias_mora > 0;
+      /** Lo que ya pago de ESA compra: lo que se le facturo menos lo que queda vivo. */
+      const abonado = Math.max(0, aNumero(x.monto_original_usd) - aNumero(x.saldo_usd));
       const productos = porCredito.get(x.id) ?? [];
-      // El detalle va como sub-fila de la compra: se lee "esta factura trae esto".
-      const detalle = productos.length === 0 ? '' : `
-      <tr class="det">
-        <td colspan="6">
-          <table class="items">
-            ${productos.map((p) => `
-            <tr>
-              <td class="cant">${formatearCantidad(p.cantidad)} ×</td>
-              <td>${esc(p.descripcion)}</td>
-              <td class="r gris">${formatearUSD(p.precio_venta_unitario)} c/u${
-                hayTasa ? `<div class="mini">${bsUnitario(p.precio_venta_unitario)} c/u</div>` : ''}</td>
-              <td class="r">${formatearUSD(p.total_linea)}${
-                hayTasa ? `<div class="mini">${bsImporte(p.total_linea)}</div>` : ''}</td>
-            </tr>`).join('')}
-          </table>
-        </td>
-      </tr>`;
+      /**
+       * El detalle NO va en una tabla aparte dentro de un colspan: sus celdas se
+       * alinean con las columnas de la compra. Antes el total en dolares del
+       * producto caia justo debajo de la columna "Saldo Bs" y el cliente leia
+       * dolares donde el encabezado dice bolivares. Ahora cada importe queda bajo
+       * la columna de su moneda.
+       */
+      const detalle = productos
+        .map((p, i) => `
+      <tr class="det${i === productos.length - 1 ? ' fin' : ''}">
+        <td class="r cant">${formatearCantidad(p.cantidad)} ×</td>
+        <td class="desc" colspan="2">${esc(p.descripcion)}</td>
+        <td class="r gris">${formatearUSD(p.precio_venta_unitario)} c/u${
+          hayTasa ? `<div class="mini">${bsUnitario(p.precio_venta_unitario)} c/u</div>` : ''}</td>
+        <td></td>
+        <td class="r">${formatearUSD(p.total_linea)}</td>
+        <td class="r gris">${hayTasa ? bsImporte(p.total_linea) : '—'}</td>
+      </tr>`)
+        .join('');
 
       return `
       <tr class="doc ${mora ? 'mora' : ''}">
@@ -135,11 +139,22 @@ export function imprimirEstadoCuenta(d: DatosEstadoCuenta, ventana?: Window | nu
         <td>${formatearFecha(x.fecha_vencimiento)}${mora ? `<span class="chip">${x.dias_mora} d. de mora</span>` : ''}</td>
         <td class="r">${formatearUSD(x.monto_original_usd)}${
           hayTasa ? `<div class="mini">${bsImporte(x.monto_original_usd)}</div>` : ''}</td>
+        <td class="r ${abonado > 0 ? 'verde' : 'gris'}">${abonado > 0 ? `− ${formatearUSD(abonado)}` : '—'}${
+          abonado > 0 && hayTasa ? `<div class="mini">− ${bsImporte(abonado)}</div>` : ''}</td>
         <td class="r b">${formatearUSD(x.saldo_usd)}</td>
         <td class="r gris">${bs(x.saldo_usd)}</td>
       </tr>${detalle}`;
     })
     .join('');
+
+  /**
+   * Cuanto se le facturo y cuanto ya abono, sumando las compras que siguen vivas.
+   * Se calcula sobre las mismas deudas que se listan para que la caja del total
+   * cuadre con la tabla: original − abonado = lo que queda debiendo.
+   */
+  const totalOriginal = d.deudas.reduce((a, x) => a + aNumero(x.monto_original_usd), 0);
+  const totalSaldo = d.deudas.reduce((a, x) => a + aNumero(x.saldo_usd), 0);
+  const totalAbonado = Math.max(0, totalOriginal - totalSaldo);
 
   const pagos = (d.abonos ?? [])
     .map(
@@ -176,11 +191,12 @@ export function imprimirEstadoCuenta(d: DatosEstadoCuenta, ventana?: Window | nu
     /* La compra y su detalle son un bloque: la linea fuerte va al cerrar el grupo. */
     tr.doc td { border-bottom:1px solid #f2f2f2; font-weight:500; }
     tr.mora td { background:#fff6f6; }
-    /* Productos de la compra: sangrados y en gris, para que se lean como detalle. */
-    tr.det > td { padding:2px 4px 8px 16px; border-bottom:1px solid #ddd; }
-    table.items { width:100%; border-collapse:collapse; }
-    table.items td { border:0; padding:1px 4px; font-size:11px; color:#444; }
-    table.items td.cant { width:46px; text-align:right; color:#888; white-space:nowrap; }
+    /* Productos de la compra: mismas columnas que la compra, en chico y en gris. */
+    tr.det td { padding:1px 4px; border-bottom:0; font-size:11px; color:#444; }
+    tr.det td.cant { color:#888; white-space:nowrap; }
+    tr.det td.desc { padding-left:16px; }
+    /* La linea que cierra el grupo la pone el ultimo producto de la compra. */
+    tr.det.fin td { border-bottom:1px solid #ddd; }
     /* El equivalente en Bs cuelga debajo del importe en dolares: el cliente paga en
        bolivares y necesita poder revisar renglon por renglon, no solo el total. */
     .mini { color:#888; font-size:10px; font-weight:400; white-space:nowrap; }
@@ -189,6 +205,8 @@ export function imprimirEstadoCuenta(d: DatosEstadoCuenta, ventana?: Window | nu
     .total { margin-top:10px; display:flex; justify-content:flex-end; }
     .total .caja { min-width:58%; border:2px solid #111; border-radius:6px; padding:8px 10px; }
     .total .fila { display:flex; justify-content:space-between; align-items:baseline; }
+    .total .fila.sep { margin-top:4px; padding-top:4px; border-top:1px solid #ddd; }
+    .verde { color:#15803d; }
     .total .grande { font-size:20px; font-weight:700; }
     .sec { margin-top:16px; font-size:11px; font-weight:700; text-transform:uppercase;
            letter-spacing:.5px; color:#444; }
@@ -228,15 +246,25 @@ export function imprimirEstadoCuenta(d: DatosEstadoCuenta, ventana?: Window | nu
       <thead>
         <tr>
           <th>Documento</th><th>Fecha</th><th>Vence</th>
-          <th class="r">Monto original</th><th class="r">Saldo USD</th><th class="r">Saldo Bs</th>
+          <th class="r">Monto original</th><th class="r">Abonado</th>
+          <th class="r">Saldo USD</th><th class="r">Saldo Bs</th>
         </tr>
       </thead>
-      <tbody>${filas || '<tr><td colspan="6" class="gris">Sin deudas pendientes</td></tr>'}</tbody>
+      <tbody>${filas || '<tr><td colspan="7" class="gris">Sin deudas pendientes</td></tr>'}</tbody>
     </table>
 
     <div class="total">
       <div class="caja">
-        <div class="fila">
+        <div class="fila gris">
+          <span>Monto original de las compras</span>
+          <span>${formatearUSD(totalOriginal)}</span>
+        </div>
+        ${totalAbonado > 0 ? `
+        <div class="fila verde">
+          <span>Abonado a estas compras</span>
+          <span class="b">− ${formatearUSD(totalAbonado)}</span>
+        </div>` : ''}
+        <div class="fila sep">
           <span class="b">TOTAL A PAGAR</span>
           <span class="grande">${formatearUSD(d.totalUsd)}</span>
         </div>
