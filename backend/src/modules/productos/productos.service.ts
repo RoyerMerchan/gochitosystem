@@ -4,6 +4,7 @@
  */
 import { NoEncontrado, Conflicto } from '../../errores/AppError';
 import { query, queryOne, ejecutar, insertar, withTransaction } from '../../database/pool';
+import { existeColumna, existeTabla } from '../../database/esquema';
 import { usdABs, bsASql } from '../../utils/moneda';
 import { aCentavos } from '../../utils/dinero';
 import type { Id, DecimalSql } from '../../tipos/comunes';
@@ -21,6 +22,10 @@ export interface ProductoListado {
   precio_venta_bs?: DecimalSql;
   precio_venta_mayorista: DecimalSql | null;
   costo_promedio: DecimalSql;
+  /** Lo ultimo que se pago por el, sin promediar. Referencia al reponer. */
+  ultimo_costo: DecimalSql;
+  /** FALSE = el costo es la semilla del alta, todavia no lo fijo una entrada. */
+  costo_confirmado: boolean;
   es_precio_incluye_impuesto: boolean;
   es_pesable: boolean;
   es_favorito_pos: boolean;
@@ -54,11 +59,30 @@ function conEquivalenteBs<T extends { precio_venta: DecimalSql }>(
   }));
 }
 
+/**
+ * SELECT base de productos. Es una funcion y no una constante porque
+ * `producto_stock.costo_confirmado` llego con la migracion 0009: en produccion la
+ * base es externa y el migrador se traga los fallos, asi que nombrar la columna a
+ * ciegas tumbaria la busqueda del POS entera por un dato secundario. Ver
+ * database/esquema.ts. Sin la columna, todos los costos se reportan como
+ * confirmados, que es como se comportaba el sistema antes.
+ */
+async function selectBase(): Promise<string> {
+  const hayConfirmado = await existeColumna('producto_stock', 'costo_confirmado');
+  return SELECT_BASE.replace(
+    '@COSTO_CONFIRMADO@',
+    hayConfirmado ? 'COALESCE(ps.costo_confirmado, FALSE)' : 'TRUE',
+  );
+}
+
 const SELECT_BASE = `
   SELECT p.id, p.sku, p.nombre, p.categoria_id, c.nombre AS categoria_nombre,
          um.codigo AS unidad_codigo, p.impuesto_id, i.tasa AS impuesto_tasa,
-         p.precio_venta, p.precio_venta_mayorista, p.costo_promedio, p.es_precio_incluye_impuesto,
-         p.es_pesable, p.es_favorito_pos, p.imagen_ruta,
+         p.precio_venta, p.precio_venta_mayorista, p.es_precio_incluye_impuesto,
+         p.es_pesable, p.es_favorito_pos, p.imagen_ruta, p.ultimo_costo,
+         -- El costo que vale es el de la sucursal; el de productos es la copia global.
+         COALESCE(ps.costo_promedio, p.costo_promedio) AS costo_promedio,
+         @COSTO_CONFIRMADO@ AS costo_confirmado,
          COALESCE(ps.cantidad, 0) AS cantidad, COALESCE(ps.stock_minimo, 0) AS stock_minimo,
          p.esta_activo
     FROM productos p
@@ -89,7 +113,7 @@ export async function listar(
 
   const where = `WHERE ${cond.join(' AND ')}`;
   const datos = await query<ProductoListado>(
-    `${SELECT_BASE} ${where} ORDER BY p.nombre LIMIT ? OFFSET ?`,
+    `${await selectBase()} ${where} ORDER BY p.nombre LIMIT ? OFFSET ?`,
     [...params, filtros.limite, filtros.desplazamiento],
   );
 
@@ -118,7 +142,7 @@ export async function buscarPos(
 
   // 1) Codigo de barras exacto -> resultado unico y directo (el caso del scanner).
   const porCodigo = await query<ProductoListado>(
-    `${SELECT_BASE}
+    `${await selectBase()}
       JOIN producto_codigos pc ON pc.producto_id = p.id AND pc.eliminado_en IS NULL
      WHERE pc.codigo = ? AND p.eliminado_en IS NULL AND p.esta_activo = TRUE
      LIMIT 1`,
@@ -128,7 +152,7 @@ export async function buscarPos(
 
   // 2) SKU exacto (insensible a mayus/minus).
   const porSku = await query<ProductoListado>(
-    `${SELECT_BASE} WHERE p.sku ILIKE ? AND p.eliminado_en IS NULL AND p.esta_activo = TRUE LIMIT 1`,
+    `${await selectBase()} WHERE p.sku ILIKE ? AND p.eliminado_en IS NULL AND p.esta_activo = TRUE LIMIT 1`,
     [sucursalId, term],
   );
   if (porSku.length > 0) return conEquivalenteBs(porSku, tasa);
@@ -136,7 +160,7 @@ export async function buscarPos(
   // 3) Coincidencia parcial por nombre o SKU (insensible a mayus/minus).
   const like = `%${term}%`;
   const porNombre = await query<ProductoListado>(
-    `${SELECT_BASE}
+    `${await selectBase()}
      WHERE (p.nombre ILIKE ? OR p.sku ILIKE ?) AND p.eliminado_en IS NULL AND p.esta_activo = TRUE
      ORDER BY p.es_favorito_pos DESC, p.nombre
      LIMIT ?`,
@@ -161,7 +185,7 @@ export async function listarPorIds(
   if (ids.length === 0) return [];
   const marcas = ids.map(() => '?').join(',');
   const filas = await query<ProductoListado>(
-    `${SELECT_BASE}
+    `${await selectBase()}
      WHERE p.id IN (${marcas}) AND p.eliminado_en IS NULL AND p.esta_activo = TRUE`,
     [sucursalId, ...ids],
   );
@@ -174,7 +198,7 @@ export async function obtenerPorId(
   tasa: string | null,
 ): Promise<ProductoListado> {
   const filas = await query<ProductoListado>(
-    `${SELECT_BASE} WHERE p.id = ? AND p.eliminado_en IS NULL LIMIT 1`,
+    `${await selectBase()} WHERE p.id = ? AND p.eliminado_en IS NULL LIMIT 1`,
     [sucursalId, id],
   );
   if (filas.length === 0) throw new NoEncontrado('PRODUCTO_NO_ENCONTRADO');
@@ -231,6 +255,12 @@ export async function crear(e: EntradaProducto, sucursalId: number, usuarioId: I
       throw err;
     }
 
+    /**
+     * El costo inicial entra como SEMILLA (`costo_confirmado` queda en FALSE, su
+     * valor por defecto): es un estimado de quien da de alta el producto, no
+     * plata que se haya pagado. La primera entrada de mercancia —o un ajuste con
+     * costo, o una correccion— lo pisa en vez de promediarlo. Ver migracion 0009.
+     */
     await ejecutar(
       `INSERT INTO producto_stock (producto_id, sucursal_id, cantidad, stock_minimo, costo_promedio)
        VALUES (?, ?, 0, ?, ?)`,
@@ -252,7 +282,7 @@ export async function crear(e: EntradaProducto, sucursalId: number, usuarioId: I
     }
 
     const filas = await query<ProductoListado>(
-      `${SELECT_BASE} WHERE p.id = ? LIMIT 1`, [sucursalId, id], cx,
+      `${await selectBase()} WHERE p.id = ? LIMIT 1`, [sucursalId, id], cx,
     );
     return filas[0]!;
   });
@@ -311,6 +341,92 @@ export async function cambiarPrecio(id: Id, nuevoPrecio: string, usuarioId: Id, 
       cx,
     );
   });
+}
+
+/**
+ * Corrige a mano el costo de un producto (revalorizacion).
+ *
+ * El costo normalmente lo mueven las entradas de mercancia, no la ficha del
+ * producto. Pero un costo mal tecleado al dar de alta no tenia como arreglarse:
+ * `actualizar()` lo ignora a proposito, y la unica salida era inventar una
+ * entrada, que ensucia el kardex y las cuentas por pagar.
+ *
+ * No es silencioso: cada correccion deja fila en `producto_costos` con el antes,
+ * el despues, quien y por que. Y marca el costo como confirmado, para que la
+ * proxima entrada lo promedie en vez de pisarlo.
+ *
+ * OJO: no reescribe la historia. Las ventas ya hechas conservan el costo que se
+ * les congelo (ADR-001); esto solo cambia la valorizacion de aqui en adelante.
+ */
+export async function cambiarCosto(
+  id: Id, sucursalId: number, costo: string, usuarioId: Id, motivo?: string,
+): Promise<void> {
+  await withTransaction(async (cx) => {
+    const p = await queryOne<{ costo_promedio: string }>(
+      `SELECT costo_promedio FROM productos WHERE id = ? AND eliminado_en IS NULL FOR UPDATE`,
+      [id], cx,
+    );
+    if (!p) throw new NoEncontrado('PRODUCTO_NO_ENCONTRADO');
+
+    // Migracion 0009; sin ella se corrige el costo igual, solo que sin la bandera.
+    const hayConfirmado = await existeColumna('producto_stock', 'costo_confirmado', cx);
+    const stock = await queryOne<{ cantidad: string; costo_promedio: string; costo_confirmado?: boolean }>(
+      `SELECT cantidad, costo_promedio${hayConfirmado ? ', costo_confirmado' : ''} FROM producto_stock
+        WHERE producto_id = ? AND sucursal_id = ? FOR UPDATE`,
+      [id, sucursalId], cx,
+    );
+    const anterior = stock?.costo_promedio ?? p.costo_promedio;
+    const eraSemilla = hayConfirmado && !stock?.costo_confirmado;
+
+    if (stock) {
+      await ejecutar(
+        `UPDATE producto_stock SET costo_promedio = ?${hayConfirmado ? ', costo_confirmado = TRUE' : ''}
+          WHERE producto_id = ? AND sucursal_id = ?`,
+        [costo, id, sucursalId], cx,
+      );
+    } else {
+      await ejecutar(
+        `INSERT INTO producto_stock (producto_id, sucursal_id, cantidad, costo_promedio${hayConfirmado ? ', costo_confirmado' : ''})
+         VALUES (?, ?, 0, ?${hayConfirmado ? ', TRUE' : ''})`,
+        [id, sucursalId, costo], cx,
+      );
+    }
+
+    /**
+     * `ultimo_costo` guarda lo ultimo que se PAGO. Una correccion no es una
+     * compra, asi que solo se toca cuando lo que habia era la semilla del alta.
+     */
+    if (eraSemilla) {
+      await ejecutar(`UPDATE productos SET costo_promedio = ?, ultimo_costo = ? WHERE id = ?`, [costo, costo, id], cx);
+    } else {
+      await ejecutar(`UPDATE productos SET costo_promedio = ? WHERE id = ?`, [costo, id], cx);
+    }
+
+    // La tabla del historial tambien es de la 0009: si todavia no existe, el
+    // costo se corrige igual y lo que se pierde es el rastro, no la operacion.
+    if (await existeTabla('producto_costos', cx)) {
+      await insertar(
+        `INSERT INTO producto_costos
+          (producto_id, sucursal_id, costo_anterior, costo_nuevo, era_semilla, cantidad_stock, motivo, usuario_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, sucursalId, anterior, costo, eraSemilla, stock?.cantidad ?? '0', motivo ?? null, usuarioId],
+        cx,
+      );
+    }
+  });
+}
+
+/** Historial de correcciones de costo de un producto. */
+export async function historialCostos(id: Id, sucursalId: number): Promise<unknown[]> {
+  if (!(await existeTabla('producto_costos'))) return [];
+  return query(
+    `SELECT pc.id, pc.costo_anterior, pc.costo_nuevo, pc.era_semilla, pc.cantidad_stock,
+            pc.motivo, pc.creado_en, u.nombre_completo AS usuario
+       FROM producto_costos pc JOIN usuarios u ON u.id = pc.usuario_id
+      WHERE pc.producto_id = ? AND pc.sucursal_id = ?
+      ORDER BY pc.creado_en DESC LIMIT 20`,
+    [id, sucursalId],
+  );
 }
 
 /** Kardex del producto: movimientos con saldo corrido (ya persistido en el ledger). */

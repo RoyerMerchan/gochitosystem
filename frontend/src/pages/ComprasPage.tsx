@@ -26,7 +26,11 @@ interface EntradaFila {
   estado: string; proveedor: string; proveedor_id: number;
   numero_factura_proveedor: string | null; condicion_pago: string; saldo_pendiente: string;
 }
-interface Renglon { productoId: number; nombre: string; sku: string; cantidad: string; costoUnitario: string; }
+interface Renglon {
+  productoId: number; nombre: string; sku: string; cantidad: string; costoUnitario: string;
+  /** Referencias del producto, para saber si el costo que se teclea tiene sentido. */
+  ultimoCosto: string; costoPromedio: string; precioVenta: string; costoConfirmado: boolean;
+}
 interface Proveedor { id: number; razon_social: string; nit: string | null; saldo_actual: string; }
 interface DetalleCompra {
   compra: {
@@ -199,7 +203,17 @@ export default function ComprasPage() {
   };
   const agregar = (p: Producto) => {
     if (renglones.some((r) => r.productoId === p.id)) return;
-    setRenglones((rs) => [...rs, { productoId: p.id, nombre: p.nombre, sku: p.sku, cantidad: '1', costoUnitario: p.costo_promedio }]);
+    /**
+     * Se propone el ÚLTIMO costo pagado, no el promedio: al reponer, lo que
+     * sirve de referencia es lo que costó la vez pasada. El promedio arrastra
+     * compras viejas y con la inflación queda siempre por debajo.
+     */
+    const sugerido = aNumero(p.ultimo_costo) > 0 ? p.ultimo_costo : p.costo_promedio;
+    setRenglones((rs) => [...rs, {
+      productoId: p.id, nombre: p.nombre, sku: p.sku, cantidad: '1', costoUnitario: sugerido,
+      ultimoCosto: p.ultimo_costo, costoPromedio: p.costo_promedio,
+      precioVenta: p.precio_venta, costoConfirmado: Boolean(p.costo_confirmado),
+    }]);
     setTermino('');
   };
   const total = renglones.reduce((a, r) => a + Number(r.cantidad || 0) * Number(r.costoUnitario || 0), 0);
@@ -214,6 +228,16 @@ export default function ComprasPage() {
     fijarCostoUsd(i, usd);
   };
   const costoEnBs = (usd: string) => (tasaNum > 0 ? (aNumero(usd) * tasaNum).toFixed(2) : '');
+  /**
+   * Margen que dejaría el precio de venta actual con el costo que se está
+   * tecleando. Con la inflación es normal que el proveedor suba y el precio de
+   * venta se quede viejo: el cajero se enteraba vendiendo a pérdida.
+   */
+  const margen = (r: Renglon) => {
+    const costo = aNumero(r.costoUnitario); const precio = aNumero(r.precioVenta);
+    if (costo <= 0 || precio <= 0) return null;
+    return { porcentaje: ((precio - costo) / precio) * 100, perdida: costo >= precio };
+  };
 
   return (
     <div className="space-y-4">
@@ -310,6 +334,7 @@ export default function ComprasPage() {
         <div className="space-y-3">
           <p className="rounded-lg bg-blue-50 p-3 text-xs text-blue-700 dark:bg-blue-900/20 dark:text-blue-300">
             Al ingresar, el stock sube y el costo promedio de cada producto se recalcula automáticamente.
+            Si el producto todavía tenía el costo estimado del alta, esta entrada lo reemplaza por completo.
           </p>
 
           {/* A quién se le compró: queda guardado en la entrada y sale en los reportes. */}
@@ -379,9 +404,28 @@ export default function ComprasPage() {
             <tbody>
               {renglones.map((r, i) => {
                 const subtotal = Number(r.cantidad || 0) * Number(r.costoUnitario || 0);
+                const m = margen(r);
                 return (
                 <tr key={r.productoId} className="border-t border-gray-100 dark:border-gray-700">
-                  <td className="p-2">{r.nombre}<span className="ml-1 text-xs text-gray-400">{r.sku}</span></td>
+                  <td className="p-2">
+                    {r.nombre}<span className="ml-1 text-xs text-gray-400">{r.sku}</span>
+                    <div className="text-[11px] text-gray-400">
+                      {r.costoConfirmado
+                        ? `Últ. ${formatearUSD(r.ultimoCosto)} · Prom. ${formatearUSD(r.costoPromedio)}`
+                        : `Costo estimado ${formatearUSD(r.costoPromedio)} · esta entrada lo fija`}
+                      {' · Venta '}{formatearUSD(r.precioVenta)}
+                    </div>
+                    {m && m.perdida && (
+                      <div className="text-[11px] font-semibold text-red-600">
+                        El costo supera el precio de venta: venderías con pérdida
+                      </div>
+                    )}
+                    {m && !m.perdida && m.porcentaje < 10 && (
+                      <div className="text-[11px] font-semibold text-amber-600">
+                        Queda un margen de {m.porcentaje.toFixed(1)} %
+                      </div>
+                    )}
+                  </td>
                   <td className="p-2"><input type="number" step="0.001" value={r.cantidad} onChange={(e) => setRenglones((rs) => rs.map((x, j) => j === i ? { ...x, cantidad: e.target.value } : x))} className="w-20 rounded border border-gray-300 px-2 py-1 text-right dark:border-gray-600 dark:bg-gray-700" /></td>
                   <td className="p-2"><input type="number" step="0.0001" value={r.costoUnitario} onChange={(e) => fijarCostoUsd(i, e.target.value)} className="w-24 rounded border border-gray-300 px-2 py-1 text-right dark:border-gray-600 dark:bg-gray-700" /></td>
                   {/* Si el proveedor factura en Bs se escribe aquí: se convierte a USD a la tasa de hoy. */}

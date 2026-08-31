@@ -13,6 +13,10 @@ import { formatearUSD, formatearCantidad } from '@/lib/formato';
 interface Existencia {
   id: number; sku: string; nombre: string; categoria: string;
   cantidad: string; stock_minimo: string; costo_promedio: string; valor_usd: string;
+  /** false = el costo es el estimado del alta, todavía sin una entrada detrás. */
+  costo_confirmado: boolean;
+  /** Lo último que se pagó por él, sin promediar. */
+  ultimo_costo: string;
 }
 interface Motivo { id: number; codigo: string; nombre: string; signo: number; }
 
@@ -24,6 +28,13 @@ export default function InventarioPage() {
   const [nuevaCantidad, setNuevaCantidad] = useState('');
   const [motivoId, setMotivoId] = useState(0);
   const [observaciones, setObservaciones] = useState('');
+  /**
+   * Costo de lo que ENTRA cuando el ajuste suma unidades. Si se deja vacío, esas
+   * unidades se valorizan al costo promedio que ya tenía el producto —que es lo
+   * correcto en un conteo físico— pero al cargar existencia nueva eso valorizaba
+   * mercancía comprada al costo viejo (o en $ 0) y la utilidad salía inflada.
+   */
+  const [costoEntrada, setCostoEntrada] = useState('');
   const q = useDebounce(busqueda, 300);
 
   const existencias = useQuery({
@@ -37,16 +48,28 @@ export default function InventarioPage() {
     setNuevaCantidad(e.cantidad);
     setMotivoId(motivos.data?.find((m) => m.codigo === 'CORRECCION')?.id ?? motivos.data?.[0]?.id ?? 0);
     setObservaciones('');
+    // Se propone lo último que se pagó; si nunca hubo entrada, el costo que haya.
+    setCostoEntrada(Number(e.ultimo_costo) > 0 ? e.ultimo_costo : e.costo_promedio);
   };
+
+  /** Cuántas unidades entran (positivo) o salen (negativo) con lo tecleado. */
+  const difAjuste = ajustando ? Number(nuevaCantidad || 0) - Number(ajustando.cantidad) : 0;
 
   const ajustar = useMutation({
     mutationFn: () => crear('/inventario/ajustes', {
       motivoId,
       observaciones: observaciones || undefined,
-      renglones: [{ productoId: ajustando!.id, cantidadContada: nuevaCantidad || '0' }],
+      renglones: [{
+        productoId: ajustando!.id,
+        cantidadContada: nuevaCantidad || '0',
+        // Solo viaja si entran unidades y se indicó con cuánto costaron.
+        costoUnitario: difAjuste > 0 && costoEntrada !== '' ? costoEntrada : undefined,
+      }],
     }),
     onSuccess: () => {
-      toast.exito('Inventario ajustado');
+      toast.exito(difAjuste > 0 && costoEntrada !== ''
+        ? 'Inventario ajustado · costo recalculado'
+        : 'Inventario ajustado');
       qc.invalidateQueries({ queryKey: ['existencias'] });
       qc.invalidateQueries({ queryKey: ['productos'] });
       setAjustando(null);
@@ -114,7 +137,16 @@ export default function InventarioPage() {
                         {bajo && <AlertTriangle className="ml-1 inline h-3.5 w-3.5 text-red-500" />}
                       </td>
                       <td className="p-3 text-right text-gray-400">{formatearCantidad(e.stock_minimo)}</td>
-                      <td className="p-3 text-right tabular-nums text-gray-500">{formatearUSD(e.costo_promedio)}</td>
+                      <td className="p-3 text-right tabular-nums text-gray-500">
+                        {formatearUSD(e.costo_promedio)}
+                        {/* Sin entradas detrás, ese costo es el estimado del alta: el valor
+                            del inventario y la utilidad de sus ventas salen de un número
+                            que nadie pagó. */}
+                        {!e.costo_confirmado && (
+                          <span title="Costo estimado en el alta: todavía no lo fija ninguna entrada de mercancía"
+                            className="ml-1 rounded bg-amber-100 px-1 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">est.</span>
+                        )}
+                      </td>
                       <td className="p-3 text-right tabular-nums font-medium">{formatearUSD(e.valor_usd)}</td>
                       <td className="p-3 text-right">
                         <button onClick={() => abrirAjuste(e)} className="text-gray-400 hover:text-amber-600" title="Ajustar existencia">
@@ -136,7 +168,7 @@ export default function InventarioPage() {
           <button onClick={() => ajustar.mutate()} disabled={nuevaCantidad === '' || !motivoId || ajustar.isPending} className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600 disabled:opacity-50">Aplicar ajuste</button>
         </div>}>
         {ajustando && (() => {
-          const dif = Number(nuevaCantidad || 0) - Number(ajustando.cantidad);
+          const dif = difAjuste;
           return (
             <div className="space-y-3">
               <p className="text-sm text-gray-500">
@@ -152,6 +184,26 @@ export default function InventarioPage() {
                 <p className={`text-sm font-medium ${dif > 0 ? 'text-green-600' : 'text-red-600'}`}>
                   Diferencia: {dif > 0 ? '+' : ''}{formatearCantidad(String(dif))} ({dif > 0 ? 'entra' : 'sale'} inventario)
                 </p>
+              )}
+              {dif > 0 && (
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-500">
+                    Costo unitario de lo que entra (USD)
+                  </label>
+                  <input type="number" step="0.0001" value={costoEntrada} onChange={(ev) => setCostoEntrada(ev.target.value)} className={INP} />
+                  <p className="mt-1 text-xs text-gray-500">
+                    {costoEntrada === ''
+                      ? `Sin costo, esas ${formatearCantidad(String(dif))} unidades se valorizan al costo actual (${formatearUSD(ajustando.costo_promedio)}).`
+                      : ajustando.costo_confirmado
+                        ? 'Se promedia con el costo actual, igual que una entrada de mercancía.'
+                        : 'El producto todavía tiene el costo estimado del alta: este lo reemplaza.'}
+                  </p>
+                  {!ajustando.costo_confirmado && Number(ajustando.costo_promedio) === 0 && costoEntrada === '' && (
+                    <p className="mt-1 text-xs font-semibold text-red-600">
+                      El costo actual es $ 0,00: si entra así, esas ventas saldrán con utilidad del 100 %.
+                    </p>
+                  )}
+                </div>
               )}
               <div><label className="mb-1 block text-xs font-medium text-gray-500">Motivo *</label>
                 <select value={motivoId} onChange={(ev) => setMotivoId(Number(ev.target.value))} className={INP}>

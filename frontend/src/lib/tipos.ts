@@ -84,6 +84,10 @@ export interface Producto {
   precio_venta_bs?: string;
   precio_venta_mayorista: string | null;
   costo_promedio: string;
+  /** Lo último que se pagó por él, sin promediar. Referencia al reponer. */
+  ultimo_costo: string;
+  /** false = el costo es el estimado del alta; la primera entrada lo fija. */
+  costo_confirmado: boolean;
   es_precio_incluye_impuesto: number;
   es_pesable: number;
   es_favorito_pos: number;

@@ -9,6 +9,8 @@ import { NoEncontrado } from '../../errores/AppError';
 import { query, queryOne, ejecutar, insertar, withTransaction } from '../../database/pool';
 import { esquemaPaginacion, normalizarPaginacion, construirMeta } from '../../utils/paginacion';
 import { aCantidad, aUnitario, cantidadASql, unitarioASql, centavosASql, multiplicarPorCantidad } from '../../utils/dinero';
+import { costoPromedioTrasEntrada } from '../../utils/costeo';
+import { existeColumna } from '../../database/esquema';
 import { siguienteConsecutivo } from '../../utils/consecutivos';
 import { TIPO_MOVIMIENTO_INVENTARIO, DOCUMENTO_TIPO_MOVIMIENTO, TIPO_DOCUMENTO } from '../../config/constantes';
 
@@ -25,9 +27,12 @@ router.get('/existencias', requierePermiso('inventario.ver'), validar({ query: e
     if (q.busqueda) { cond.push('(p.nombre ILIKE ? OR p.sku ILIKE ?)'); const l = `%${q.busqueda}%`; params.push(l, l); }
     if (q.stockBajo) cond.push('COALESCE(ps.cantidad,0) <= COALESCE(ps.stock_minimo,0)');
     const where = `WHERE ${cond.join(' AND ')}`;
+    // La columna es de la migracion 0009; sin ella la pantalla sigue funcionando.
+    const hayConfirmado = await existeColumna('producto_stock', 'costo_confirmado');
     const datos = await query(
       `SELECT p.id, p.sku, p.nombre, c.nombre AS categoria, COALESCE(ps.cantidad,0) AS cantidad,
               COALESCE(ps.stock_minimo,0) AS stock_minimo, COALESCE(ps.costo_promedio,0) AS costo_promedio,
+              ${hayConfirmado ? 'COALESCE(ps.costo_confirmado, FALSE)' : 'TRUE'} AS costo_confirmado, p.ultimo_costo,
               ROUND(COALESCE(ps.cantidad,0) * COALESCE(ps.costo_promedio,0), 2) AS valor_usd
          FROM productos p JOIN categorias c ON c.id = p.categoria_id
          LEFT JOIN producto_stock ps ON ps.producto_id = p.id AND ps.sucursal_id = ?
@@ -89,6 +94,15 @@ const esquemaAjuste = z.object({
   renglones: z.array(z.object({
     productoId: z.coerce.number().int().positive(),
     cantidadContada: z.union([z.string(), z.number()]).transform(String),
+    /**
+     * Costo de lo que ENTRA, opcional. Solo se mira cuando el ajuste suma
+     * unidades: sin el, esas unidades se valorizan al costo promedio que ya
+     * tenia el producto, que es lo correcto en un conteo fisico (aparecio
+     * mercancia que ya era tuya) pero no cuando se esta cargando existencia
+     * nueva que costo plata.
+     */
+    costoUnitario: z.union([z.string(), z.number()]).transform(String)
+      .refine((v) => /^\d+(\.\d+)?$/.test(v), 'Costo invalido').optional(),
   })).min(1),
 });
 
@@ -108,13 +122,16 @@ router.post('/ajustes', requierePermiso('inventario.ajustar'), validar({ body: e
         [u.sucursalId, u.id, e.motivoId, prefijo, numero, anio, e.observaciones ?? null], cx,
       );
 
+      // Migracion 0009: sin la columna se ajusta como siempre (sin fijar costo).
+      const hayConfirmado = await existeColumna('producto_stock', 'costo_confirmado', cx);
+
       let linea = 0;
       for (const r of e.renglones) {
         linea += 1;
         const prod = await queryOne<{ nombre: string }>(`SELECT nombre FROM productos WHERE id=? AND eliminado_en IS NULL`, [r.productoId], cx);
         if (!prod) throw new NoEncontrado('PRODUCTO_NO_ENCONTRADO');
-        const stock = await queryOne<{ cantidad: string; costo_promedio: string }>(
-          `SELECT cantidad, costo_promedio FROM producto_stock WHERE producto_id=? AND sucursal_id=? FOR UPDATE`,
+        const stock = await queryOne<{ cantidad: string; costo_promedio: string; costo_confirmado?: boolean }>(
+          `SELECT cantidad, costo_promedio${hayConfirmado ? ', costo_confirmado' : ''} FROM producto_stock WHERE producto_id=? AND sucursal_id=? FOR UPDATE`,
           [r.productoId, u.sucursalId], cx,
         );
         const sistema = aCantidad(stock?.cantidad ?? '0');
@@ -125,12 +142,51 @@ router.post('/ajustes', requierePermiso('inventario.ajustar'), validar({ body: e
         const positivo = diferencia > 0n;
         const absDif = positivo ? diferencia : -diferencia;
 
+        /**
+         * Entrada con costo: el ajuste deja de ser solo un movimiento de
+         * cantidades y recalcula el CPP como lo haria una entrada de mercancia.
+         * Sin costo (o en un ajuste que resta) se sigue valorizando al CPP
+         * vigente, que es el comportamiento de siempre.
+         */
+        const costoEntrada = positivo && r.costoUnitario !== undefined ? aUnitario(r.costoUnitario) : null;
+        const cppPosterior = costoEntrada === null ? cpp : costoPromedioTrasEntrada({
+          saldoAnterior: sistema, cppAnterior: cpp, cantidad: absDif,
+          costoUnitario: costoEntrada, esSemilla: hayConfirmado && !stock?.costo_confirmado,
+        });
+        // Con que se valoriza el movimiento: lo que costo lo que entra, o el CPP.
+        const costoMovimiento = costoEntrada ?? cpp;
+
         await insertar(
           `INSERT INTO ajuste_detalle (ajuste_id, linea, producto_id, descripcion, cantidad_sistema, cantidad_fisica, cantidad_diferencia, costo_unitario, costo_total_diferencia)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [ajusteId, linea, r.productoId, prod.nombre, cantidadASql(sistema), cantidadASql(contada), cantidadASql(diferencia), unitarioASql(cpp), centavosASql(multiplicarPorCantidad(cpp, absDif))], cx,
+          [ajusteId, linea, r.productoId, prod.nombre, cantidadASql(sistema), cantidadASql(contada), cantidadASql(diferencia), unitarioASql(costoMovimiento), centavosASql(multiplicarPorCantidad(costoMovimiento, absDif))], cx,
         );
-        await ejecutar(`UPDATE producto_stock SET cantidad=? WHERE producto_id=? AND sucursal_id=?`, [cantidadASql(contada), r.productoId, u.sucursalId], cx);
+        /**
+         * Puede no haber fila de stock para esta sucursal (el producto se dio de
+         * alta en otra): el UPDATE de abajo no ajustaba nada y el movimiento
+         * quedaba en el ledger sin existencia detras, descuadrando la
+         * reconciliacion. Se crea vacia y el UPDATE la deja en su sitio.
+         */
+        if (!stock) {
+          await ejecutar(
+            `INSERT INTO producto_stock (producto_id, sucursal_id, cantidad, costo_promedio)
+             VALUES (?, ?, 0, 0) ON CONFLICT (producto_id, sucursal_id) DO NOTHING`,
+            [r.productoId, u.sucursalId], cx,
+          );
+        }
+        if (costoEntrada === null) {
+          await ejecutar(`UPDATE producto_stock SET cantidad=? WHERE producto_id=? AND sucursal_id=?`, [cantidadASql(contada), r.productoId, u.sucursalId], cx);
+        } else {
+          await ejecutar(
+            `UPDATE producto_stock SET cantidad=?, costo_promedio=?${hayConfirmado ? ', costo_confirmado=TRUE' : ''}, ultima_entrada_en=NOW()
+              WHERE producto_id=? AND sucursal_id=?`,
+            [cantidadASql(contada), unitarioASql(cppPosterior), r.productoId, u.sucursalId], cx,
+          );
+          await ejecutar(
+            `UPDATE productos SET costo_promedio=?, ultimo_costo=? WHERE id=?`,
+            [unitarioASql(cppPosterior), unitarioASql(costoEntrada), r.productoId], cx,
+          );
+        }
         await insertar(
           `INSERT INTO inventario_movimientos
             (sucursal_id, producto_id, tipo, signo, cantidad, costo_unitario, costo_total,
@@ -140,9 +196,10 @@ router.post('/ajustes', requierePermiso('inventario.ajustar'), validar({ body: e
           [
             u.sucursalId, r.productoId,
             positivo ? TIPO_MOVIMIENTO_INVENTARIO.AJUSTE_POSITIVO : TIPO_MOVIMIENTO_INVENTARIO.AJUSTE_NEGATIVO,
-            positivo ? 1 : -1, cantidadASql(absDif), unitarioASql(cpp), centavosASql(multiplicarPorCantidad(cpp, absDif)),
-            cantidadASql(sistema), cantidadASql(contada), unitarioASql(cpp), unitarioASql(cpp),
-            DOCUMENTO_TIPO_MOVIMIENTO.AJUSTE, ajusteId, e.motivoId, u.id, 'Ajuste por conteo',
+            positivo ? 1 : -1, cantidadASql(absDif), unitarioASql(costoMovimiento), centavosASql(multiplicarPorCantidad(costoMovimiento, absDif)),
+            cantidadASql(sistema), cantidadASql(contada), unitarioASql(cpp), unitarioASql(cppPosterior),
+            DOCUMENTO_TIPO_MOVIMIENTO.AJUSTE, ajusteId, e.motivoId, u.id,
+            costoEntrada === null ? 'Ajuste por conteo' : 'Ajuste con costo (fija el costo del producto)',
           ], cx,
         );
       }

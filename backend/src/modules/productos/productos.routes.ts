@@ -151,4 +151,27 @@ router.post('/:id/precio', requierePermiso('productos.cambiar_precio', 'producto
     } catch (e) { next(e); }
   });
 
+/**
+ * Correccion manual del costo. Requiere el mismo permiso que editar el producto.
+ * Deja rastro en `producto_costos`; no reescribe las ventas ya hechas.
+ */
+router.post('/:id/costo', requierePermiso('productos.editar'),
+  validar({ params: esquemaParamsId, body: z.object({ costo: decimal, motivo: z.string().trim().max(200).optional() }) }), async (req, res, next) => {
+    try {
+      const { id } = datosParams<{ id: number }>(req);
+      const { costo, motivo } = datosBody<{ costo: string; motivo?: string }>(req);
+      const u = usuarioActual(req);
+      await productos.cambiarCosto(id, u.sucursalId, costo, u.id, motivo);
+      enviarOk(res, { mensaje: 'Costo actualizado' });
+    } catch (e) { next(e); }
+  });
+
+router.get('/:id/costos', requierePermiso('productos.ver'),
+  validar({ params: esquemaParamsId }), async (req, res, next) => {
+    try {
+      const { id } = datosParams<{ id: number }>(req);
+      enviarOk(res, await productos.historialCostos(id, usuarioActual(req).sucursalId));
+    } catch (e) { next(e); }
+  });
+
 export default router;

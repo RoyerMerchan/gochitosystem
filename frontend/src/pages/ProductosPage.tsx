@@ -30,6 +30,15 @@ export default function ProductosPage() {
   const [modal, setModal] = useState(false);
   const [editando, setEditando] = useState<number | null>(null);
   const [form, setForm] = useState(VACIO);
+  /**
+   * Costo con el que se abrió el modal y motivo de la corrección. El costo NO
+   * viaja en el PUT del producto: el backend lo ignora a propósito y se corrige
+   * por su propio endpoint, que deja rastro de quién lo cambió y por qué.
+   */
+  const [costoOriginal, setCostoOriginal] = useState('0');
+  const [motivoCosto, setMotivoCosto] = useState('');
+  /** El costo guardado es el estimado del alta, todavía sin una entrada detrás. */
+  const [costoEsSemilla, setCostoEsSemilla] = useState(true);
   const q = useDebounce(busqueda, 300);
 
   const productos = useQuery({
@@ -41,8 +50,25 @@ export default function ProductosPage() {
   const imps = useQuery({ queryKey: ['impuestos'], queryFn: () => obtener<Imp[]>('/impuestos'), staleTime: STALE_CATALOGO });
 
   const guardar = useMutation({
-    mutationFn: (d: typeof VACIO) => editando ? reemplazar(`/productos/${editando}`, d) : crear('/productos', d),
-    onSuccess: () => { toast.exito(editando ? 'Producto actualizado' : 'Producto creado'); qc.invalidateQueries({ queryKey: ['productos'] }); setModal(false); },
+    mutationFn: async (d: typeof VACIO) => {
+      if (!editando) return crear('/productos', d);
+      await reemplazar(`/productos/${editando}`, d);
+      // Corregir el costo es otra operación: revaloriza el inventario y queda
+      // registrada aparte. Solo se llama si de verdad cambió.
+      if ((d.costoInicial || '0') !== costoOriginal) {
+        await crear(`/productos/${editando}/costo`, {
+          costo: d.costoInicial || '0', motivo: motivoCosto.trim() || undefined,
+        });
+      }
+      return undefined;
+    },
+    onSuccess: () => {
+      toast.exito(editando ? 'Producto actualizado' : 'Producto creado');
+      qc.invalidateQueries({ queryKey: ['productos'] });
+      // El costo corregido cambia la valorización del inventario.
+      qc.invalidateQueries({ queryKey: ['existencias'] });
+      setModal(false);
+    },
     onError: (e) => toast.error(e instanceof ErrorApi ? e.message : 'No se pudo guardar'),
   });
 
@@ -62,6 +88,7 @@ export default function ProductosPage() {
   const abrirNuevo = () => {
     setEditando(null);
     setForm({ ...VACIO, categoriaId: catPorDefecto(), unidadMedidaId: uniPorDefecto(), impuestoId: impPorDefecto() });
+    setCostoOriginal('0'); setMotivoCosto(''); setCostoEsSemilla(true);
     setModal(true);
   };
   const abrirEditar = (p: Producto) => {
@@ -74,6 +101,7 @@ export default function ProductosPage() {
       costoInicial: p.costo_promedio, stockMinimo: p.stock_minimo,
       esPesable: Boolean(p.es_pesable), esFavoritoPos: Boolean(p.es_favorito_pos), codigoBarras: '',
     });
+    setCostoOriginal(p.costo_promedio); setMotivoCosto(''); setCostoEsSemilla(!p.costo_confirmado);
     setModal(true);
   };
 
@@ -166,7 +194,34 @@ export default function ProductosPage() {
           <Campo label="Impuesto"><select value={form.impuestoId} onChange={(e) => setForm({ ...form, impuestoId: Number(e.target.value) })} className={INP}>{(imps.data ?? []).map((i) => <option key={i.id} value={i.id}>{i.nombre}</option>)}</select></Campo>
           <Campo label="Precio de venta (USD) *"><input type="number" step="0.01" value={form.precioVenta} onChange={(e) => setForm({ ...form, precioVenta: e.target.value })} className={INP} /></Campo>
           <Campo label="Precio al mayor (USD) — opcional"><input type="number" step="0.01" value={form.precioMayorista} onChange={(e) => setForm({ ...form, precioMayorista: e.target.value })} className={INP} placeholder="Sin precio al mayor" /></Campo>
-          {!editando && <Campo label="Costo inicial (USD)"><input type="number" step="0.0001" value={form.costoInicial} onChange={(e) => setForm({ ...form, costoInicial: e.target.value })} className={INP} /></Campo>}
+          {/*
+            El costo se puede corregir también editando. Antes solo se pedía al
+            crear y un error de tecleo no había cómo arreglarlo: la única salida
+            era inventar una entrada de mercancía.
+          */}
+          <Campo label={editando ? 'Costo (USD)' : 'Costo inicial (USD)'}>
+            <input type="number" step="0.0001" value={form.costoInicial} onChange={(e) => setForm({ ...form, costoInicial: e.target.value })} className={INP} />
+          </Campo>
+          <div className="col-span-2 -mt-1 space-y-2">
+            {costoEsSemilla ? (
+              <p className="text-xs text-gray-500">
+                Es un estimado: manda mientras el producto no tenga entradas de mercancía.
+                La primera entrada lo reemplaza con lo que se pague de verdad.
+              </p>
+            ) : (
+              <p className="text-xs text-gray-500">
+                Este costo salió del promedio de las entradas de mercancía. Corregirlo
+                revaloriza la existencia de aquí en adelante; las ventas ya hechas
+                conservan el costo con el que se cobraron.
+              </p>
+            )}
+            {editando && (form.costoInicial || '0') !== costoOriginal && (
+              <Campo label="Motivo del cambio de costo">
+                <input value={motivoCosto} onChange={(e) => setMotivoCosto(e.target.value)} className={INP}
+                  placeholder="Ej. el costo del alta estaba mal tecleado" />
+              </Campo>
+            )}
+          </div>
           <label className="col-span-2 flex items-center gap-4 text-sm">
             <span className="flex items-center gap-2"><input type="checkbox" checked={form.esFavoritoPos} onChange={(e) => setForm({ ...form, esFavoritoPos: e.target.checked })} /> Favorito en POS</span>
             <span className="flex items-center gap-2"><input type="checkbox" checked={form.esPesable} onChange={(e) => setForm({ ...form, esPesable: e.target.checked })} /> Se vende por peso</span>

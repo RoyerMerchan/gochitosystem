@@ -11,11 +11,12 @@ import { Conflicto, NoEncontrado, ReglaNegocio } from '../../errores/AppError';
 import {
   query, queryOne, ejecutar, insertar, withTransaction, type Ejecutor,
 } from '../../database/pool';
-import { existeTabla } from '../../database/esquema';
+import { existeTabla, existeColumna } from '../../database/esquema';
 import {
   aCentavos, aCantidad, aUnitario, cantidadASql, unitarioASql, centavosASql,
   multiplicarPorCantidad, dividirRedondeando, sumar, aTasa,
 } from '../../utils/dinero';
+import { costoPromedioTrasEntrada } from '../../utils/costeo';
 import {
   aTasaCambio, usdABs, bsASql, aMontoMoneda, montoMonedaASql, montoMonedaAUsdPiso,
   usdAMontoMoneda,
@@ -148,8 +149,14 @@ async function ingresarStockYRecalcularCPP(
   cx: Ejecutor,
   d: { productoId: number; sucursalId: number; cantidad: bigint; costoNetoUnit: bigint; compraId: number; usuarioId: number },
 ): Promise<void> {
-  const stock = await queryOne<{ cantidad: string; costo_promedio: string }>(
-    `SELECT cantidad, costo_promedio FROM producto_stock
+  /**
+   * `costo_confirmado` llego con la migracion 0009 y en produccion la base es
+   * externa: si el despliegue va por delante de la migracion, ingresar mercancia
+   * no puede reventar. Sin la columna se promedia siempre, como antes.
+   */
+  const hayConfirmado = await existeColumna('producto_stock', 'costo_confirmado', cx);
+  const stock = await queryOne<{ cantidad: string; costo_promedio: string; costo_confirmado?: boolean }>(
+    `SELECT cantidad, costo_promedio${hayConfirmado ? ', costo_confirmado' : ''} FROM producto_stock
       WHERE producto_id = ? AND sucursal_id = ? LIMIT 1 FOR UPDATE`,
     [d.productoId, d.sucursalId], cx,
   );
@@ -157,32 +164,29 @@ async function ingresarStockYRecalcularCPP(
   const saldoAnterior = aCantidad(stock?.cantidad ?? '0');
   const cppAnterior = aUnitario(stock?.costo_promedio ?? '0');
   const saldoPosterior = saldoAnterior + d.cantidad;
+  /**
+   * Si el costo que hay es la semilla que alguien tecleo al crear el producto,
+   * esta entrada lo pisa en vez de promediarlo: no se promedia un estimado con
+   * plata real. Ver migracion 0009.
+   */
+  const esSemilla = hayConfirmado && !stock?.costo_confirmado;
 
-  // CPP nuevo = (saldoAnterior*cppAnterior + cantidad*costoNeto) / saldoPosterior
-  // Valores en escala real: usamos bigint con escalas y dividimos.
-  //   valorAnterior (escala 2) = saldoAnterior(3) * cppAnterior(4)  -> reescalar a 2
-  //   valorEntrada  (escala 2) = cantidad(3) * costoNeto(4)
-  const valorAnterior = multiplicarPorCantidad(cppAnterior, saldoAnterior); // escala 2
   const valorEntrada = multiplicarPorCantidad(d.costoNetoUnit, d.cantidad); // escala 2
-  const valorTotal = valorAnterior + valorEntrada;
-
-  // cpp nuevo (escala 4) = valorTotal(2) / saldoPosterior(cantidad real)
-  //   = valorTotal * 10^2 (para pasar a escala 4 del total) / saldoPosterior_real
-  //   saldoPosterior_real = saldoPosterior_esc3 / 10^3
-  //   cpp4 = valorTotal_esc2 * 10^2 * 10^3 / saldoPosterior_esc3 = valorTotal * 10^5 / saldoPosterior
-  const cppNuevo =
-    saldoPosterior > 0n ? dividirRedondeando(valorTotal * 100_000n, saldoPosterior) : d.costoNetoUnit;
+  const cppNuevo = costoPromedioTrasEntrada({
+    saldoAnterior, cppAnterior, cantidad: d.cantidad, costoUnitario: d.costoNetoUnit, esSemilla,
+  });
 
   if (stock) {
     await ejecutar(
-      `UPDATE producto_stock SET cantidad = ?, costo_promedio = ?, ultima_entrada_en = NOW()
+      `UPDATE producto_stock SET cantidad = ?, costo_promedio = ?${hayConfirmado ? ', costo_confirmado = TRUE' : ''},
+              ultima_entrada_en = NOW()
         WHERE producto_id = ? AND sucursal_id = ?`,
       [cantidadASql(saldoPosterior), unitarioASql(cppNuevo), d.productoId, d.sucursalId], cx,
     );
   } else {
     await ejecutar(
-      `INSERT INTO producto_stock (producto_id, sucursal_id, cantidad, costo_promedio, ultima_entrada_en)
-       VALUES (?, ?, ?, ?, NOW())`,
+      `INSERT INTO producto_stock (producto_id, sucursal_id, cantidad, costo_promedio${hayConfirmado ? ', costo_confirmado' : ''}, ultima_entrada_en)
+       VALUES (?, ?, ?, ?${hayConfirmado ? ', TRUE' : ''}, NOW())`,
       [d.productoId, d.sucursalId, cantidadASql(saldoPosterior), unitarioASql(cppNuevo)], cx,
     );
   }
@@ -204,7 +208,8 @@ async function ingresarStockYRecalcularCPP(
       SIGNO_MOVIMIENTO_INVENTARIO.ENTRADA_COMPRA, cantidadASql(d.cantidad),
       unitarioASql(d.costoNetoUnit), centavosASql(valorEntrada), cantidadASql(saldoAnterior),
       cantidadASql(saldoPosterior), unitarioASql(cppAnterior), unitarioASql(cppNuevo),
-      DOCUMENTO_TIPO_MOVIMIENTO.COMPRA, d.compraId, d.usuarioId, 'Entrada por compra',
+      DOCUMENTO_TIPO_MOVIMIENTO.COMPRA, d.compraId, d.usuarioId,
+      esSemilla ? 'Entrada por compra (fija el costo real)' : 'Entrada por compra',
     ],
     cx,
   );
