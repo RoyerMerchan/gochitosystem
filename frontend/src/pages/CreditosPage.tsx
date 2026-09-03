@@ -27,6 +27,8 @@ interface Deuda {
   id: number; venta_id: number | null; documento: string | null;
   fecha_emision: string; fecha_vencimiento: string;
   monto_original_usd: string; saldo_usd: string; estado: string; dias_mora: number;
+  /** Total de la venta: incluye lo que pago en la caja al comprar. */
+  venta_total_usd: string | null;
 }
 
 /** Deuda consolidada de la persona, calculada en el backend sobre sus créditos. */

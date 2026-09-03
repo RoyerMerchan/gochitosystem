@@ -72,9 +72,22 @@ export async function estadoCuenta(clienteId: Id): Promise<unknown> {
     [clienteId],
   );
 
+  /*
+    `venta_total_usd` es lo que costo la compra COMPLETA; `monto_original_usd`, solo
+    la parte que quedo fiada.
+
+    En una venta de pago mixto —se lleva $ 3,99, pone $ 2 en efectivo y queda
+    debiendo $ 1,99— el credito nace por esos $ 1,99. Si el estado de cuenta imprime
+    ese numero como "monto original", el detalle de productos suma $ 3,99 debajo de
+    un encabezado de $ 1,99 y los $ 2 que ya pago no aparecen en ninguna parte: el
+    cliente lee que no le abonaron nada. Con el total de la venta, la resta
+    original − saldo vuelve a contar TODO lo que puso, lo de la caja y lo de los
+    abonos posteriores.
+  */
   const creditos = await query(
     `SELECT cr.id, cr.venta_id, v.prefijo || v.numero AS documento, cr.fecha_emision, cr.fecha_vencimiento,
-            cr.monto_original_usd, cr.saldo_usd, cr.estado, (CURRENT_DATE - cr.fecha_vencimiento) AS dias_mora
+            cr.monto_original_usd, cr.saldo_usd, cr.estado, (CURRENT_DATE - cr.fecha_vencimiento) AS dias_mora,
+            v.total_usd AS venta_total_usd
        FROM creditos cr LEFT JOIN ventas v ON v.id = cr.venta_id
       WHERE cr.cliente_id = ? AND cr.estado <> 'ANULADO'
       ORDER BY cr.fecha_emision`,

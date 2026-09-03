@@ -21,6 +21,12 @@ export interface DeudaImpresa {
   fecha_vencimiento: string;
   dias_mora: number;
   monto_original_usd: string;
+  /**
+   * Lo que costo la compra COMPLETA, con la parte que se pago en la caja incluida.
+   * Ausente en creditos que no vienen de una venta (cargos manuales): ahi el monto
+   * del credito ya es todo lo que se le cargo.
+   */
+  venta_total_usd?: string | null;
   saldo_usd: string;
 }
 
@@ -109,8 +115,13 @@ export function imprimirEstadoCuenta(d: DatosEstadoCuenta, ventana?: Window | nu
   const filas = d.deudas
     .map((x) => {
       const mora = x.dias_mora > 0;
-      /** Lo que ya pago de ESA compra: lo que se le facturo menos lo que queda vivo. */
-      const abonado = Math.max(0, aNumero(x.monto_original_usd) - aNumero(x.saldo_usd));
+      /** Lo que costo la compra: el total de la venta, no solo la parte que quedo fiada. */
+      const facturado = aNumero(x.venta_total_usd ?? x.monto_original_usd);
+      /**
+       * Lo que ya pago de ESA compra: lo que costo menos lo que queda vivo. Suma el
+       * efectivo que dejo en la caja al comprar y los abonos que hizo despues.
+       */
+      const abonado = Math.max(0, facturado - aNumero(x.saldo_usd));
       const productos = porCredito.get(x.id) ?? [];
       /**
        * El detalle NO va en una tabla aparte dentro de un colspan: sus celdas se
@@ -137,8 +148,8 @@ export function imprimirEstadoCuenta(d: DatosEstadoCuenta, ventana?: Window | nu
         <td>${esc(x.documento ?? 'Crédito')}</td>
         <td>${formatearFecha(x.fecha_emision)}</td>
         <td>${formatearFecha(x.fecha_vencimiento)}${mora ? `<span class="chip">${x.dias_mora} d. de mora</span>` : ''}</td>
-        <td class="r">${formatearUSD(x.monto_original_usd)}${
-          hayTasa ? `<div class="mini">${bsImporte(x.monto_original_usd)}</div>` : ''}</td>
+        <td class="r">${formatearUSD(facturado)}${
+          hayTasa ? `<div class="mini">${bsImporte(facturado)}</div>` : ''}</td>
         <td class="r ${abonado > 0 ? 'verde' : 'gris'}">${abonado > 0 ? `− ${formatearUSD(abonado)}` : '—'}${
           abonado > 0 && hayTasa ? `<div class="mini">− ${bsImporte(abonado)}</div>` : ''}</td>
         <td class="r b">${formatearUSD(x.saldo_usd)}</td>
@@ -152,7 +163,7 @@ export function imprimirEstadoCuenta(d: DatosEstadoCuenta, ventana?: Window | nu
    * Se calcula sobre las mismas deudas que se listan para que la caja del total
    * cuadre con la tabla: original − abonado = lo que queda debiendo.
    */
-  const totalOriginal = d.deudas.reduce((a, x) => a + aNumero(x.monto_original_usd), 0);
+  const totalOriginal = d.deudas.reduce((a, x) => a + aNumero(x.venta_total_usd ?? x.monto_original_usd), 0);
   const totalSaldo = d.deudas.reduce((a, x) => a + aNumero(x.saldo_usd), 0);
   const totalAbonado = Math.max(0, totalOriginal - totalSaldo);
 
@@ -246,7 +257,7 @@ export function imprimirEstadoCuenta(d: DatosEstadoCuenta, ventana?: Window | nu
       <thead>
         <tr>
           <th>Documento</th><th>Fecha</th><th>Vence</th>
-          <th class="r">Monto original</th><th class="r">Abonado</th>
+          <th class="r">Total factura</th><th class="r">Abonado</th>
           <th class="r">Saldo USD</th><th class="r">Saldo Bs</th>
         </tr>
       </thead>
@@ -256,7 +267,7 @@ export function imprimirEstadoCuenta(d: DatosEstadoCuenta, ventana?: Window | nu
     <div class="total">
       <div class="caja">
         <div class="fila gris">
-          <span>Monto original de las compras</span>
+          <span>Total de las compras</span>
           <span>${formatearUSD(totalOriginal)}</span>
         </div>
         ${totalAbonado > 0 ? `
