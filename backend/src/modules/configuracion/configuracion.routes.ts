@@ -6,6 +6,7 @@ import { autenticar, usuarioActual } from '../../middlewares/autenticacion';
 import { requierePermiso } from '../../middlewares/autorizacion';
 import { enviarOk } from '../../utils/respuesta';
 import { queryOne, ejecutar } from '../../database/pool';
+import { existeColumna } from '../../database/esquema';
 
 const router = Router();
 router.use(autenticar);
@@ -27,12 +28,33 @@ const esquema = z.object({
   esTicketMuestraTasa: z.coerce.boolean().optional(),
   ticketAnchoMm: z.coerce.number().int().optional(),
   diasPlazoCreditoDefecto: z.coerce.number().int().min(0).max(365).optional(),
+  moraPctDefecto: z.coerce.number().min(0).max(100).optional(),
 });
 
 router.get('/', requierePermiso('configuracion.ver'), async (_req, res, next) => {
   try {
     const cfg = await queryOne(`SELECT * FROM configuracion WHERE id = 1`);
     enviarOk(res, cfg);
+  } catch (e) { next(e); }
+});
+
+/*
+  Condiciones que el POS propone al fiar. Va aparte de GET / porque esa ruta pide
+  permiso de configuracion y el cajero no lo tiene: sin esto, la caja no podria
+  proponer ni el plazo ni la mora por defecto.
+*/
+router.get('/credito', requierePermiso('pos.vender'), async (_req, res, next) => {
+  try {
+    const hayMora = await existeColumna('configuracion', 'mora_pct_defecto');
+    const cfg = await queryOne<{ dias_plazo_credito_defecto: number; mora_pct_defecto: string }>(
+      `SELECT dias_plazo_credito_defecto,
+              ${hayMora ? 'mora_pct_defecto' : '0'} AS mora_pct_defecto
+         FROM configuracion WHERE id = 1`,
+    );
+    enviarOk(res, {
+      dias_plazo_credito_defecto: cfg?.dias_plazo_credito_defecto ?? 30,
+      mora_pct_defecto: cfg?.mora_pct_defecto ?? '0',
+    });
   } catch (e) { next(e); }
 });
 
@@ -64,6 +86,9 @@ router.put('/', requierePermiso('configuracion.editar'), validar({ body: esquema
         usuarioActual(req).id,
       ],
     );
+    if (e.moraPctDefecto !== undefined && (await existeColumna('configuracion', 'mora_pct_defecto'))) {
+      await ejecutar(`UPDATE configuracion SET mora_pct_defecto = ? WHERE id = 1`, [e.moraPctDefecto]);
+    }
     enviarOk(res, await queryOne(`SELECT * FROM configuracion WHERE id = 1`));
   } catch (e) { next(e); }
 });

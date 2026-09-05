@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Plus, Trash2, Banknote } from 'lucide-react';
 import { Modal } from '@/components/ui/Modal';
-import { formatearUSD, formatearBs, aNumero, usdABs, redondearCentavos } from '@/lib/formato';
+import { formatearUSD, formatearBs, formatearFecha, aNumero, usdABs, redondearCentavos } from '@/lib/formato';
 import { METODOS_PAGO, type MetodoPago } from './metodosPago';
 
 export interface LineaPagoEnvio {
@@ -20,12 +20,27 @@ interface LineaPago {
   referencia: string;
 }
 
+/** Condiciones del fiado que se pactan en el mostrador, junto con el cobro. */
+export interface CondicionesCredito {
+  diasPlazo: number;
+  /** Recargo por atraso, en % del saldo que quede al vencer. */
+  moraPct: string;
+}
+
 interface Props {
   abierto: boolean;
   totalUsd: number;
   tasa: number;
+  /** Plazo que se propone al fiar (configuracion del negocio). */
+  diasPlazoDefecto: number;
+  /** Recargo por atraso que se propone al fiar. */
+  moraPctDefecto: number;
   onCerrar: () => void;
-  onConfirmar: (pagos: LineaPagoEnvio[], monedaVuelto: 'USD' | 'VES') => void;
+  onConfirmar: (
+    pagos: LineaPagoEnvio[],
+    monedaVuelto: 'USD' | 'VES',
+    credito: CondicionesCredito,
+  ) => void;
   procesando: boolean;
 }
 
@@ -36,9 +51,14 @@ function lineaEnUsd(l: LineaPago, tasa: number): number {
   return tasa > 0 ? monto / tasa : 0;
 }
 
-export function ModalCobro({ abierto, totalUsd, tasa, onCerrar, onConfirmar, procesando }: Props) {
+export function ModalCobro({
+  abierto, totalUsd, tasa, diasPlazoDefecto, moraPctDefecto,
+  onCerrar, onConfirmar, procesando,
+}: Props) {
   const [lineas, setLineas] = useState<LineaPago[]>([]);
   const [monedaVuelto, setMonedaVuelto] = useState<'USD' | 'VES'>('VES');
+  const [dias, setDias] = useState('');
+  const [mora, setMora] = useState('');
 
   /**
    * Cada apertura arranca en cero.
@@ -52,8 +72,10 @@ export function ModalCobro({ abierto, totalUsd, tasa, onCerrar, onConfirmar, pro
     if (abierto) {
       setLineas([]);
       setMonedaVuelto('VES');
+      setDias(String(diasPlazoDefecto));
+      setMora(String(moraPctDefecto));
     }
-  }, [abierto]);
+  }, [abierto, diasPlazoDefecto, moraPctDefecto]);
 
   const pagadoUsd = useMemo(
     () => lineas.filter((l) => !l.metodo.esCredito).reduce((a, l) => a + lineaEnUsd(l, tasa), 0),
@@ -77,6 +99,20 @@ export function ModalCobro({ abierto, totalUsd, tasa, onCerrar, onConfirmar, pro
   const creditoBs = usdABs(creditoUsd, tasa);
   const hayCredito = creditoUsd > 0.005;
   const faltanteBs = usdABs(faltante, tasa);
+  /*
+    Condiciones del fiado, en vivo. El cajero tiene al cliente delante: puede
+    decirle la fecha exacta de pago y cuanto le cuesta pasarse de ella ANTES de
+    confirmar, que es cuando todavia se puede discutir.
+  */
+  const diasNum = Math.max(0, Math.trunc(aNumero(dias)));
+  const moraNum = Math.min(100, Math.max(0, aNumero(mora)));
+  const vence = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + diasNum);
+    return d;
+  }, [diasNum]);
+  /** Lo que se le sumaria si no paga nada antes de vencer. */
+  const moraUsd = redondearCentavos((creditoUsd * moraNum) / 100);
 
   const agregarLinea = (metodo: MetodoPago) => {
     // Por defecto, el monto sugerido cubre el faltante en la moneda del metodo.
@@ -108,6 +144,7 @@ export function ModalCobro({ abierto, totalUsd, tasa, onCerrar, onConfirmar, pro
         referencia: l.referencia.trim() || undefined,
       })),
       monedaVuelto,
+      { diasPlazo: diasNum, moraPct: moraNum.toFixed(2) },
     );
   };
 
@@ -280,6 +317,46 @@ export function ModalCobro({ abierto, totalUsd, tasa, onCerrar, onConfirmar, pro
               {formatearBs(creditoBs)}
             </span>
           </div>
+
+          {/*
+            El plazo y el recargo se acuerdan aqui, con el cliente delante, y se
+            guardan EN ESTA factura: no son una politica global que alguien pueda
+            cambiar despues y encarecerle un fiado ya cerrado.
+          */}
+          <div className="mt-3 grid grid-cols-2 gap-3 border-t border-amber-300/60 pt-3 dark:border-amber-800/60">
+            <label className="block">
+              <span className="block text-[11px] font-medium uppercase tracking-wide text-amber-700/80 dark:text-amber-300/80">
+                Días de crédito
+              </span>
+              <input
+                type="number" min="0" max="365" step="1" value={dias}
+                onChange={(e) => setDias(e.target.value)}
+                className="mt-1 w-full rounded border border-amber-300 bg-white px-2 py-1 text-right text-sm tabular-nums dark:border-amber-800 dark:bg-gray-800"
+              />
+            </label>
+            <label className="block">
+              <span className="block text-[11px] font-medium uppercase tracking-wide text-amber-700/80 dark:text-amber-300/80">
+                Mora por atraso (%)
+              </span>
+              <input
+                type="number" min="0" max="100" step="0.5" value={mora}
+                onChange={(e) => setMora(e.target.value)}
+                className="mt-1 w-full rounded border border-amber-300 bg-white px-2 py-1 text-right text-sm tabular-nums dark:border-amber-800 dark:bg-gray-800"
+              />
+            </label>
+          </div>
+          <p className="mt-2 text-[11px] leading-relaxed text-amber-700/80 dark:text-amber-300/80">
+            Vence el <span className="font-semibold">{formatearFecha(vence)}</span>.{' '}
+            {moraNum > 0 ? (
+              <>
+                Si para esa fecha no ha pagado, se le suman{' '}
+                <span className="font-semibold">{formatearUSD(moraUsd)}</span> de mora
+                (el {moraNum}% de lo que quede debiendo), una sola vez.
+              </>
+            ) : (
+              <>Sin recargo por atraso.</>
+            )}
+          </p>
         </div>
       )}
     </Modal>

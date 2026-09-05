@@ -21,6 +21,104 @@ import { registrarMovimiento, turnoActivoDeUsuario } from '../caja/caja.service'
 import type { Id, UsuarioAutenticado } from '../../tipos/comunes';
 
 /**
+ * Devenga las moras vencidas: por cada factura fiada que se paso de su fecha de
+ * vencimiento con saldo vivo y un porcentaje pactado, cobra UNA sola vez ese
+ * porcentaje sobre LO QUE QUEDA DEBIENDO (el que ya abono casi todo paga una
+ * mora chiquita, que es lo que espera el cliente).
+ *
+ * POR QUE SE LLAMA DESDE LAS LECTURAS
+ * El backend no tiene tareas programadas, asi que no hay quien "pase a las 12 de
+ * la noche" a recargar las deudas vencidas. La mora se devenga sola la primera
+ * vez que alguien mira la cartera, abre un estado de cuenta o cobra un abono.
+ * Llamarla de mas no cobra de mas: `mora_aplicada_en` marca la factura ya
+ * recargada, y si dos cajeros abren la pantalla en el mismo instante el indice
+ * unico `ux_creditos_mora_por_credito` deja pasar una sola fila.
+ *
+ * LA MORA ES UN CREDITO APARTE
+ * No se suma al saldo de la factura: nace como nota de debito atada a ella por
+ * `credito_origen_id`. Asi el cliente ve "V-2428 $ 1,99" y debajo "Mora V-2428
+ * $ 0,10" en vez de un saldo que crecio sin explicacion, y el abono FIFO la
+ * cobra sola. Nace con `tasa_mora_pct` en 0: el recargo no genera recargo.
+ */
+export async function devengarMoras(clienteId?: Id, cx?: Ejecutor): Promise<number> {
+  // Si la migracion 0010 todavia no corrio, la cartera tiene que seguir abriendo.
+  if (!(await existeColumna('creditos', 'tasa_mora_pct', cx))) return 0;
+
+  const filtro = clienteId ? 'AND cr.cliente_id = ?' : '';
+  const params = clienteId ? [clienteId] : [];
+
+  const afectados = await query<{ cliente_id: string }>(
+    `WITH candidatos AS (
+       SELECT cr.id, cr.sucursal_id, cr.cliente_id, cr.usuario_id, cr.tasa_mora_pct,
+              cr.tasa_cambio_origen,
+              ROUND(cr.saldo_usd * cr.tasa_mora_pct / 100, 2) AS mora_usd,
+              COALESCE(v.prefijo || v.numero, 'el crédito #' || cr.id) AS doc
+         FROM creditos cr
+         LEFT JOIN ventas v ON v.id = cr.venta_id
+        WHERE cr.tasa_mora_pct > 0
+          AND cr.mora_aplicada_en IS NULL
+          AND cr.credito_origen_id IS NULL
+          AND cr.fecha_vencimiento < CURRENT_DATE
+          AND cr.estado IN ('PENDIENTE','PARCIAL','VENCIDO')
+          AND cr.saldo_usd > 0
+          ${filtro}
+     ),
+     /*
+       La deuda vive en USD; los Bs de la fila son referenciales. Si hoy nadie
+       cargo la tasa se usa la ultima conocida, y si no hay ninguna, la del dia
+       de la venta: la mora no se puede quedar sin devengar por eso.
+     */
+     tasa_hoy AS (
+       SELECT tasa FROM tasas_cambio
+        WHERE fecha <= CURRENT_DATE AND eliminado_en IS NULL
+        ORDER BY fecha DESC LIMIT 1
+     ),
+     nuevos AS (
+       INSERT INTO creditos (
+              sucursal_id, cliente_id, venta_id, origen, fecha_emision, fecha_vencimiento,
+              dias_plazo, monto_original_usd, saldo_usd, tasa_cambio_origen,
+              monto_original_bs_referencia, estado, usuario_id, credito_origen_id, observaciones)
+       SELECT c.sucursal_id, c.cliente_id, NULL, 'NOTA_DEBITO', CURRENT_DATE, CURRENT_DATE,
+              0, c.mora_usd, c.mora_usd,
+              COALESCE((SELECT tasa FROM tasa_hoy), c.tasa_cambio_origen),
+              ROUND(c.mora_usd * COALESCE((SELECT tasa FROM tasa_hoy), c.tasa_cambio_origen), 2),
+              'PENDIENTE', c.usuario_id, c.id,
+              'Mora del ' || TRIM(TO_CHAR(c.tasa_mora_pct, 'FM990D00')) || '% por atraso en ' || c.doc
+         FROM candidatos c
+        WHERE c.mora_usd >= 0.01
+       ON CONFLICT (credito_origen_id) WHERE credito_origen_id IS NOT NULL DO NOTHING
+       RETURNING credito_origen_id
+     )
+     UPDATE creditos p
+        SET mora_aplicada_en = CURRENT_TIMESTAMP, actualizado_en = CURRENT_TIMESTAMP
+      WHERE p.id IN (SELECT credito_origen_id FROM nuevos)
+     RETURNING p.cliente_id`,
+    params,
+    cx,
+  );
+
+  if (afectados.length === 0) return 0;
+
+  /*
+    `clientes.saldo_actual` es un espejo desnormalizado (migracion 0004): ni la
+    cartera ni el cupo lo leen, pero se deja cuadrado para que nadie se tope con
+    dos cifras distintas de la misma deuda.
+  */
+  const ids = [...new Set(afectados.map((f) => Number(f.cliente_id)))];
+  await ejecutar(
+    `UPDATE clientes c
+        SET saldo_actual = COALESCE((SELECT SUM(cr.saldo_usd) FROM creditos cr
+                                      WHERE cr.cliente_id = c.id
+                                        AND cr.estado IN ('PENDIENTE','PARCIAL','VENCIDO')
+                                        AND cr.saldo_usd > 0), 0)
+      WHERE c.id IN (${ids.map(() => '?').join(',')})`,
+    ids,
+    cx,
+  );
+  return afectados.length;
+}
+
+/**
  * Cartera: una fila por PERSONA, con su deuda total.
  *
  * El total sale de sumar TODOS sus creditos vivos (`creditos.saldo_usd`), no de
@@ -31,6 +129,9 @@ import type { Id, UsuarioAutenticado } from '../../tipos/comunes';
  * cuadran entre si, porque salen de las mismas filas.
  */
 export async function listarCartera(): Promise<unknown[]> {
+  // Primera pantalla que se abre en la mañana: aqui es donde se devengan las moras
+  // de las facturas que vencieron mientras nadie miraba.
+  await devengarMoras();
   return query(
     `SELECT c.id AS cliente_id, c.nombre, c.documento, c.cupo_credito,
             SUM(cr.saldo_usd) AS saldo_usd,
@@ -55,6 +156,9 @@ export async function listarCartera(): Promise<unknown[]> {
  * persona: lo que hay que cobrarle sumando todos sus creditos.
  */
 export async function estadoCuenta(clienteId: Id): Promise<unknown> {
+  // Antes de contar la deuda, cobrarle lo que se gano por atrasarse.
+  await devengarMoras(clienteId);
+
   const cliente = await queryOne(
     `SELECT id, nombre, documento, saldo_actual, cupo_credito FROM clientes WHERE id = ? AND eliminado_en IS NULL`,
     [clienteId],
@@ -84,11 +188,31 @@ export async function estadoCuenta(clienteId: Id): Promise<unknown> {
     original − saldo vuelve a contar TODO lo que puso, lo de la caja y lo de los
     abonos posteriores.
   */
+  /*
+    Una fila de mora no tiene venta detras, asi que se nombra por la factura que
+    la genero: "Mora V-2428". Sin eso el estado de cuenta lista un "Crédito" suelto
+    y el cliente no tiene como saber de donde salio el recargo. Si la migracion
+    0010 todavia no corrio, la columna no existe y se muestra lo de siempre.
+  */
+  const hayMora = await existeColumna('creditos', 'credito_origen_id');
+  const documento = hayMora
+    ? `COALESCE(v.prefijo || v.numero,
+                CASE WHEN cr.credito_origen_id IS NOT NULL
+                     THEN 'Mora ' || COALESCE(vo.prefijo || vo.numero, '#' || cr.credito_origen_id)
+                END)`
+    : 'v.prefijo || v.numero';
+  const joinMora = hayMora
+    ? `LEFT JOIN creditos co ON co.id = cr.credito_origen_id
+       LEFT JOIN ventas   vo ON vo.id = co.venta_id`
+    : '';
+
   const creditos = await query(
-    `SELECT cr.id, cr.venta_id, v.prefijo || v.numero AS documento, cr.fecha_emision, cr.fecha_vencimiento,
+    `SELECT cr.id, cr.venta_id, ${documento} AS documento, cr.fecha_emision, cr.fecha_vencimiento,
             cr.monto_original_usd, cr.saldo_usd, cr.estado, (CURRENT_DATE - cr.fecha_vencimiento) AS dias_mora,
             v.total_usd AS venta_total_usd
-       FROM creditos cr LEFT JOIN ventas v ON v.id = cr.venta_id
+       FROM creditos cr
+       LEFT JOIN ventas v ON v.id = cr.venta_id
+       ${joinMora}
       WHERE cr.cliente_id = ? AND cr.estado <> 'ANULADO'
       ORDER BY cr.fecha_emision`,
     [clienteId],
@@ -196,6 +320,13 @@ export async function registrarAbono(
   vuelto_usd: string; saldo_restante: string;
 }> {
   return withTransaction(async (cx) => {
+    /*
+      Primero la mora, despues el cobro. Si el cliente llega a pagar el dia 35 de
+      una factura a 30 dias, lo que se le cobra ya trae el recargo: sin esto le
+      cobraria el saldo viejo y la mora le caeria despues, cuando ya se fue.
+    */
+    await devengarMoras(entrada.clienteId, cx);
+
     // Tasa del dia del abono.
     const tasaFila = await queryOne<{ tasa: string }>(
       `SELECT tasa FROM tasas_cambio WHERE fecha = CURRENT_DATE AND eliminado_en IS NULL LIMIT 1`, [], cx,

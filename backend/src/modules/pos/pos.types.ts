@@ -26,4 +26,8 @@ export interface VentaEntrada {
   readonly observaciones?: string;
   /** Vueltas: en que moneda se entregan (por defecto la del sobrante). */
   readonly monedaVuelto?: 'USD' | 'VES';
+  /** Dias de credito pactados para el fiado. Ausente = el plazo fichado del cliente. */
+  readonly diasPlazo?: number;
+  /** Recargo por atraso, en % del saldo que quede al vencer. Ausente = el de la configuracion. */
+  readonly moraPct?: string;
 }

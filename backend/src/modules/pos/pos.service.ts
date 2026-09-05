@@ -22,6 +22,7 @@ import {
   withTransaction,
   type Ejecutor,
 } from '../../database/pool';
+import { existeColumna } from '../../database/esquema';
 import {
   aCentavos,
   aUnitario,
@@ -257,6 +258,8 @@ export async function registrarVenta(
         tasa: tasaHoy.tasa,
         tasaEscalada,
         usuarioId: usuario.id,
+        diasPlazo: entrada.diasPlazo ?? null,
+        moraPct: entrada.moraPct ?? null,
       });
       await ejecutar(
         `UPDATE clientes SET saldo_actual = saldo_actual + ? WHERE id = ?`,
@@ -709,26 +712,44 @@ async function crearCredito(
     tasa: string;
     tasaEscalada: bigint;
     usuarioId: number;
+    /** Plazo pactado en el mostrador. Ausente = el que tenga fichado el cliente. */
+    diasPlazo?: number | null;
+    /** Recargo por atraso pactado en el mostrador. Ausente = el de la configuracion. */
+    moraPct?: string | null;
   },
 ): Promise<void> {
-  const cliente = await queryOne<{ dias_plazo: number }>(
-    `SELECT dias_plazo FROM clientes WHERE id = ?`,
+  /*
+    El plazo y la mora se guardan EN LA FACTURA, no se leen del cliente al cobrar:
+    son lo que se acordo ese dia en el mostrador. Si mañana se sube el porcentaje
+    por defecto, los fiados ya hechos no se encarecen solos.
+
+    Si la migracion 0010 no corrio todavia, la venta a credito tiene que seguir
+    saliendo: se guarda sin mora y la columna se llena cuando la base se ponga al dia.
+  */
+  const guardaMora = await existeColumna('creditos', 'tasa_mora_pct', cx);
+  const hayDefectoMora = guardaMora && (await existeColumna('configuracion', 'mora_pct_defecto', cx));
+  const cliente = await queryOne<{ dias_plazo: number; mora_defecto: string | null }>(
+    `SELECT c.dias_plazo,
+            ${hayDefectoMora ? '(SELECT mora_pct_defecto FROM configuracion WHERE id = 1)' : 'NULL'} AS mora_defecto
+       FROM clientes c WHERE c.id = ?`,
     [d.clienteId],
     cx,
   );
-  const dias = cliente?.dias_plazo ?? 30;
+  const dias = d.diasPlazo ?? cliente?.dias_plazo ?? 30;
+  const mora = d.moraPct ?? cliente?.mora_defecto ?? '0';
   const montoBs = usdABs(d.montoUsd, d.tasaEscalada);
 
   await insertar(
     `INSERT INTO creditos
       (sucursal_id, cliente_id, venta_id, origen, fecha_emision, fecha_vencimiento, dias_plazo,
        monto_original_usd, saldo_usd, tasa_cambio_origen, monto_original_bs_referencia,
-       estado, usuario_id)
-     VALUES (?, ?, ?, ?, CURRENT_DATE, CURRENT_DATE + (?::TEXT || ' days')::INTERVAL, ?, ?, ?, ?, ?, ?, ?)`,
+       estado, usuario_id${guardaMora ? ', tasa_mora_pct' : ''})
+     VALUES (?, ?, ?, ?, CURRENT_DATE, CURRENT_DATE + (?::TEXT || ' days')::INTERVAL, ?, ?, ?, ?, ?, ?, ?${guardaMora ? ', ?' : ''})`,
     [
       d.sucursalId, d.clienteId, d.ventaId, ORIGEN_CREDITO.VENTA, dias, dias,
       centavosASql(d.montoUsd), centavosASql(d.montoUsd), d.tasa, bsASql(montoBs),
       ESTADO_CREDITO.PENDIENTE, d.usuarioId,
+      ...(guardaMora ? [mora] : []),
     ],
     cx,
   );
@@ -954,6 +975,27 @@ export async function anularVenta(
         [ventaId], cx,
       );
       if (credito) {
+        /*
+          La mora que genero esta factura se cae con ella: si la venta no existio,
+          el recargo por no haberla pagado tampoco tiene de que agarrarse.
+        */
+        const mora = (await existeColumna('creditos', 'credito_origen_id', cx))
+          ? await queryOne<{ id: number; saldo_usd: string }>(
+            `SELECT id, saldo_usd FROM creditos
+               WHERE credito_origen_id = ? AND estado <> 'ANULADO' LIMIT 1 FOR UPDATE`,
+            [credito.id], cx,
+          )
+          : null;
+        if (mora) {
+          await ejecutar(
+            `UPDATE clientes SET saldo_actual = GREATEST(0, saldo_actual - ?) WHERE id = ?`,
+            [mora.saldo_usd, venta.cliente_id], cx,
+          );
+          await ejecutar(
+            `UPDATE creditos SET estado = 'ANULADO', saldo_usd = 0, anulado_en = NOW(), anulado_por = ?, motivo_anulacion = ? WHERE id = ?`,
+            [usuario.id, motivo, mora.id], cx,
+          );
+        }
         await ejecutar(
           `UPDATE clientes SET saldo_actual = GREATEST(0, saldo_actual - ?) WHERE id = ?`,
           [credito.saldo_usd, venta.cliente_id], cx,

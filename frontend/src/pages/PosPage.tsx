@@ -5,11 +5,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { STALE_CATALOGO } from '@/app/QueryProvider';
 import { Search, Trash2, Plus, Minus, ShoppingCart, AlertTriangle, PauseCircle } from 'lucide-react';
 import { obtener, crear } from '@/lib/axios';
 import { ErrorApi } from '@/lib/errores';
 import { useCarrito } from '@/features/pos/carritoStore';
-import { ModalCobro, type LineaPagoEnvio } from '@/features/pos/ModalCobro';
+import { ModalCobro, type LineaPagoEnvio, type CondicionesCredito } from '@/features/pos/ModalCobro';
 import { ModalCliente } from '@/features/pos/ModalCliente';
 import { ModalEspera } from '@/features/pos/ModalEspera';
 import { METODOS_PAGO } from '@/features/pos/metodosPago';
@@ -55,6 +56,20 @@ export default function PosPage() {
     queryFn: () => obtener<unknown[]>('/pos/espera'),
   });
   const cuantasEnEspera = enEspera.data?.length ?? 0;
+
+  /*
+    Condiciones que el modal de cobro propone al fiar. Se piden una vez y se
+    cachean: si la peticion falla (o el negocio nunca las configuro) el fiado
+    sigue funcionando con 30 dias y sin recargo, que es lo que hacia antes.
+  */
+  const cfgCredito = useQuery({
+    queryKey: ['config-credito'],
+    queryFn: () => obtener<{ dias_plazo_credito_defecto: number; mora_pct_defecto: string }>(
+      '/configuracion/credito',
+    ),
+    staleTime: STALE_CATALOGO,
+    retry: false,
+  });
 
   const totalUsd = carrito.totalUsd();
   const items = carrito.items;
@@ -119,7 +134,11 @@ export default function PosPage() {
     }
   };
 
-  const confirmarVenta = async (pagos: LineaPagoEnvio[], monedaVuelto: 'USD' | 'VES') => {
+  const confirmarVenta = async (
+    pagos: LineaPagoEnvio[],
+    monedaVuelto: 'USD' | 'VES',
+    credito: CondicionesCredito,
+  ) => {
     setProcesando(true);
     // Se captura el estado del carrito antes de limpiarlo, para el ticket.
     const itemsTicket = items.map((i) => ({
@@ -140,6 +159,9 @@ export default function PosPage() {
         })),
         pagos,
         monedaVuelto,
+        // Solo pesan si la venta deja saldo; el backend las ignora si se pago todo.
+        diasPlazo: credito.diasPlazo,
+        moraPct: credito.moraPct,
       });
       toast.exito(`Venta ${venta.numero} registrada · ${formatearUSD(venta.total_usd)}`);
       if (Number(venta.vuelto_usd) > 0) {
@@ -407,6 +429,8 @@ export default function PosPage() {
         abierto={cobrando}
         totalUsd={totalUsd}
         tasa={tasaNum}
+        diasPlazoDefecto={Number(cfgCredito.data?.dias_plazo_credito_defecto ?? 30)}
+        moraPctDefecto={Number(cfgCredito.data?.mora_pct_defecto ?? 0)}
         onCerrar={() => setCobrando(false)}
         onConfirmar={confirmarVenta}
         procesando={procesando}

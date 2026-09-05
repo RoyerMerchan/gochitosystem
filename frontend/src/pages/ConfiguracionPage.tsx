@@ -13,6 +13,7 @@ interface Config {
   direccion: string | null; telefono: string | null; email: string | null;
   ticket_encabezado: string | null; ticket_pie: string | null; ticket_mensaje_legal: string | null;
   moneda_secundaria_simbolo: string; es_bloquea_venta_sin_tasa: number;
+  dias_plazo_credito_defecto: number; mora_pct_defecto: string | null;
 }
 
 export default function ConfiguracionPage() {
@@ -29,6 +30,8 @@ export default function ConfiguracionPage() {
         direccion: c.direccion ?? '', telefono: c.telefono ?? '', email: c.email ?? '',
         ticketEncabezado: c.ticket_encabezado ?? '', ticketPie: c.ticket_pie ?? '',
         ticketMensajeLegal: c.ticket_mensaje_legal ?? '',
+        diasPlazoCreditoDefecto: String(c.dias_plazo_credito_defecto ?? 30),
+        moraPctDefecto: String(c.mora_pct_defecto ?? 0),
       });
     }
   }, [config.data]);
@@ -58,6 +61,27 @@ export default function ConfiguracionPage() {
           <Campo label="Dirección" className="col-span-2"><input value={form.direccion ?? ''} onChange={(e) => set('direccion', e.target.value)} className={INP} /></Campo>
           <Campo label="Teléfono"><input value={form.telefono ?? ''} onChange={(e) => set('telefono', e.target.value)} className={INP} /></Campo>
           <Campo label="Correo"><input value={form.email ?? ''} onChange={(e) => set('email', e.target.value)} className={INP} /></Campo>
+        </div>
+      </Card>
+
+      <Card>
+        <h2 className="mb-1 font-semibold">Fiado</h2>
+        {/*
+          Son solo la propuesta del POS: lo que se guarda en cada factura es lo que
+          el cajero deje puesto al cobrar. Cambiar esto no toca los fiados ya hechos.
+        */}
+        <p className="mb-3 text-xs text-gray-500">
+          Lo que el punto de venta propone al fiar. El cajero lo puede cambiar en cada venta.
+        </p>
+        <div className="grid grid-cols-2 gap-3">
+          <Campo label="Días de crédito">
+            <input type="number" min="0" max="365" step="1" value={form.diasPlazoCreditoDefecto ?? ''}
+              onChange={(e) => set('diasPlazoCreditoDefecto', e.target.value)} className={INP} />
+          </Campo>
+          <Campo label="Mora por atraso (%)">
+            <input type="number" min="0" max="100" step="0.5" value={form.moraPctDefecto ?? ''}
+              onChange={(e) => set('moraPctDefecto', e.target.value)} className={INP} />
+          </Campo>
         </div>
       </Card>
 

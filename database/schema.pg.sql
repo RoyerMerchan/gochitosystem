@@ -326,6 +326,7 @@ CREATE TABLE configuracion (
   es_credito_requiere_autorizacion BOOLEAN NOT NULL DEFAULT FALSE,
   es_permite_stock_negativo       BOOLEAN NOT NULL DEFAULT FALSE,
   dias_plazo_credito_defecto      INTEGER NOT NULL DEFAULT 30 CHECK (dias_plazo_credito_defecto >= 0),
+  mora_pct_defecto                DECIMAL(5,2) NOT NULL DEFAULT 0 CHECK (mora_pct_defecto >= 0 AND mora_pct_defecto <= 100),
   zona_horaria                    VARCHAR(40) NOT NULL DEFAULT 'America/Caracas',
   actualizado_por                 BIGINT,
   creado_en                       TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -942,6 +943,11 @@ CREATE TABLE creditos (
   fecha_emision                DATE NOT NULL,
   fecha_vencimiento            DATE NOT NULL,
   dias_plazo                   INTEGER NOT NULL DEFAULT 30 CHECK (dias_plazo >= 0),
+  -- Recargo pactado si la factura se pasa del vencimiento (ver migracion 0010).
+  tasa_mora_pct                DECIMAL(5,2) NOT NULL DEFAULT 0 CHECK (tasa_mora_pct >= 0 AND tasa_mora_pct <= 100),
+  mora_aplicada_en             TIMESTAMPTZ(3),
+  -- En una fila de mora, la factura que la genero.
+  credito_origen_id            BIGINT,
   monto_original_usd           DECIMAL(14,2) NOT NULL CHECK (monto_original_usd > 0),
   saldo_usd                    DECIMAL(14,4) NOT NULL CHECK (saldo_usd >= 0),
   tasa_cambio_origen           DECIMAL(18,6) NOT NULL CHECK (tasa_cambio_origen > 0),
@@ -969,6 +975,11 @@ CREATE INDEX ix_cred_venta ON creditos (venta_id);
 CREATE INDEX ix_cred_usuario ON creditos (usuario_id);
 CREATE INDEX ix_cred_autorizado ON creditos (autorizado_por);
 CREATE INDEX ix_cred_anulado ON creditos (anulado_por);
+-- UNA mora por factura: hace idempotente al devengo perezoso.
+CREATE UNIQUE INDEX ux_creditos_mora_por_credito ON creditos (credito_origen_id) WHERE credito_origen_id IS NOT NULL;
+CREATE INDEX ix_creditos_mora_pendiente ON creditos (fecha_vencimiento)
+  WHERE tasa_mora_pct > 0 AND mora_aplicada_en IS NULL AND credito_origen_id IS NULL;
+ALTER TABLE creditos ADD CONSTRAINT creditos_credito_origen_fk FOREIGN KEY (credito_origen_id) REFERENCES creditos(id);
 ALTER TABLE creditos ADD CONSTRAINT fk_cred_sucursal   FOREIGN KEY (sucursal_id)    REFERENCES sucursales(id) ON DELETE RESTRICT;
 ALTER TABLE creditos ADD CONSTRAINT fk_cred_cliente    FOREIGN KEY (cliente_id)     REFERENCES clientes(id)   ON DELETE RESTRICT;
 ALTER TABLE creditos ADD CONSTRAINT fk_cred_venta      FOREIGN KEY (venta_id)       REFERENCES ventas(id)     ON DELETE RESTRICT;

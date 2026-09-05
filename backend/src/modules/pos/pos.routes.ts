@@ -50,6 +50,9 @@ const esquemaVenta = z.object({
   descuentoDocumento: decimal.optional(),
   observaciones: z.string().trim().max(255).optional(),
   monedaVuelto: z.enum(['USD', 'VES']).optional(),
+  // Condiciones del fiado, pactadas en el mostrador. Solo pesan si la venta deja saldo.
+  diasPlazo: z.coerce.number().int().min(0).max(365).optional(),
+  moraPct: decimal.refine((v) => Number(v) <= 100, 'La mora no puede pasar de 100%').optional(),
 });
 
 // -----------------------------------------------------------------------------
