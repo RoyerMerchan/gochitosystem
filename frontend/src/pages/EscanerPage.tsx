@@ -25,6 +25,24 @@ import type { Producto } from '@/lib/tipos';
  */
 const REPETICION_MS = 2000;
 
+/** Cuánto se queda en pantalla el aviso de un escaneo, en milisegundos. */
+const AVISO_MS = 2500;
+
+/**
+ * El aviso grande sobre la cámara.
+ *
+ * La vibración dice "leí algo", pero no dice QUÉ ni si sirvió. Quien va llenando
+ * la cesta necesita saber sin apartar la vista del anaquel si ese código entró al
+ * carrito de la caja o si no está en el catálogo, y necesita saberlo en el
+ * momento, no cuando llegue a cobrar.
+ */
+interface Aviso {
+  tipo: 'enviando' | 'ok' | 'error';
+  texto: string;
+  /** Cambia en cada escaneo para reiniciar la animación aunque el texto se repita. */
+  ts: number;
+}
+
 interface Enviado {
   codigo: string;
   /** Nombre del producto, solo para que quien sostiene el teléfono sepa qué leyó. */
@@ -55,6 +73,22 @@ export default function EscanerPage() {
   const [enviados, setEnviados] = useState<Enviado[]>([]);
   const [manual, setManual] = useState('');
   const [conectado, setConectado] = useState(realtimeConectado());
+  const [aviso, setAviso] = useState<Aviso | null>(null);
+  const temporizadorAviso = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /*
+    Un solo temporizador para todos los avisos: escaneando rápido, cada código
+    reinicia la cuenta en vez de dejar que el anterior apague el mensaje nuevo.
+  */
+  const mostrarAviso = useCallback((tipo: Aviso['tipo'], texto: string) => {
+    setAviso({ tipo, texto, ts: Date.now() });
+    if (temporizadorAviso.current) clearTimeout(temporizadorAviso.current);
+    temporizadorAviso.current = setTimeout(() => setAviso(null), AVISO_MS);
+  }, []);
+
+  useEffect(() => () => {
+    if (temporizadorAviso.current) clearTimeout(temporizadorAviso.current);
+  }, []);
 
   // El socket no avisa de su estado; se mira cada tanto para poder advertir a
   // tiempo que lo que se escanee no va a llegar a la caja.
@@ -75,9 +109,13 @@ export default function EscanerPage() {
     navigator.vibrate?.(60);
 
     if (!emitirEscaneo(limpio)) {
+      mostrarAviso('error', 'Sin conexión con la caja: no se envió');
       toast.error('Sin conexión con la caja: el código no se envió');
       return;
     }
+    // Acuse inmediato: el nombre tarda lo que tarde la búsqueda, pero el código
+    // ya salió y quien escanea tiene que verlo ya.
+    mostrarAviso('enviando', limpio);
 
     /*
       El nombre se busca solo para mostrarlo aquí. Quien va llenando la cesta no
@@ -92,7 +130,9 @@ export default function EscanerPage() {
       nombre = null;
     }
     setEnviados((l) => [{ codigo: limpio, nombre, ts: ahora }, ...l].slice(0, 20));
-  }, []);
+    if (nombre) mostrarAviso('ok', nombre);
+    else mostrarAviso('error', `${limpio} no está en el catálogo`);
+  }, [mostrarAviso]);
 
   useEffect(() => {
     /*
@@ -177,7 +217,15 @@ export default function EscanerPage() {
         {estado === 'listo' && (
           // Marco guía: sin él la gente acerca el código al borde de la pantalla.
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <div className="h-32 w-64 rounded-xl border-2 border-white/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]" />
+            <div
+              className={`h-32 w-64 rounded-xl border-2 shadow-[0_0_0_9999px_rgba(0,0,0,0.35)] transition-colors ${
+                aviso?.tipo === 'ok'
+                  ? 'border-green-400'
+                  : aviso?.tipo === 'error'
+                    ? 'border-red-400'
+                    : 'border-white/80'
+              }`}
+            />
           </div>
         )}
 
@@ -192,6 +240,41 @@ export default function EscanerPage() {
                 <p className="text-xs text-gray-500">Mientras tanto puedes teclear el código abajo.</p>
               </>
             )}
+          </div>
+        )}
+
+        {/*
+          El aviso va ENCIMA de la cámara, que es donde ya están puestos los ojos.
+          Un toast en una esquina se lo pierde quien está apuntando a un anaquel.
+        */}
+        {aviso && (
+          <div
+            key={aviso.ts}
+            className={`absolute inset-x-0 bottom-0 flex items-center gap-2 p-3 text-white ${
+              aviso.tipo === 'ok'
+                ? 'bg-green-600/95'
+                : aviso.tipo === 'error'
+                  ? 'bg-red-600/95'
+                  : 'bg-gray-900/90'
+            }`}
+          >
+            {aviso.tipo === 'ok' ? (
+              <Check className="h-5 w-5 shrink-0" />
+            ) : aviso.tipo === 'error' ? (
+              <X className="h-5 w-5 shrink-0" />
+            ) : (
+              <ScanLine className="h-5 w-5 shrink-0 animate-pulse" />
+            )}
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold">{aviso.texto}</p>
+              <p className="text-[11px] opacity-90">
+                {aviso.tipo === 'ok'
+                  ? 'Agregado al carrito de la caja'
+                  : aviso.tipo === 'error'
+                    ? 'No se agregó nada'
+                    : 'Enviando a la caja…'}
+              </p>
+            </div>
           </div>
         )}
       </div>
