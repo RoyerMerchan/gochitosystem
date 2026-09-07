@@ -91,6 +91,8 @@ export interface Producto {
   es_precio_incluye_impuesto: number;
   es_pesable: number;
   es_favorito_pos: number;
+  /** Código principal del producto, el que lee el escáner. Null si no tiene. */
+  codigo_barras: string | null;
   imagen_ruta: string | null;
   cantidad: string;
   stock_minimo: string;

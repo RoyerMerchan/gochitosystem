@@ -3,7 +3,7 @@
  * en Bs a la tasa vigente para que el POS lo muestre sin recalcular en el cliente.
  */
 import { NoEncontrado, Conflicto } from '../../errores/AppError';
-import { query, queryOne, ejecutar, insertar, withTransaction } from '../../database/pool';
+import { query, queryOne, ejecutar, insertar, withTransaction, type Ejecutor } from '../../database/pool';
 import { existeColumna, existeTabla } from '../../database/esquema';
 import { usdABs, bsASql } from '../../utils/moneda';
 import { aCentavos } from '../../utils/dinero';
@@ -84,6 +84,11 @@ const SELECT_BASE = `
          COALESCE(ps.costo_promedio, p.costo_promedio) AS costo_promedio,
          @COSTO_CONFIRMADO@ AS costo_confirmado,
          COALESCE(ps.cantidad, 0) AS cantidad, COALESCE(ps.stock_minimo, 0) AS stock_minimo,
+         -- El codigo principal. Un producto puede tener varios (envase y caja);
+         -- el formulario edita este, que es el que se escanea en la caja.
+         (SELECT pc.codigo FROM producto_codigos pc
+           WHERE pc.producto_id = p.id AND pc.eliminado_en IS NULL
+           ORDER BY pc.es_principal DESC, pc.id LIMIT 1) AS codigo_barras,
          p.esta_activo
     FROM productos p
     JOIN categorias c ON c.id = p.categoria_id
@@ -268,18 +273,7 @@ export async function crear(e: EntradaProducto, sucursalId: number, usuarioId: I
       cx,
     );
 
-    if (e.codigoBarras?.trim()) {
-      try {
-        await insertar(
-          `INSERT INTO producto_codigos (producto_id, codigo, tipo, es_principal) VALUES (?, ?, 'EAN13', TRUE)`,
-          [id, e.codigoBarras.trim()],
-          cx,
-        );
-      } catch (err) {
-        if ((err as { code?: string }).code === '23505') throw new Conflicto('CODIGO_BARRAS_DUPLICADO');
-        throw err;
-      }
-    }
+    await guardarCodigoPrincipal(cx, id, e.codigoBarras);
 
     const filas = await query<ProductoListado>(
       `${await selectBase()} WHERE p.id = ? LIMIT 1`, [sucursalId, id], cx,
@@ -290,32 +284,109 @@ export async function crear(e: EntradaProducto, sucursalId: number, usuarioId: I
 
 /** Actualiza los datos de un producto (nunca el costo, que lo mueven las compras). */
 export async function actualizar(id: Id, e: EntradaProducto, sucursalId: number): Promise<ProductoListado> {
-  const existe = await queryOne<{ id: number }>(`SELECT id FROM productos WHERE id = ? AND eliminado_en IS NULL`, [id]);
-  if (!existe) throw new NoEncontrado('PRODUCTO_NO_ENCONTRADO');
+  await withTransaction(async (cx) => {
+    const existe = await queryOne<{ id: number }>(
+      `SELECT id FROM productos WHERE id = ? AND eliminado_en IS NULL`, [id], cx,
+    );
+    if (!existe) throw new NoEncontrado('PRODUCTO_NO_ENCONTRADO');
+
+    try {
+      await ejecutar(
+        `UPDATE productos SET sku=?, nombre=?, descripcion=?, categoria_id=?, unidad_medida_id=?,
+                impuesto_id=?, precio_venta=?, precio_venta_mayorista=?, es_precio_incluye_impuesto=?,
+                es_pesable=?, es_favorito_pos=?
+          WHERE id=?`,
+        [
+          e.sku, e.nombre, e.descripcion ?? null, e.categoriaId, e.unidadMedidaId, e.impuestoId,
+          e.precioVenta, e.precioMayorista || null, e.esPrecioIncluyeImpuesto ?? false, e.esPesable ?? false, e.esFavoritoPos ?? false, id,
+        ],
+        cx,
+      );
+    } catch (err) {
+      if ((err as { code?: string }).code === '23505') throw new Conflicto('SKU_DUPLICADO');
+      throw err;
+    }
+
+    if (e.stockMinimo !== undefined) {
+      await ejecutar(
+        `UPDATE producto_stock SET stock_minimo = ? WHERE producto_id = ? AND sucursal_id = ?`,
+        [e.stockMinimo, id, sucursalId],
+        cx,
+      );
+    }
+
+    await guardarCodigoPrincipal(cx, id, e.codigoBarras);
+  });
+
+  return obtenerPorId(id, sucursalId, null);
+}
+
+/**
+ * Deja el codigo de barras principal del producto tal como venga del formulario.
+ *
+ * Editar un producto NO guardaba el codigo: se tecleaba, se guardaba sin ningun
+ * error, y el producto seguia sin codigo. Al escanearlo no aparecia nada y no
+ * habia forma de darse cuenta de por que, porque el formulario tampoco mostraba
+ * el que ya tenia guardado.
+ *
+ * Los codigos viven en `producto_codigos` (un producto puede tener el del envase
+ * y el de la caja) y aqui se toca solo el PRINCIPAL, que es el unico que edita el
+ * formulario. `undefined` = no se mando el campo, se deja como esta; vacio = se le
+ * quita el codigo, que es lo que espera quien borro el campo a proposito.
+ */
+async function guardarCodigoPrincipal(
+  cx: Ejecutor,
+  productoId: Id,
+  codigoBarras: string | undefined,
+): Promise<void> {
+  if (codigoBarras === undefined) return;
+  const codigo = codigoBarras.trim();
+
+  const actual = await queryOne<{ id: number }>(
+    `SELECT id FROM producto_codigos
+      WHERE producto_id = ? AND eliminado_en IS NULL
+      ORDER BY es_principal DESC, id LIMIT 1`,
+    [productoId],
+    cx,
+  );
 
   try {
-    await ejecutar(
-      `UPDATE productos SET sku=?, nombre=?, descripcion=?, categoria_id=?, unidad_medida_id=?,
-              impuesto_id=?, precio_venta=?, precio_venta_mayorista=?, es_precio_incluye_impuesto=?,
-              es_pesable=?, es_favorito_pos=?
-        WHERE id=?`,
-      [
-        e.sku, e.nombre, e.descripcion ?? null, e.categoriaId, e.unidadMedidaId, e.impuestoId,
-        e.precioVenta, e.precioMayorista || null, e.esPrecioIncluyeImpuesto ?? false, e.esPesable ?? false, e.esFavoritoPos ?? false, id,
-      ],
-    );
+    if (!codigo) {
+      if (actual) {
+        await ejecutar(`UPDATE producto_codigos SET eliminado_en = NOW() WHERE id = ?`, [actual.id], cx);
+      }
+    } else if (actual) {
+      await ejecutar(
+        `UPDATE producto_codigos SET codigo = ?, tipo = ?::tipo_codigo_producto, es_principal = TRUE WHERE id = ?`,
+        [codigo, tipoDeCodigo(codigo), actual.id],
+        cx,
+      );
+    } else {
+      await insertar(
+        `INSERT INTO producto_codigos (producto_id, codigo, tipo, es_principal)
+         VALUES (?, ?, ?::tipo_codigo_producto, TRUE)`,
+        [productoId, codigo, tipoDeCodigo(codigo)],
+        cx,
+      );
+    }
   } catch (err) {
-    if ((err as { code?: string }).code === '23505') throw new Conflicto('SKU_DUPLICADO');
+    // El indice unico de `producto_codigos` es global: ese codigo ya es de otro producto.
+    if ((err as { code?: string }).code === '23505') throw new Conflicto('CODIGO_BARRAS_DUPLICADO');
     throw err;
   }
+}
 
-  if (e.stockMinimo !== undefined) {
-    await ejecutar(
-      `UPDATE producto_stock SET stock_minimo = ? WHERE producto_id = ? AND sucursal_id = ?`,
-      [e.stockMinimo, id, sucursalId],
-    );
-  }
-  return obtenerPorId(id, sucursalId, null);
+/**
+ * Que clase de codigo es, por su forma. Antes todo entraba como 'EAN13' aunque
+ * fuera un QR o un codigo interno de la tienda, y el dato quedaba mintiendo.
+ * No cambia como se busca —el escaneo compara el codigo tal cual—, pero deja el
+ * catalogo diciendo la verdad.
+ */
+function tipoDeCodigo(codigo: string): string {
+  if (/^\d{13}$/.test(codigo)) return 'EAN13';
+  if (/^\d{8}$/.test(codigo)) return 'EAN8';
+  if (/^\d{12}$/.test(codigo)) return 'UPC';
+  return 'INTERNO';
 }
 
 /** Borrado logico del producto. */

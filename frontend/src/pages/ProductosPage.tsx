@@ -99,7 +99,9 @@ export default function ProductosPage() {
       unidadMedidaId: uniPorDefecto(), impuestoId: Number(p.impuesto_id),
       precioVenta: p.precio_venta, precioMayorista: p.precio_venta_mayorista ?? '',
       costoInicial: p.costo_promedio, stockMinimo: p.stock_minimo,
-      esPesable: Boolean(p.es_pesable), esFavoritoPos: Boolean(p.es_favorito_pos), codigoBarras: '',
+      esPesable: Boolean(p.es_pesable), esFavoritoPos: Boolean(p.es_favorito_pos),
+      // Se precarga el que ya tiene: si se abriera vacío, guardar sin tocarlo se lo borraría.
+      codigoBarras: p.codigo_barras ?? '',
     });
     setCostoOriginal(p.costo_promedio); setMotivoCosto(''); setCostoEsSemilla(!p.costo_confirmado);
     setModal(true);
@@ -159,7 +161,12 @@ export default function ProductosPage() {
                   const stockBajo = Number(p.cantidad) <= Number(p.stock_minimo);
                   return (
                     <tr key={p.id} className="border-t border-gray-100 dark:border-gray-700">
-                      <td className="p-3 font-mono text-xs text-gray-500">{p.sku}</td>
+                      <td className="p-3 font-mono text-xs text-gray-500">
+                        {p.sku}
+                        {p.codigo_barras && (
+                          <span className="mt-0.5 block text-[10px] text-gray-400">{p.codigo_barras}</span>
+                        )}
+                      </td>
                       <td className="p-3 font-medium">{p.nombre}</td>
                       <td className="p-3 text-gray-500">{p.categoria_nombre}</td>
                       <td className="p-3 text-right tabular-nums">{formatearUSD(p.precio_venta)}</td>
