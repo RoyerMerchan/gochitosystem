@@ -7,18 +7,13 @@
  * ya recibe el código directamente.
  */
 import { useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { obtener } from '@/lib/axios';
-import { useCarrito } from './carritoStore';
-import { toast } from '@/store/toastStore';
-import type { Producto } from '@/lib/tipos';
+import { useAgregarPorCodigo } from './useAgregarPorCodigo';
 
 const GAP_MAX_MS = 50; // separación máxima entre teclas para considerarlo scanner
 const LARGO_MIN = 3; // largo mínimo del código
 
 export function useScannerGlobal(): void {
-  const navigate = useNavigate();
-  const agregar = useCarrito((s) => s.agregar);
+  const agregarPorCodigo = useAgregarPorCodigo();
   const buffer = useRef('');
   const ultimaTecla = useRef(0);
 
@@ -28,22 +23,6 @@ export function useScannerGlobal(): void {
       if (!n || !n.tagName) return false;
       const tag = n.tagName;
       return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || n.isContentEditable;
-    };
-
-    const procesar = async (codigo: string): Promise<void> => {
-      try {
-        const r = await obtener<Producto[]>(`/productos/buscar?q=${encodeURIComponent(codigo)}`);
-        const prod = r[0];
-        if (!prod) {
-          toast.error(`Código ${codigo}: producto no encontrado`);
-          return;
-        }
-        agregar(prod);
-        toast.exito(`${prod.nombre} agregado`);
-        navigate('/pos');
-      } catch {
-        toast.error('No se pudo buscar el código escaneado');
-      }
     };
 
     const onKey = (e: KeyboardEvent): void => {
@@ -56,7 +35,7 @@ export function useScannerGlobal(): void {
         buffer.current = '';
         if (codigo.length >= LARGO_MIN) {
           e.preventDefault();
-          void procesar(codigo);
+          void agregarPorCodigo(codigo);
         }
         return;
       }
@@ -69,5 +48,5 @@ export function useScannerGlobal(): void {
 
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [navigate, agregar]);
+  }, [agregarPorCodigo]);
 }

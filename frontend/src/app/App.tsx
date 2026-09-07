@@ -35,6 +35,8 @@ const ConfiguracionPage = lazy(() => import('@/pages/ConfiguracionPage'));
 const CategoriasPage = lazy(() => import('@/pages/CategoriasPage'));
 const UsuariosPage = lazy(() => import('@/pages/UsuariosPage'));
 const MiCuentaPage = lazy(() => import('@/pages/MiCuentaPage'));
+// Solo se baja al abrirla desde el teléfono: se lleva el lector de códigos entero.
+const EscanerPage = lazy(() => import('@/pages/EscanerPage'));
 
 /**
  * Precarga las pantallas de uso diario cuando el navegador esta libre, para que
@@ -101,6 +103,7 @@ export function App() {
             <Route path="/usuarios" element={<RutaPrivada pagina={UsuariosPage} />} />
             <Route path="/configuracion" element={<RutaPrivada pagina={ConfiguracionPage} />} />
             <Route path="/mi-cuenta" element={<RutaPrivada pagina={MiCuentaPage} />} />
+            <Route path="/escanear" element={<RutaPrivada pagina={EscanerPage} />} />
 
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

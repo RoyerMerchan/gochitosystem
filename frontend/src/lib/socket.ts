@@ -52,6 +52,44 @@ function baseSocket(): string {
 
 let socket: Socket | null = null;
 
+/*
+  Oyentes del escaneo remoto (el telefono leyendo con la camara).
+
+  Viven en un Set del modulo y no colgados del socket a proposito: al cerrar y
+  volver a abrir sesion el socket se destruye y se crea otro, y una suscripcion
+  hecha directamente sobre el objeto viejo se perderia en silencio —el cajero
+  volveria a entrar y el telefono dejaria de agregar productos sin que nadie
+  entienda por que—. Suscribirse aqui tambien funciona ANTES de que exista el
+  socket, que es justo lo que pasa: el layout se monta antes de conectarse.
+*/
+const oyentesEscaneo = new Set<(codigo: string) => void>();
+
+/**
+ * Escucha los codigos que escanea el telefono de ESTE MISMO usuario.
+ * Devuelve la funcion para dejar de escuchar.
+ */
+export function suscribirEscaneo(cb: (codigo: string) => void): () => void {
+  oyentesEscaneo.add(cb);
+  return () => {
+    oyentesEscaneo.delete(cb);
+  };
+}
+
+/**
+ * Manda un codigo leido con la camara. Devuelve false si no hay conexion viva,
+ * para que el telefono avise en vez de tragarse el escaneo.
+ */
+export function emitirEscaneo(codigo: string): boolean {
+  if (!socket?.connected) return false;
+  socket.emit('escanear', { codigo });
+  return true;
+}
+
+/** ¿Hay conexion de tiempo real ahora mismo? */
+export function realtimeConectado(): boolean {
+  return Boolean(socket?.connected);
+}
+
 export function conectarRealtime(): void {
   if (socket) return;
 
@@ -60,6 +98,11 @@ export function conectarRealtime(): void {
     transports: ['websocket'],
     // Funcion: en cada (re)conexion lee el token vigente del store.
     auth: (cb) => cb({ token: authStore.obtenerToken() ?? '' }),
+  });
+
+  socket.on('escaneo', (evento: { codigo?: string }) => {
+    if (!evento?.codigo) return;
+    for (const cb of oyentesEscaneo) cb(evento.codigo);
   });
 
   socket.on('cambio', (evento: { recurso?: string }) => {

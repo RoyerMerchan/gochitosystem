@@ -4,7 +4,7 @@ import { NavLink, Link, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, ShoppingCart, Package, Users, PackagePlus,
   CreditCard, Boxes, Wallet, BarChart3, Settings, TrendingUp, Menu, LogOut,
-  Receipt, UserCog, Tags, Landmark,
+  Receipt, UserCog, Tags, Landmark, ScanLine,
 } from 'lucide-react';
 import { useAuthStore } from '@/store/authStore';
 import { cerrarSesion } from '@/lib/authApi';
@@ -13,6 +13,7 @@ import { cn } from '@/lib/cn';
 import { TasaBadge } from './TasaBadge';
 import { ToggleTema, BotonInstalarApp } from './NavbarAcciones';
 import { useScannerGlobal } from '@/features/pos/useScannerGlobal';
+import { useEscaneoRemoto } from '@/features/pos/useEscaneoRemoto';
 import { useRealtime } from '@/app/useRealtime';
 
 interface ItemNav {
@@ -20,6 +21,8 @@ interface ItemNav {
   etiqueta: string;
   icono: typeof LayoutDashboard;
   permiso?: string;
+  /** Solo se ofrece en teléfono: en la computadora no tiene sentido. */
+  soloMovil?: boolean;
 }
 
 const NAV: { seccion: string; items: ItemNav[] }[] = [
@@ -28,6 +31,9 @@ const NAV: { seccion: string; items: ItemNav[] }[] = [
     items: [
       { a: '/', etiqueta: 'Dashboard', icono: LayoutDashboard, permiso: 'dashboard.ver' },
       { a: '/pos', etiqueta: 'Punto de venta', icono: ShoppingCart, permiso: 'pos.vender' },
+      // La cámara del teléfono como lector para la caja. En escritorio se oculta:
+      // ahí ya está el lector de mano y la webcam no sirve para esto.
+      { a: '/escanear', etiqueta: 'Escanear', icono: ScanLine, permiso: 'pos.vender', soloMovil: true },
       { a: '/ventas', etiqueta: 'Ventas', icono: Receipt, permiso: 'ventas.ver' },
       { a: '/tasas-cambio', etiqueta: 'Tasa del día', icono: TrendingUp, permiso: 'tasas.ver' },
     ],
@@ -78,6 +84,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const permisos = useAuthStore((s) => s.permisos);
   const navegar = useNavigate();
   useScannerGlobal();
+  useEscaneoRemoto();
   useRealtime();
 
   const puede = (p?: string) => !p || permisos.includes(p);
@@ -135,6 +142,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
                       className={({ isActive }) =>
                         cn(
                           'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                          item.soloMovil && 'md:hidden',
                           isActive
                             ? 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
                             : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700',
