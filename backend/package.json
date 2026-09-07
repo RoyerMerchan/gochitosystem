@@ -18,6 +18,7 @@
     "lint": "eslint src",
     "db:apply": "tsx scripts/aplicar-migraciones.ts",
     "db:seed": "tsx scripts/sembrar-datos.ts",
+    "db:usuario": "tsx scripts/crear-usuario.ts",
     "prisma:pull": "prisma db pull",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
