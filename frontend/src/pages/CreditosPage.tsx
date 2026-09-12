@@ -29,6 +29,8 @@ interface Deuda {
   monto_original_usd: string; saldo_usd: string; estado: string; dias_mora: number;
   /** Total de la venta: incluye lo que pago en la caja al comprar. */
   venta_total_usd: string | null;
+  /** En una fila de mora, de dónde salió: "Mora del 10% cada 3 días ... (3 tramos)". */
+  observaciones: string | null;
 }
 
 /** Deuda consolidada de la persona, calculada en el backend sobre sus créditos. */
@@ -597,6 +599,10 @@ export default function CreditosPage() {
                               Vence {formatearFecha(d.fecha_vencimiento)}
                               {d.dias_mora > 0 && <span className="ml-1 text-red-500">· {d.dias_mora} d. de mora</span>}
                             </p>
+                            {/* Una fila de mora crece con cada tramo: aquí dice por qué. */}
+                            {d.venta_id == null && d.observaciones && (
+                              <p className="truncate text-xs text-gray-400">{d.observaciones}</p>
+                            )}
                           </div>
                         </label>
                         {d.venta_id != null && (

@@ -20,48 +20,78 @@ import { ESTADO_CREDITO, TIPO_DOCUMENTO } from '../../config/constantes';
 import { registrarMovimiento, turnoActivoDeUsuario } from '../caja/caja.service';
 import type { Id, UsuarioAutenticado } from '../../tipos/comunes';
 
+/** Lo que dejo un barrido de moras: cuantas facturas recargo y en que sucursales. */
+export interface ResultadoDevengo {
+  facturas: number;
+  sucursales: number[];
+}
+
 /**
  * Devenga las moras vencidas: por cada factura fiada que se paso de su fecha de
- * vencimiento con saldo vivo y un porcentaje pactado, cobra UNA sola vez ese
- * porcentaje sobre LO QUE QUEDA DEBIENDO (el que ya abono casi todo paga una
- * mora chiquita, que es lo que espera el cliente).
+ * vencimiento con saldo vivo y un porcentaje pactado, cobra ese porcentaje sobre
+ * LO QUE QUEDA DEBIENDO (el que ya abono casi todo paga una mora chiquita, que
+ * es lo que espera el cliente) UNA VEZ POR CADA `mora_cada_dias` DIAS DE ATRASO.
+ *
+ * TRAMOS
+ * Con 10% cada 3 dias: al dia 3 de atraso lleva un tramo (10%), al dia 6 dos
+ * (20%), al dia 9 tres (30%). `mora_tramos` guarda cuantos ya se le cobraron a
+ * la factura; aqui se calcula cuantos tocan por calendario y se cobra la
+ * diferencia, asi que si nadie abrio la cartera en nueve dias caen tres de
+ * golpe. Es mora simple: cada tramo se calcula sobre el saldo de la FACTURA
+ * —lo que quede debiendo en ese momento— nunca sobre la mora acumulada.
+ * `mora_cada_dias = 0` es la mora unica de siempre: un solo tramo al dia
+ * siguiente del vencimiento.
  *
  * POR QUE SE LLAMA DESDE LAS LECTURAS
- * El backend no tiene tareas programadas, asi que no hay quien "pase a las 12 de
- * la noche" a recargar las deudas vencidas. La mora se devenga sola la primera
- * vez que alguien mira la cartera, abre un estado de cuenta o cobra un abono.
- * Llamarla de mas no cobra de mas: `mora_aplicada_en` marca la factura ya
- * recargada, y si dos cajeros abren la pantalla en el mismo instante el indice
- * unico `ux_creditos_mora_por_credito` deja pasar una sola fila.
+ * Ademas de la tarea de `creditos.tareas.ts`, la mora se devenga la primera vez
+ * que alguien mira la cartera, abre un estado de cuenta o cobra un abono: asi
+ * lo que se le cobra al cliente en el mostrador esta al dia aunque la tarea
+ * todavia no haya pasado. Llamarla de mas no cobra de mas: el UPDATE de
+ * `marcados` solo avanza `mora_tramos` si nadie lo movio desde que se leyo, y
+ * si dos cajeros abren la pantalla en el mismo instante solo uno pasa.
  *
- * LA MORA ES UN CREDITO APARTE
- * No se suma al saldo de la factura: nace como nota de debito atada a ella por
+ * LA MORA ES UN CREDITO APARTE, Y UNO SOLO POR FACTURA
+ * No se suma al saldo de la factura: vive como nota de debito atada a ella por
  * `credito_origen_id`. Asi el cliente ve "V-2428 $ 1,99" y debajo "Mora V-2428
- * $ 0,10" en vez de un saldo que crecio sin explicacion, y el abono FIFO la
- * cobra sola. Nace con `tasa_mora_pct` en 0: el recargo no genera recargo.
+ * $ 0,60" en vez de un saldo que crecio sin explicacion, y el abono FIFO la
+ * cobra sola. Los tramos nuevos se le SUMAN a esa misma fila (ON CONFLICT DO
+ * UPDATE sobre `ux_creditos_mora_por_credito`): una factura con un mes de
+ * atraso es un renglon "(10 tramos)", no diez renglones de $ 0,20. Si la fila
+ * ya estaba pagada y cae otro tramo, se reabre con lo que falta. Nace con
+ * `tasa_mora_pct` en 0: el recargo no genera recargo.
  */
-export async function devengarMoras(clienteId?: Id, cx?: Ejecutor): Promise<number> {
-  // Si la migracion 0010 todavia no corrio, la cartera tiene que seguir abriendo.
-  if (!(await existeColumna('creditos', 'tasa_mora_pct', cx))) return 0;
+export async function devengarMoras(clienteId?: Id, cx?: Ejecutor): Promise<ResultadoDevengo> {
+  const nada: ResultadoDevengo = { facturas: 0, sucursales: [] };
+  // Si la migracion 0011 todavia no corrio, la cartera tiene que seguir abriendo.
+  // (El migrador la aplica solo al arrancar; mientras tanto no se devenga nada.)
+  if (!(await existeColumna('creditos', 'mora_tramos', cx))) return nada;
 
   const filtro = clienteId ? 'AND cr.cliente_id = ?' : '';
   const params = clienteId ? [clienteId] : [];
 
-  const afectados = await query<{ cliente_id: string }>(
+  const afectados = await query<{ cliente_id: string; sucursal_id: string }>(
     `WITH candidatos AS (
        SELECT cr.id, cr.sucursal_id, cr.cliente_id, cr.usuario_id, cr.tasa_mora_pct,
-              cr.tasa_cambio_origen,
-              ROUND(cr.saldo_usd * cr.tasa_mora_pct / 100, 2) AS mora_usd,
+              cr.mora_cada_dias, cr.mora_tramos, cr.saldo_usd, cr.tasa_cambio_origen,
+              CASE WHEN cr.mora_cada_dias > 0
+                   THEN (CURRENT_DATE - cr.fecha_vencimiento) / cr.mora_cada_dias
+                   ELSE 1 END AS tramos_debidos,
               COALESCE(v.prefijo || v.numero, 'el crédito #' || cr.id) AS doc
          FROM creditos cr
          LEFT JOIN ventas v ON v.id = cr.venta_id
         WHERE cr.tasa_mora_pct > 0
-          AND cr.mora_aplicada_en IS NULL
           AND cr.credito_origen_id IS NULL
           AND cr.fecha_vencimiento < CURRENT_DATE
           AND cr.estado IN ('PENDIENTE','PARCIAL','VENCIDO')
           AND cr.saldo_usd > 0
           ${filtro}
+     ),
+     /* Solo las que tienen tramos por cobrar, y cuanto suman esos tramos. */
+     pendientes AS (
+       SELECT c.*,
+              ROUND(c.saldo_usd * c.tasa_mora_pct / 100 * (c.tramos_debidos - c.mora_tramos), 2) AS mora_usd
+         FROM candidatos c
+        WHERE c.tramos_debidos > c.mora_tramos
      ),
      /*
        La deuda vive en USD; los Bs de la fila son referenciales. Si hoy nadie
@@ -73,31 +103,61 @@ export async function devengarMoras(clienteId?: Id, cx?: Ejecutor): Promise<numb
         WHERE fecha <= CURRENT_DATE AND eliminado_en IS NULL
         ORDER BY fecha DESC LIMIT 1
      ),
-     nuevos AS (
+     /*
+       Primero se anotan los tramos en la factura y DESPUES se cobran. El
+       "p.mora_tramos = q.mora_tramos" es el candado: si otra peticion ya los
+       avanzo entre que se leyo y se escribe, esta fila no pasa y no se cobra
+       dos veces. Lo que no pase por aqui no llega al INSERT.
+     */
+     marcados AS (
+       UPDATE creditos p
+          SET mora_tramos = q.tramos_debidos,
+              mora_aplicada_en = CURRENT_TIMESTAMP,
+              actualizado_en = CURRENT_TIMESTAMP
+         FROM pendientes q
+        WHERE p.id = q.id AND p.mora_tramos = q.mora_tramos
+        RETURNING p.id, p.sucursal_id, p.cliente_id, p.usuario_id, p.tasa_mora_pct,
+                  p.mora_cada_dias, p.tasa_cambio_origen, q.tramos_debidos, q.mora_usd, q.doc
+     ),
+     cobrados AS (
        INSERT INTO creditos (
               sucursal_id, cliente_id, venta_id, origen, fecha_emision, fecha_vencimiento,
               dias_plazo, monto_original_usd, saldo_usd, tasa_cambio_origen,
               monto_original_bs_referencia, estado, usuario_id, credito_origen_id, observaciones)
-       SELECT c.sucursal_id, c.cliente_id, NULL, 'NOTA_DEBITO', CURRENT_DATE, CURRENT_DATE,
-              0, c.mora_usd, c.mora_usd,
-              COALESCE((SELECT tasa FROM tasa_hoy), c.tasa_cambio_origen),
-              ROUND(c.mora_usd * COALESCE((SELECT tasa FROM tasa_hoy), c.tasa_cambio_origen), 2),
-              'PENDIENTE', c.usuario_id, c.id,
-              'Mora del ' || TRIM(TO_CHAR(c.tasa_mora_pct, 'FM990D00')) || '% por atraso en ' || c.doc
-         FROM candidatos c
-        WHERE c.mora_usd >= 0.01
-       ON CONFLICT (credito_origen_id) WHERE credito_origen_id IS NOT NULL DO NOTHING
-       RETURNING credito_origen_id
+       SELECT m.sucursal_id, m.cliente_id, NULL, 'NOTA_DEBITO', CURRENT_DATE, CURRENT_DATE,
+              0, m.mora_usd, m.mora_usd,
+              COALESCE((SELECT tasa FROM tasa_hoy), m.tasa_cambio_origen),
+              ROUND(m.mora_usd * COALESCE((SELECT tasa FROM tasa_hoy), m.tasa_cambio_origen), 2),
+              'PENDIENTE', m.usuario_id, m.id,
+              -- "10%" y no "10.00%": el texto sale en el estado de cuenta. numeric::TEXT
+              -- siempre usa punto (TO_CHAR con 'D' cambiaba con el locale de la base).
+              'Mora del ' || TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM m.tasa_mora_pct::TEXT)) || '%'
+                || CASE WHEN m.mora_cada_dias > 0 THEN ' cada ' || m.mora_cada_dias || ' días' ELSE '' END
+                || ' por atraso en ' || m.doc
+                || CASE WHEN m.mora_cada_dias > 0
+                        THEN ' (' || m.tramos_debidos || CASE WHEN m.tramos_debidos = 1 THEN ' tramo)' ELSE ' tramos)' END
+                        ELSE '' END
+         FROM marcados m
+        WHERE m.mora_usd >= 0.01
+       ON CONFLICT (credito_origen_id) WHERE credito_origen_id IS NOT NULL DO UPDATE
+          SET monto_original_usd = creditos.monto_original_usd + EXCLUDED.monto_original_usd,
+              saldo_usd = creditos.saldo_usd + EXCLUDED.saldo_usd,
+              monto_original_bs_referencia = creditos.monto_original_bs_referencia + EXCLUDED.monto_original_bs_referencia,
+              -- Si ya habia abonado algo a la mora vieja, la fila vuelve a PARCIAL; si no, sigue PENDIENTE.
+              estado = CASE WHEN creditos.saldo_usd < creditos.monto_original_usd
+                            THEN 'PARCIAL'::estado_credito ELSE 'PENDIENTE' END,
+              pagado_en = NULL,
+              observaciones = EXCLUDED.observaciones,
+              actualizado_en = CURRENT_TIMESTAMP
+        WHERE creditos.estado <> 'ANULADO'
+       RETURNING cliente_id, sucursal_id
      )
-     UPDATE creditos p
-        SET mora_aplicada_en = CURRENT_TIMESTAMP, actualizado_en = CURRENT_TIMESTAMP
-      WHERE p.id IN (SELECT credito_origen_id FROM nuevos)
-     RETURNING p.cliente_id`,
+     SELECT cliente_id, sucursal_id FROM cobrados`,
     params,
     cx,
   );
 
-  if (afectados.length === 0) return 0;
+  if (afectados.length === 0) return nada;
 
   /*
     `clientes.saldo_actual` es un espejo desnormalizado (migracion 0004): ni la
@@ -115,7 +175,10 @@ export async function devengarMoras(clienteId?: Id, cx?: Ejecutor): Promise<numb
     ids,
     cx,
   );
-  return afectados.length;
+  return {
+    facturas: afectados.length,
+    sucursales: [...new Set(afectados.map((f) => Number(f.sucursal_id)))],
+  };
 }
 
 /**
@@ -206,10 +269,12 @@ export async function estadoCuenta(clienteId: Id): Promise<unknown> {
        LEFT JOIN ventas   vo ON vo.id = co.venta_id`
     : '';
 
+  // `observaciones` va para las filas de mora: es donde dice "10% cada 3 días (3
+  // tramos)", que es lo unico que explica por que ese renglon crecio.
   const creditos = await query(
     `SELECT cr.id, cr.venta_id, ${documento} AS documento, cr.fecha_emision, cr.fecha_vencimiento,
             cr.monto_original_usd, cr.saldo_usd, cr.estado, (CURRENT_DATE - cr.fecha_vencimiento) AS dias_mora,
-            v.total_usd AS venta_total_usd
+            v.total_usd AS venta_total_usd, cr.observaciones
        FROM creditos cr
        LEFT JOIN ventas v ON v.id = cr.venta_id
        ${joinMora}

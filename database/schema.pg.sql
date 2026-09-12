@@ -327,6 +327,8 @@ CREATE TABLE configuracion (
   es_permite_stock_negativo       BOOLEAN NOT NULL DEFAULT FALSE,
   dias_plazo_credito_defecto      INTEGER NOT NULL DEFAULT 30 CHECK (dias_plazo_credito_defecto >= 0),
   mora_pct_defecto                DECIMAL(5,2) NOT NULL DEFAULT 0 CHECK (mora_pct_defecto >= 0 AND mora_pct_defecto <= 100),
+  -- Cada cuantos dias de atraso se suma otro tramo de mora. 0 = una sola vez (ver migracion 0011).
+  mora_cada_dias                  INTEGER NOT NULL DEFAULT 3 CHECK (mora_cada_dias >= 0 AND mora_cada_dias <= 365),
   zona_horaria                    VARCHAR(40) NOT NULL DEFAULT 'America/Caracas',
   actualizado_por                 BIGINT,
   creado_en                       TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -943,8 +945,12 @@ CREATE TABLE creditos (
   fecha_emision                DATE NOT NULL,
   fecha_vencimiento            DATE NOT NULL,
   dias_plazo                   INTEGER NOT NULL DEFAULT 30 CHECK (dias_plazo >= 0),
-  -- Recargo pactado si la factura se pasa del vencimiento (ver migracion 0010).
+  -- Recargo pactado si la factura se pasa del vencimiento (ver migraciones 0010 y 0011):
+  -- cada `mora_cada_dias` dias de atraso se suma otro tramo de `tasa_mora_pct` sobre
+  -- lo que quede debiendo. `mora_tramos` cuenta los ya cobrados. 0 dias = una sola vez.
   tasa_mora_pct                DECIMAL(5,2) NOT NULL DEFAULT 0 CHECK (tasa_mora_pct >= 0 AND tasa_mora_pct <= 100),
+  mora_cada_dias               INTEGER NOT NULL DEFAULT 3 CHECK (mora_cada_dias >= 0 AND mora_cada_dias <= 365),
+  mora_tramos                  INTEGER NOT NULL DEFAULT 0 CHECK (mora_tramos >= 0),
   mora_aplicada_en             TIMESTAMPTZ(3),
   -- En una fila de mora, la factura que la genero.
   credito_origen_id            BIGINT,
@@ -975,10 +981,11 @@ CREATE INDEX ix_cred_venta ON creditos (venta_id);
 CREATE INDEX ix_cred_usuario ON creditos (usuario_id);
 CREATE INDEX ix_cred_autorizado ON creditos (autorizado_por);
 CREATE INDEX ix_cred_anulado ON creditos (anulado_por);
--- UNA mora por factura: hace idempotente al devengo perezoso.
+-- UNA fila de mora por factura: los tramos nuevos se le SUMAN a esa fila
+-- (INSERT ... ON CONFLICT DO UPDATE), y eso hace idempotente al devengo perezoso.
 CREATE UNIQUE INDEX ux_creditos_mora_por_credito ON creditos (credito_origen_id) WHERE credito_origen_id IS NOT NULL;
 CREATE INDEX ix_creditos_mora_pendiente ON creditos (fecha_vencimiento)
-  WHERE tasa_mora_pct > 0 AND mora_aplicada_en IS NULL AND credito_origen_id IS NULL;
+  WHERE tasa_mora_pct > 0 AND credito_origen_id IS NULL AND saldo_usd > 0;
 ALTER TABLE creditos ADD CONSTRAINT creditos_credito_origen_fk FOREIGN KEY (credito_origen_id) REFERENCES creditos(id);
 ALTER TABLE creditos ADD CONSTRAINT fk_cred_sucursal   FOREIGN KEY (sucursal_id)    REFERENCES sucursales(id) ON DELETE RESTRICT;
 ALTER TABLE creditos ADD CONSTRAINT fk_cred_cliente    FOREIGN KEY (cliente_id)     REFERENCES clientes(id)   ON DELETE RESTRICT;

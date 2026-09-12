@@ -35,6 +35,11 @@ interface Props {
   diasPlazoDefecto: number;
   /** Recargo por atraso que se propone al fiar. */
   moraPctDefecto: number;
+  /**
+   * Cada cuántos días de atraso se vuelve a sumar la mora (política del negocio,
+   * se muestra pero no se edita aquí). 0 = una sola vez.
+   */
+  moraCadaDias: number;
   onCerrar: () => void;
   onConfirmar: (
     pagos: LineaPagoEnvio[],
@@ -52,7 +57,7 @@ function lineaEnUsd(l: LineaPago, tasa: number): number {
 }
 
 export function ModalCobro({
-  abierto, totalUsd, tasa, diasPlazoDefecto, moraPctDefecto,
+  abierto, totalUsd, tasa, diasPlazoDefecto, moraPctDefecto, moraCadaDias,
   onCerrar, onConfirmar, procesando,
 }: Props) {
   const [lineas, setLineas] = useState<LineaPago[]>([]);
@@ -111,8 +116,9 @@ export function ModalCobro({
     d.setDate(d.getDate() + diasNum);
     return d;
   }, [diasNum]);
-  /** Lo que se le sumaria si no paga nada antes de vencer. */
+  /** Lo que se le sumaria por cada tramo si no paga nada antes de vencer. */
   const moraUsd = redondearCentavos((creditoUsd * moraNum) / 100);
+  const cadaDias = Math.max(0, Math.trunc(moraCadaDias));
 
   const agregarLinea = (metodo: MetodoPago) => {
     // Por defecto, el monto sugerido cubre el faltante en la moneda del metodo.
@@ -347,7 +353,14 @@ export function ModalCobro({
           </div>
           <p className="mt-2 text-[11px] leading-relaxed text-amber-700/80 dark:text-amber-300/80">
             Vence el <span className="font-semibold">{formatearFecha(vence)}</span>.{' '}
-            {moraNum > 0 ? (
+            {moraNum > 0 && cadaDias > 0 ? (
+              <>
+                Si para esa fecha no ha pagado, se le suman{' '}
+                <span className="font-semibold">{formatearUSD(moraUsd)}</span> de mora
+                (el {moraNum}% de lo que quede debiendo){' '}
+                <span className="font-semibold">por cada {cadaDias === 1 ? 'día' : `${cadaDias} días`} de atraso</span>.
+              </>
+            ) : moraNum > 0 ? (
               <>
                 Si para esa fecha no ha pagado, se le suman{' '}
                 <span className="font-semibold">{formatearUSD(moraUsd)}</span> de mora

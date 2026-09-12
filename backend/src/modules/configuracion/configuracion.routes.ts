@@ -29,6 +29,8 @@ const esquema = z.object({
   ticketAnchoMm: z.coerce.number().int().optional(),
   diasPlazoCreditoDefecto: z.coerce.number().int().min(0).max(365).optional(),
   moraPctDefecto: z.coerce.number().min(0).max(100).optional(),
+  // Cada cuantos dias de atraso se suma otro tramo de mora. 0 = una sola vez.
+  moraCadaDias: z.coerce.number().int().min(0).max(365).optional(),
 });
 
 router.get('/', requierePermiso('configuracion.ver'), async (_req, res, next) => {
@@ -46,14 +48,19 @@ router.get('/', requierePermiso('configuracion.ver'), async (_req, res, next) =>
 router.get('/credito', requierePermiso('pos.vender'), async (_req, res, next) => {
   try {
     const hayMora = await existeColumna('configuracion', 'mora_pct_defecto');
-    const cfg = await queryOne<{ dias_plazo_credito_defecto: number; mora_pct_defecto: string }>(
+    const hayCadaDias = await existeColumna('configuracion', 'mora_cada_dias');
+    const cfg = await queryOne<{
+      dias_plazo_credito_defecto: number; mora_pct_defecto: string; mora_cada_dias: number;
+    }>(
       `SELECT dias_plazo_credito_defecto,
-              ${hayMora ? 'mora_pct_defecto' : '0'} AS mora_pct_defecto
+              ${hayMora ? 'mora_pct_defecto' : '0'} AS mora_pct_defecto,
+              ${hayCadaDias ? 'mora_cada_dias' : '3'} AS mora_cada_dias
          FROM configuracion WHERE id = 1`,
     );
     enviarOk(res, {
       dias_plazo_credito_defecto: cfg?.dias_plazo_credito_defecto ?? 30,
       mora_pct_defecto: cfg?.mora_pct_defecto ?? '0',
+      mora_cada_dias: cfg?.mora_cada_dias ?? 3,
     });
   } catch (e) { next(e); }
 });
@@ -88,6 +95,9 @@ router.put('/', requierePermiso('configuracion.editar'), validar({ body: esquema
     );
     if (e.moraPctDefecto !== undefined && (await existeColumna('configuracion', 'mora_pct_defecto'))) {
       await ejecutar(`UPDATE configuracion SET mora_pct_defecto = ? WHERE id = 1`, [e.moraPctDefecto]);
+    }
+    if (e.moraCadaDias !== undefined && (await existeColumna('configuracion', 'mora_cada_dias'))) {
+      await ejecutar(`UPDATE configuracion SET mora_cada_dias = ? WHERE id = 1`, [e.moraCadaDias]);
     }
     enviarOk(res, await queryOne(`SELECT * FROM configuracion WHERE id = 1`));
   } catch (e) { next(e); }

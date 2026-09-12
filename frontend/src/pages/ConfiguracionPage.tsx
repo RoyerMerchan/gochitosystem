@@ -14,6 +14,8 @@ interface Config {
   ticket_encabezado: string | null; ticket_pie: string | null; ticket_mensaje_legal: string | null;
   moneda_secundaria_simbolo: string; es_bloquea_venta_sin_tasa: number;
   dias_plazo_credito_defecto: number; mora_pct_defecto: string | null;
+  /** Cada cuántos días de atraso se suma otro tramo de mora. 0 = una sola vez. */
+  mora_cada_dias: number | null;
 }
 
 export default function ConfiguracionPage() {
@@ -32,6 +34,7 @@ export default function ConfiguracionPage() {
         ticketMensajeLegal: c.ticket_mensaje_legal ?? '',
         diasPlazoCreditoDefecto: String(c.dias_plazo_credito_defecto ?? 30),
         moraPctDefecto: String(c.mora_pct_defecto ?? 0),
+        moraCadaDias: String(c.mora_cada_dias ?? 3),
       });
     }
   }, [config.data]);
@@ -73,7 +76,7 @@ export default function ConfiguracionPage() {
         <p className="mb-3 text-xs text-gray-500">
           Lo que el punto de venta propone al fiar. El cajero lo puede cambiar en cada venta.
         </p>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           <Campo label="Días de crédito">
             <input type="number" min="0" max="365" step="1" value={form.diasPlazoCreditoDefecto ?? ''}
               onChange={(e) => set('diasPlazoCreditoDefecto', e.target.value)} className={INP} />
@@ -82,7 +85,16 @@ export default function ConfiguracionPage() {
             <input type="number" min="0" max="100" step="0.5" value={form.moraPctDefecto ?? ''}
               onChange={(e) => set('moraPctDefecto', e.target.value)} className={INP} />
           </Campo>
+          {/* Con 0 la mora se cobra una sola vez al vencer, como antes. */}
+          <Campo label="Se repite cada (días)">
+            <input type="number" min="0" max="365" step="1" value={form.moraCadaDias ?? ''}
+              onChange={(e) => set('moraCadaDias', e.target.value)} className={INP} />
+          </Campo>
         </div>
+        <p className="mt-2 text-xs text-gray-500">
+          Pasada la fecha de vencimiento, cada tantos días de atraso se le suma otra vez el
+          porcentaje sobre lo que quede debiendo de la factura. Con 0 se cobra una sola vez.
+        </p>
       </Card>
 
       <Card>

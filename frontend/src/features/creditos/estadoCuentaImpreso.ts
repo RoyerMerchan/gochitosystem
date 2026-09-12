@@ -28,6 +28,8 @@ export interface DeudaImpresa {
    */
   venta_total_usd?: string | null;
   saldo_usd: string;
+  /** En una fila de mora, de donde salio: "Mora del 10% cada 3 días ... (3 tramos)". */
+  observaciones?: string | null;
 }
 
 /** Un producto de la compra que originó una deuda. */
@@ -145,7 +147,8 @@ export function imprimirEstadoCuenta(d: DatosEstadoCuenta, ventana?: Window | nu
 
       return `
       <tr class="doc ${mora ? 'mora' : ''}">
-        <td>${esc(x.documento ?? 'Crédito')}</td>
+        <td>${esc(x.documento ?? 'Crédito')}${
+          x.observaciones ? `<div class="mini">${esc(x.observaciones)}</div>` : ''}</td>
         <td>${formatearFecha(x.fecha_emision)}</td>
         <td>${formatearFecha(x.fecha_vencimiento)}${mora ? `<span class="chip">${x.dias_mora} d. de mora</span>` : ''}</td>
         <td class="r">${formatearUSD(facturado)}${

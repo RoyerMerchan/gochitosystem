@@ -6,6 +6,7 @@ import { env } from './config/env';
 import { verificarConexion, cerrarPools } from './database/pool';
 import { ejecutarMigracionesPendientes } from './database/migrador';
 import { inicializarRealtime } from './realtime/io';
+import { iniciarDevengoAutomatico, detenerDevengoAutomatico } from './modules/creditos/creditos.tareas';
 import { logger, describirError } from './utils/logger';
 
 async function main(): Promise<void> {
@@ -41,8 +42,12 @@ async function main(): Promise<void> {
   // Tiempo real: Socket.IO se monta sobre el mismo servidor HTTP.
   inicializarRealtime(servidor);
 
+  // Mora de los fiados vencidos: se suma sola, sin que nadie abra la cartera.
+  iniciarDevengoAutomatico();
+
   const apagar = (senal: string): void => {
     logger.info(`Senal ${senal} recibida. Apagando...`);
+    detenerDevengoAutomatico();
     servidor.close(() => {
       cerrarPools()
         .then(() => {

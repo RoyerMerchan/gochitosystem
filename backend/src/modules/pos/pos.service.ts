@@ -723,33 +723,43 @@ async function crearCredito(
     son lo que se acordo ese dia en el mostrador. Si mañana se sube el porcentaje
     por defecto, los fiados ya hechos no se encarecen solos.
 
-    Si la migracion 0010 no corrio todavia, la venta a credito tiene que seguir
-    saliendo: se guarda sin mora y la columna se llena cuando la base se ponga al dia.
+    Lo mismo con cada cuantos dias se suma otro tramo de mora (migracion 0011):
+    se copia de la configuracion a la factura al fiar, y de ahi no se mueve.
+
+    Si la migracion 0010 (o la 0011) no corrio todavia, la venta a credito tiene
+    que seguir saliendo: se guarda sin ese dato y la columna se llena cuando la
+    base se ponga al dia.
   */
   const guardaMora = await existeColumna('creditos', 'tasa_mora_pct', cx);
   const hayDefectoMora = guardaMora && (await existeColumna('configuracion', 'mora_pct_defecto', cx));
-  const cliente = await queryOne<{ dias_plazo: number; mora_defecto: string | null }>(
+  const guardaCadaDias = guardaMora
+    && (await existeColumna('creditos', 'mora_cada_dias', cx))
+    && (await existeColumna('configuracion', 'mora_cada_dias', cx));
+  const cliente = await queryOne<{ dias_plazo: number; mora_defecto: string | null; mora_cada_dias: number | null }>(
     `SELECT c.dias_plazo,
-            ${hayDefectoMora ? '(SELECT mora_pct_defecto FROM configuracion WHERE id = 1)' : 'NULL'} AS mora_defecto
+            ${hayDefectoMora ? '(SELECT mora_pct_defecto FROM configuracion WHERE id = 1)' : 'NULL'} AS mora_defecto,
+            ${guardaCadaDias ? '(SELECT mora_cada_dias FROM configuracion WHERE id = 1)' : 'NULL'} AS mora_cada_dias
        FROM clientes c WHERE c.id = ?`,
     [d.clienteId],
     cx,
   );
   const dias = d.diasPlazo ?? cliente?.dias_plazo ?? 30;
   const mora = d.moraPct ?? cliente?.mora_defecto ?? '0';
+  const moraCadaDias = cliente?.mora_cada_dias ?? 3;
   const montoBs = usdABs(d.montoUsd, d.tasaEscalada);
 
   await insertar(
     `INSERT INTO creditos
       (sucursal_id, cliente_id, venta_id, origen, fecha_emision, fecha_vencimiento, dias_plazo,
        monto_original_usd, saldo_usd, tasa_cambio_origen, monto_original_bs_referencia,
-       estado, usuario_id${guardaMora ? ', tasa_mora_pct' : ''})
-     VALUES (?, ?, ?, ?, CURRENT_DATE, CURRENT_DATE + (?::TEXT || ' days')::INTERVAL, ?, ?, ?, ?, ?, ?, ?${guardaMora ? ', ?' : ''})`,
+       estado, usuario_id${guardaMora ? ', tasa_mora_pct' : ''}${guardaCadaDias ? ', mora_cada_dias' : ''})
+     VALUES (?, ?, ?, ?, CURRENT_DATE, CURRENT_DATE + (?::TEXT || ' days')::INTERVAL, ?, ?, ?, ?, ?, ?, ?${guardaMora ? ', ?' : ''}${guardaCadaDias ? ', ?' : ''})`,
     [
       d.sucursalId, d.clienteId, d.ventaId, ORIGEN_CREDITO.VENTA, dias, dias,
       centavosASql(d.montoUsd), centavosASql(d.montoUsd), d.tasa, bsASql(montoBs),
       ESTADO_CREDITO.PENDIENTE, d.usuarioId,
       ...(guardaMora ? [mora] : []),
+      ...(guardaCadaDias ? [moraCadaDias] : []),
     ],
     cx,
   );

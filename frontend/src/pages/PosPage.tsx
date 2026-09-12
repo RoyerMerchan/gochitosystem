@@ -64,9 +64,9 @@ export default function PosPage() {
   */
   const cfgCredito = useQuery({
     queryKey: ['config-credito'],
-    queryFn: () => obtener<{ dias_plazo_credito_defecto: number; mora_pct_defecto: string }>(
-      '/configuracion/credito',
-    ),
+    queryFn: () => obtener<{
+      dias_plazo_credito_defecto: number; mora_pct_defecto: string; mora_cada_dias: number;
+    }>('/configuracion/credito'),
     staleTime: STALE_CATALOGO,
     retry: false,
   });
@@ -431,6 +431,7 @@ export default function PosPage() {
         tasa={tasaNum}
         diasPlazoDefecto={Number(cfgCredito.data?.dias_plazo_credito_defecto ?? 30)}
         moraPctDefecto={Number(cfgCredito.data?.mora_pct_defecto ?? 0)}
+        moraCadaDias={Number(cfgCredito.data?.mora_cada_dias ?? 3)}
         onCerrar={() => setCobrando(false)}
         onConfirmar={confirmarVenta}
         procesando={procesando}
