@@ -37,7 +37,7 @@ interface Props {
   moraPctDefecto: number;
   /**
    * Cada cuántos días de atraso se vuelve a sumar la mora (política del negocio,
-   * se muestra pero no se edita aquí). 0 = una sola vez.
+   * se muestra pero no se edita aquí). 0 = una sola vez al vencer.
    */
   moraCadaDias: number;
   onCerrar: () => void;
@@ -355,14 +355,14 @@ export function ModalCobro({
             Vence el <span className="font-semibold">{formatearFecha(vence)}</span>.{' '}
             {moraNum > 0 && cadaDias > 0 ? (
               <>
-                Si para esa fecha no ha pagado, se le suman{' '}
+                Desde el día siguiente al vencimiento, se le suman{' '}
                 <span className="font-semibold">{formatearUSD(moraUsd)}</span> de mora
                 (el {moraNum}% de lo que quede debiendo){' '}
-                <span className="font-semibold">por cada {cadaDias === 1 ? 'día' : `${cadaDias} días`} de atraso</span>.
+                <span className="font-semibold">y luego se repite cada {cadaDias === 1 ? 'día' : `${cadaDias} días`} de atraso</span>.
               </>
             ) : moraNum > 0 ? (
               <>
-                Si para esa fecha no ha pagado, se le suman{' '}
+                Desde el día siguiente al vencimiento, se le suman{' '}
                 <span className="font-semibold">{formatearUSD(moraUsd)}</span> de mora
                 (el {moraNum}% de lo que quede debiendo), una sola vez.
               </>

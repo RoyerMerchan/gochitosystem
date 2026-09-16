@@ -597,7 +597,7 @@ export default function CreditosPage() {
                             <p className="truncate font-medium">{d.documento ?? `Crédito #${d.id}`}</p>
                             <p className="text-xs text-gray-400">
                               Vence {formatearFecha(d.fecha_vencimiento)}
-                              {d.dias_mora > 0 && <span className="ml-1 text-red-500">· {d.dias_mora} d. de mora</span>}
+                              {d.dias_mora > 0 && <span className="ml-1 text-red-500">· {d.dias_mora} d. de atraso</span>}
                             </p>
                             {/* Una fila de mora crece con cada tramo: aquí dice por qué. */}
                             {d.venta_id == null && d.observaciones && (

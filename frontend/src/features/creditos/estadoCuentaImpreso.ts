@@ -116,7 +116,7 @@ export function imprimirEstadoCuenta(d: DatosEstadoCuenta, ventana?: Window | nu
 
   const filas = d.deudas
     .map((x) => {
-      const mora = x.dias_mora > 0;
+      const vencida = x.dias_mora > 0;
       /** Lo que costo la compra: el total de la venta, no solo la parte que quedo fiada. */
       const facturado = aNumero(x.venta_total_usd ?? x.monto_original_usd);
       /**
@@ -146,11 +146,11 @@ export function imprimirEstadoCuenta(d: DatosEstadoCuenta, ventana?: Window | nu
         .join('');
 
       return `
-      <tr class="doc ${mora ? 'mora' : ''}">
+      <tr class="doc ${vencida ? 'mora' : ''}">
         <td>${esc(x.documento ?? 'Crédito')}${
           x.observaciones ? `<div class="mini">${esc(x.observaciones)}</div>` : ''}</td>
         <td>${formatearFecha(x.fecha_emision)}</td>
-        <td>${formatearFecha(x.fecha_vencimiento)}${mora ? `<span class="chip">${x.dias_mora} d. de mora</span>` : ''}</td>
+        <td>${formatearFecha(x.fecha_vencimiento)}${vencida ? `<span class="chip">${x.dias_mora} d. de atraso</span>` : ''}</td>
         <td class="r">${formatearUSD(facturado)}${
           hayTasa ? `<div class="mini">${bsImporte(facturado)}</div>` : ''}</td>
         <td class="r ${abonado > 0 ? 'verde' : 'gris'}">${abonado > 0 ? `− ${formatearUSD(abonado)}` : '—'}${

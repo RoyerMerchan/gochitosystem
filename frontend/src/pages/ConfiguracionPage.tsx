@@ -86,14 +86,14 @@ export default function ConfiguracionPage() {
               onChange={(e) => set('moraPctDefecto', e.target.value)} className={INP} />
           </Campo>
           {/* Con 0 la mora se cobra una sola vez al vencer, como antes. */}
-          <Campo label="Se repite cada (días)">
+          <Campo label="Repetir mora cada (días)">
             <input type="number" min="0" max="365" step="1" value={form.moraCadaDias ?? ''}
               onChange={(e) => set('moraCadaDias', e.target.value)} className={INP} />
           </Campo>
         </div>
         <p className="mt-2 text-xs text-gray-500">
-          Pasada la fecha de vencimiento, cada tantos días de atraso se le suma otra vez el
-          porcentaje sobre lo que quede debiendo de la factura. Con 0 se cobra una sola vez.
+          La primera mora cae al día siguiente del vencimiento. Luego se repite automáticamente
+          cada tantos días de atraso. Con 0 se cobra una sola vez.
         </p>
       </Card>
 

@@ -30,13 +30,14 @@ export interface ResultadoDevengo {
  * Devenga las moras vencidas: por cada factura fiada que se paso de su fecha de
  * vencimiento con saldo vivo y un porcentaje pactado, cobra ese porcentaje sobre
  * LO QUE QUEDA DEBIENDO (el que ya abono casi todo paga una mora chiquita, que
- * es lo que espera el cliente) UNA VEZ POR CADA `mora_cada_dias` DIAS DE ATRASO.
+ * es lo que espera el cliente). La primera mora cae al dia siguiente de vencer;
+ * si `mora_cada_dias` es mayor que 0, desde ahi suma otro tramo cada tantos dias.
  *
  * TRAMOS
- * Con 10% cada 3 dias: al dia 3 de atraso lleva un tramo (10%), al dia 6 dos
- * (20%), al dia 9 tres (30%). `mora_tramos` guarda cuantos ya se le cobraron a
- * la factura; aqui se calcula cuantos tocan por calendario y se cobra la
- * diferencia, asi que si nadie abrio la cartera en nueve dias caen tres de
+ * Con 10% y repeticion cada 3 dias: al dia 1 de atraso lleva un tramo (10%), al
+ * dia 4 dos (20%), al dia 7 tres (30%). `mora_tramos` guarda cuantos ya se le
+ * cobraron a la factura; aqui se calcula cuantos tocan por calendario y se cobra
+ * la diferencia, asi que si nadie abrio la cartera en siete dias caen tres de
  * golpe. Es mora simple: cada tramo se calcula sobre el saldo de la FACTURA
  * —lo que quede debiendo en ese momento— nunca sobre la mora acumulada.
  * `mora_cada_dias = 0` es la mora unica de siempre: un solo tramo al dia
@@ -74,7 +75,7 @@ export async function devengarMoras(clienteId?: Id, cx?: Ejecutor): Promise<Resu
        SELECT cr.id, cr.sucursal_id, cr.cliente_id, cr.usuario_id, cr.tasa_mora_pct,
               cr.mora_cada_dias, cr.mora_tramos, cr.saldo_usd, cr.tasa_cambio_origen,
               CASE WHEN cr.mora_cada_dias > 0
-                   THEN (CURRENT_DATE - cr.fecha_vencimiento) / cr.mora_cada_dias
+                   THEN 1 + ((CURRENT_DATE - cr.fecha_vencimiento - 1) / cr.mora_cada_dias)
                    ELSE 1 END AS tramos_debidos,
               COALESCE(v.prefijo || v.numero, 'el crédito #' || cr.id) AS doc
          FROM creditos cr
