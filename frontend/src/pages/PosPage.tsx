@@ -28,6 +28,8 @@ interface RespuestaVenta {
   numero: string;
   total_usd: string;
   total_bs: string;
+  total_pagado_usd: string;
+  total_credito_usd: string;
   vuelto_usd: string;
 }
 
@@ -181,6 +183,8 @@ export default function PosPage() {
         items: itemsTicket,
         totalUsd: Number(venta.total_usd),
         totalBs: Number(venta.total_bs),
+        abonadoUsd: Number(venta.total_pagado_usd),
+        pendienteUsd: Number(venta.total_credito_usd),
         tasa: tasaNum,
         pagos: pagos.map((p) => {
           const m = METODOS_PAGO.find((x) => x.id === p.metodoPagoId);

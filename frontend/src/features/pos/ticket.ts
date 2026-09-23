@@ -21,6 +21,9 @@ export interface DatosTicket {
   items: ItemTicket[];
   totalUsd: number;
   totalBs: number;
+  /** Importes aplicados por el servidor, descontando el vuelto. */
+  abonadoUsd: number;
+  pendienteUsd: number;
   tasa: number;
   pagos: { metodo: string; moneda: string; monto: number }[];
   vueltoUsd?: number;
@@ -92,8 +95,11 @@ export function imprimirTicket(d: DatosTicket): void {
     <table>${filas}</table>
     <div class="sep"></div>
     <table>
-      <tr class="tot"><td>TOTAL</td><td class="r">${formatearUSD(d.totalUsd)}</td></tr>
+      <tr class="tot"><td>${d.pendienteUsd > 0 ? 'Monto total de la factura' : 'TOTAL'}</td><td class="r">${formatearUSD(d.totalUsd)}</td></tr>
       <tr class="b"><td>TOTAL Bs</td><td class="r">${formatearBs(d.totalBs)}</td></tr>
+      ${d.pendienteUsd > 0 ? `<tr class="b"><td>Monto abonado</td><td class="r">${formatearUSD(d.abonadoUsd)}</td></tr>
+      <tr class="tot"><td>Monto pendiente</td><td class="r">${formatearUSD(d.pendienteUsd)}</td></tr>
+      <tr class="det"><td>Pendiente Bs</td><td class="r">${formatearBs(usdABs(d.pendienteUsd, d.tasa))}</td></tr>` : ''}
       <tr class="det"><td>Tasa</td><td class="r">Bs ${formatearNumero(d.tasa, 2)} / $</td></tr>
     </table>
     <div class="sep"></div>
