@@ -151,12 +151,12 @@ export function imprimirEstadoCuenta(d: DatosEstadoCuenta, ventana?: Window | nu
           x.observaciones ? `<div class="mini">${esc(x.observaciones)}</div>` : ''}</td>
         <td>${formatearFecha(x.fecha_emision)}</td>
         <td>${formatearFecha(x.fecha_vencimiento)}${vencida ? `<span class="chip">${x.dias_mora} d. de atraso</span>` : ''}</td>
-        <td class="r">${formatearUSD(facturado)}${
+        <td class="r azul">${formatearUSD(facturado)}${
           hayTasa ? `<div class="mini">${bsImporte(facturado)}</div>` : ''}</td>
         <td class="r ${abonado > 0 ? 'verde' : 'gris'}">${abonado > 0 ? `− ${formatearUSD(abonado)}` : '—'}${
           abonado > 0 && hayTasa ? `<div class="mini">− ${bsImporte(abonado)}</div>` : ''}</td>
-        <td class="r b">${formatearUSD(x.saldo_usd)}</td>
-        <td class="r gris">${bs(x.saldo_usd)}</td>
+        <td class="r b ${vencida ? 'rojo' : 'ambar'}">${formatearUSD(x.saldo_usd)}</td>
+        <td class="r ${vencida ? 'rojo' : 'ambar'}">${bs(x.saldo_usd)}</td>
       </tr>${detalle}`;
     })
     .join('');
@@ -177,7 +177,7 @@ export function imprimirEstadoCuenta(d: DatosEstadoCuenta, ventana?: Window | nu
         <td>${esc(a.numero)}</td>
         <td>${formatearFecha(a.fecha)}</td>
         <td class="r">${a.moneda === 'USD' ? formatearUSD(a.monto_moneda) : formatearBs(a.monto_moneda)}</td>
-        <td class="r b">${formatearUSD(a.monto_usd)}</td>
+        <td class="r b verde">${formatearUSD(a.monto_usd)}</td>
       </tr>`,
     )
     .join('');
@@ -191,7 +191,7 @@ export function imprimirEstadoCuenta(d: DatosEstadoCuenta, ventana?: Window | nu
     h1 { font-size:16px; letter-spacing:.5px; }
     .r { text-align:right; } .b { font-weight:700; } .gris { color:#666; }
     .cab { display:flex; justify-content:space-between; align-items:flex-start; gap:16px;
-           border-bottom:2px solid #111; padding-bottom:8px; }
+           border-bottom:2px solid #1d4ed8; padding-bottom:8px; }
     .cab .neg { font-size:15px; font-weight:700; }
     .cab .der { text-align:right; }
     .cliente { display:flex; justify-content:space-between; gap:16px; margin:12px 0; padding:8px 10px;
@@ -217,10 +217,17 @@ export function imprimirEstadoCuenta(d: DatosEstadoCuenta, ventana?: Window | nu
     .chip { display:inline-block; margin-left:5px; padding:0 5px; border-radius:8px;
             background:#fee2e2; color:#b91c1c; font-size:10px; font-weight:600; }
     .total { margin-top:10px; display:flex; justify-content:flex-end; }
-    .total .caja { min-width:58%; border:2px solid #111; border-radius:6px; padding:8px 10px; }
-    .total .fila { display:flex; justify-content:space-between; align-items:baseline; }
+    .total .caja { min-width:58%; border:2px solid #d97706; border-radius:6px; padding:8px 10px; }
+    .total .fila { display:flex; justify-content:space-between; align-items:baseline; gap:12px; padding:4px 6px; }
     .total .fila.sep { margin-top:4px; padding-top:4px; border-top:1px solid #ddd; }
     .verde { color:#15803d; }
+    .azul { color:#1d4ed8; }
+    .ambar { color:#92400e; }
+    .rojo { color:#b91c1c; }
+    .total .azul { background:#eff6ff; }
+    .total .verde { background:#f0fdf4; }
+    .total .ambar { background:#fffbeb; }
+    * { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
     .total .grande { font-size:20px; font-weight:700; }
     .sec { margin-top:16px; font-size:11px; font-weight:700; text-transform:uppercase;
            letter-spacing:.5px; color:#444; }
@@ -269,7 +276,7 @@ export function imprimirEstadoCuenta(d: DatosEstadoCuenta, ventana?: Window | nu
 
     <div class="total">
       <div class="caja">
-        <div class="fila gris">
+        <div class="fila azul">
           <span>Total de las compras</span>
           <span>${formatearUSD(totalOriginal)}</span>
         </div>
@@ -278,11 +285,11 @@ export function imprimirEstadoCuenta(d: DatosEstadoCuenta, ventana?: Window | nu
           <span>Abonado a estas compras</span>
           <span class="b">− ${formatearUSD(totalAbonado)}</span>
         </div>` : ''}
-        <div class="fila sep">
+        <div class="fila sep ambar">
           <span class="b">TOTAL A PAGAR</span>
           <span class="grande">${formatearUSD(d.totalUsd)}</span>
         </div>
-        <div class="fila gris">
+        <div class="fila ambar">
           <span>Equivalente en bolívares</span>
           <span class="b">${bs(d.totalUsd)}</span>
         </div>

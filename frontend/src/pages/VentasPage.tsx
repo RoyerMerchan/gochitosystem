@@ -268,14 +268,14 @@ export default function VentasPage() {
 
             <div className="flex flex-col gap-1 text-sm">
               <div className="flex justify-between"><span className="text-gray-500">IVA incluido</span><span>{formatearUSD(detalle.data.venta.impuesto_total)}</span></div>
-              <div className="flex justify-between text-base font-bold"><span>TOTAL</span><span className="tabular-nums">{formatearUSD(detalle.data.venta.total_usd)} · {formatearBs(detalle.data.venta.total_bs)}</span></div>
+              <div className="flex flex-wrap justify-between gap-2 rounded-lg border border-blue-200 bg-blue-50 p-3 text-base font-bold text-blue-800 dark:border-blue-700 dark:bg-blue-900/20 dark:text-blue-300"><span>TOTAL</span><span className="tabular-nums">{formatearUSD(detalle.data.venta.total_usd)} · {formatearBs(detalle.data.venta.total_bs)}</span></div>
             </div>
 
             {detalle.data.pagos.length > 0 && (
-              <div className="rounded-lg border border-gray-200 p-3 text-sm dark:border-gray-700">
+              <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800 dark:border-green-700 dark:bg-green-900/20 dark:text-green-300">
                 <p className="mb-1 font-medium">Pagos</p>
                 {detalle.data.pagos.map((p, i) => (
-                  <div key={i} className="flex justify-between text-gray-600 dark:text-gray-300">
+                  <div key={i} className="flex flex-wrap justify-between gap-2">
                     <span>{p.metodo_nombre}</span>
                     <span className="tabular-nums">{p.moneda === 'VES' ? formatearBs(p.monto_moneda) : formatearUSD(p.monto_moneda)} ({formatearUSD(p.monto_usd)})</span>
                   </div>

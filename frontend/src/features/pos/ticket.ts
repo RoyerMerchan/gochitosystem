@@ -54,7 +54,7 @@ export function imprimirTicket(d: DatosTicket): void {
     .join('');
 
   const pagos = d.pagos
-    .map((p) => `<tr class="det"><td>${esc(p.metodo)}</td><td class="r">${p.moneda === 'USD' ? formatearUSD(p.monto) : formatearBs(p.monto)}</td></tr>`)
+    .map((p) => `<tr class="det abonado"><td>${esc(p.metodo)}</td><td class="r">${p.moneda === 'USD' ? formatearUSD(p.monto) : formatearBs(p.monto)}</td></tr>`)
     .join('');
 
   /*
@@ -80,6 +80,14 @@ export function imprimirTicket(d: DatosTicket): void {
     td { vertical-align:top; padding:1px 0; }
     .det td { color:#333; }
     .tot td { font-size:13px; font-weight:bold; padding-top:2px; }
+    .total td { color:#1d4ed8; background:#eff6ff; }
+    .abonado td { color:#166534; background:#f0fdf4; }
+    .pendiente td { color:#92400e; background:#fffbeb; }
+    .estado { margin:4px 0; padding:3px; border:1px solid currentColor; font-weight:bold; }
+    .estado.pagada { color:#166534; background:#f0fdf4; }
+    .estado.credito { color:#92400e; background:#fffbeb; }
+    .total td, .abonado td, .pendiente td { padding:3px 2px; }
+    * { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
     @media print { body { width:auto; } }
   </style></head><body>
     <div class="c b lg">${esc(d.negocio.nombre)}</div>
@@ -91,15 +99,16 @@ export function imprimirTicket(d: DatosTicket): void {
     <div>Fecha: ${formatearFechaHora(d.fecha)}</div>
     <div>Cajero: ${esc(d.cajero)}</div>
     <div>Cliente: ${esc(d.cliente)}</div>
+    <div class="c estado ${d.pendienteUsd > 0 ? 'credito' : 'pagada'}">${d.pendienteUsd > 0 ? 'A CRÉDITO · SALDO PENDIENTE' : 'PAGADA'}</div>
     <div class="sep"></div>
     <table>${filas}</table>
     <div class="sep"></div>
     <table>
-      <tr class="tot"><td>${d.pendienteUsd > 0 ? 'Monto total de la factura' : 'TOTAL'}</td><td class="r">${formatearUSD(d.totalUsd)}</td></tr>
-      <tr class="b"><td>TOTAL Bs</td><td class="r">${formatearBs(d.totalBs)}</td></tr>
-      ${d.pendienteUsd > 0 ? `<tr class="b"><td>Monto abonado</td><td class="r">${formatearUSD(d.abonadoUsd)}</td></tr>
-      <tr class="tot"><td>Monto pendiente</td><td class="r">${formatearUSD(d.pendienteUsd)}</td></tr>
-      <tr class="det"><td>Pendiente Bs</td><td class="r">${formatearBs(usdABs(d.pendienteUsd, d.tasa))}</td></tr>` : ''}
+      <tr class="tot total"><td>${d.pendienteUsd > 0 ? 'Monto total de la factura' : 'TOTAL'}</td><td class="r">${formatearUSD(d.totalUsd)}</td></tr>
+      <tr class="b total"><td>TOTAL Bs</td><td class="r">${formatearBs(d.totalBs)}</td></tr>
+      ${d.pendienteUsd > 0 ? `<tr class="b abonado"><td>Monto abonado</td><td class="r">${formatearUSD(d.abonadoUsd)}</td></tr>
+      <tr class="tot pendiente"><td>Monto pendiente</td><td class="r">${formatearUSD(d.pendienteUsd)}</td></tr>
+      <tr class="det pendiente"><td>Pendiente Bs</td><td class="r">${formatearBs(usdABs(d.pendienteUsd, d.tasa))}</td></tr>` : ''}
       <tr class="det"><td>Tasa</td><td class="r">Bs ${formatearNumero(d.tasa, 2)} / $</td></tr>
     </table>
     <div class="sep"></div>
