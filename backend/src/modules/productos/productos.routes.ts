@@ -50,6 +50,7 @@ const esquemaListado = esquemaPaginacion.extend({
   soloActivos: z.coerce.boolean().optional().default(true),
   stockBajo: z.coerce.boolean().optional(),
   favoritos: z.coerce.boolean().optional(),
+  soloPesables: z.enum(['true', 'false']).transform((v) => v === 'true').optional(),
 });
 
 const esquemaBusqueda = z.object({
@@ -86,6 +87,7 @@ router.get('/', requierePermiso('productos.ver', 'pos.vender'),
           soloActivos: q.soloActivos,
           stockBajo: q.stockBajo,
           favoritos: q.favoritos,
+          soloPesables: q.soloPesables,
           desplazamiento: p.desplazamiento,
           limite: p.limite,
           sucursalId: usuario.sucursalId,

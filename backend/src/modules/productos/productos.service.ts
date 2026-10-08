@@ -41,6 +41,7 @@ interface FiltrosProductos {
   soloActivos?: boolean;
   stockBajo?: boolean;
   favoritos?: boolean;
+  soloPesables?: boolean;
   desplazamiento: number;
   limite: number;
   sucursalId: number;
@@ -109,6 +110,9 @@ export async function listar(
     params.push(filtros.categoriaId);
   }
   if (filtros.favoritos) cond.push('p.es_favorito_pos = TRUE');
+  if (filtros.soloPesables) {
+    cond.push("(p.es_pesable = TRUE OR p.unidad_medida_id IN (SELECT id FROM unidades_medida WHERE codigo IN ('KG', 'GR', 'G')))");
+  }
   if (filtros.busqueda) {
     cond.push('(p.nombre ILIKE ? OR p.sku ILIKE ?)');
     const like = `%${filtros.busqueda}%`;

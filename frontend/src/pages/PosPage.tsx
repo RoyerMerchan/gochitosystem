@@ -6,13 +6,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { STALE_CATALOGO } from '@/app/QueryProvider';
-import { Search, Trash2, Plus, Minus, ShoppingCart, AlertTriangle, PauseCircle } from 'lucide-react';
+import { Search, Trash2, Plus, Minus, ShoppingCart, AlertTriangle, PauseCircle, Calculator } from 'lucide-react';
 import { obtener, crear } from '@/lib/axios';
 import { ErrorApi } from '@/lib/errores';
 import { useCarrito } from '@/features/pos/carritoStore';
 import { ModalCobro, type LineaPagoEnvio, type CondicionesCredito } from '@/features/pos/ModalCobro';
 import { ModalCliente } from '@/features/pos/ModalCliente';
 import { ModalEspera } from '@/features/pos/ModalEspera';
+import { ModalCalculadoraPeso } from '@/features/pos/ModalCalculadoraPeso';
 import { METODOS_PAGO } from '@/features/pos/metodosPago';
 import { imprimirTicket } from '@/features/pos/ticket';
 import { NEGOCIO } from '@/config/negocio';
@@ -46,6 +47,7 @@ export default function PosPage() {
   const [cobrando, setCobrando] = useState(false);
   const [eligiendoCliente, setEligiendoCliente] = useState(false);
   const [viendoEspera, setViendoEspera] = useState(false);
+  const [calculandoPeso, setCalculandoPeso] = useState(false);
   const [procesando, setProcesando] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -107,6 +109,7 @@ export default function PosPage() {
   // Atajos de teclado.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (calculandoPeso) return;
       if (e.key === 'F2') {
         e.preventDefault();
         inputRef.current?.focus();
@@ -126,7 +129,7 @@ export default function PosPage() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [items.length, tasaNum]);
+  }, [items.length, tasaNum, calculandoPeso]);
 
   const onEnterBuscador = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && resultados.length > 0) {
@@ -357,6 +360,11 @@ export default function PosPage() {
 
       {/* Columna derecha: totales + cobrar */}
       <div className="flex flex-col gap-4">
+        <button type="button" onClick={() => setCalculandoPeso(true)}
+          className="flex items-center justify-center gap-2 rounded-xl bg-purple-700 px-4 py-3 text-sm font-semibold text-white hover:bg-purple-800">
+          <Calculator className="h-5 w-5" aria-hidden="true" />
+          Calculadora de peso · Bs / $ / kg
+        </button>
         <div className="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
           <button onClick={() => setEligiendoCliente(true)}
             className="mb-3 flex w-full items-center justify-between rounded-lg border border-dashed border-gray-300 px-3 py-2 text-sm hover:border-amber-400 hover:bg-amber-50 dark:border-gray-600 dark:hover:bg-amber-900/20">
@@ -448,6 +456,7 @@ export default function PosPage() {
       />
 
       <ModalEspera abierto={viendoEspera} onCerrar={() => setViendoEspera(false)} />
+      {calculandoPeso && <ModalCalculadoraPeso abierto onCerrar={() => { setCalculandoPeso(false); inputRef.current?.focus(); }} tasa={tasaNum} />}
     </div>
   );
 }
