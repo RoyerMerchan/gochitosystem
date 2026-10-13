@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { STALE_CATALOGO } from '@/app/QueryProvider';
-import { Search, Trash2, Plus, Minus, ShoppingCart, AlertTriangle, PauseCircle, Calculator } from 'lucide-react';
+import { Search, Trash2, Plus, Minus, ShoppingCart, AlertTriangle, PauseCircle, Calculator, UserRound } from 'lucide-react';
 import { obtener, crear } from '@/lib/axios';
 import { ErrorApi } from '@/lib/errores';
 import { useCarrito } from '@/features/pos/carritoStore';
@@ -227,10 +227,10 @@ export default function PosPage() {
   }
 
   return (
-    <div className="grid h-full grid-cols-1 gap-4 lg:grid-cols-[1fr_380px]">
+    <div className="pos-layout grid min-h-full min-w-0 grid-cols-1 items-start gap-4">
       {/* Columna izquierda: buscador + carrito */}
-      <div className="flex flex-col gap-4 overflow-hidden">
-        <div className="relative">
+      <div className="pos-productos flex min-w-0 flex-col gap-4">
+        <div className="relative shrink-0">
           <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400" />
           <input
             ref={inputRef}
@@ -239,14 +239,14 @@ export default function PosPage() {
             onChange={(e) => setTermino(e.target.value)}
             onKeyDown={onEnterBuscador}
             placeholder="Escanear código o buscar producto (F2)"
-            className="w-full rounded-xl border border-gray-300 py-3 pl-11 pr-4 text-lg focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-200 dark:border-gray-600 dark:bg-gray-800"
+            className="w-full rounded-xl border border-gray-300 py-3 pl-11 pr-4 text-base sm:text-lg focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-200 dark:border-gray-600 dark:bg-gray-800"
           />
           {buscando && <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs text-gray-400">…</span>}
         </div>
 
         {/* Resultados de búsqueda */}
         {resultados.length > 0 && (
-          <div className="max-h-48 overflow-y-auto rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
+          <div className="pos-resultados max-h-48 overflow-y-auto rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
             {resultados.map((p) => (
               <button
                 key={p.id}
@@ -256,13 +256,13 @@ export default function PosPage() {
                   setResultados([]);
                   inputRef.current?.focus();
                 }}
-                className="flex w-full items-center justify-between border-b border-gray-100 px-4 py-2 text-left last:border-0 hover:bg-amber-50 dark:border-gray-700 dark:hover:bg-amber-900/20"
+                className="flex w-full items-center justify-between gap-3 border-b border-gray-100 px-4 py-2 text-left last:border-0 hover:bg-amber-50 dark:border-gray-700 dark:hover:bg-amber-900/20"
               >
-                <div>
+                <div className="min-w-0 break-words">
                   <p className="font-medium">{p.nombre}</p>
                   <p className="text-xs text-gray-400">{p.sku} · stock {formatearCantidad(p.cantidad)}</p>
                 </div>
-                <div className="text-right">
+                <div className="shrink-0 text-right">
                   <p className="font-semibold">{formatearUSD(p.precio_venta)}</p>
                   <p className="text-xs text-gray-400">{formatearBs(p.precio_venta_bs)}</p>
                 </div>
@@ -271,17 +271,35 @@ export default function PosPage() {
           </div>
         )}
 
+        <div className="pos-movil-herramientas hidden grid-cols-3 gap-2">
+          <button onClick={() => setEligiendoCliente(true)} title={carrito.clienteNombre}
+            className="flex min-w-0 items-center justify-center gap-1.5 rounded-lg border border-gray-300 px-2 py-2 text-xs dark:border-gray-600">
+            <UserRound className="h-4 w-4 shrink-0" /><span className="truncate">{carrito.clienteId ? carrito.clienteNombre : 'Cliente'}</span>
+          </button>
+          <button onClick={() => setCalculandoPeso(true)} className="flex items-center justify-center gap-1.5 rounded-lg bg-purple-700 px-2 py-2 text-xs font-semibold text-white">
+            <Calculator className="h-4 w-4 shrink-0" />Peso
+          </button>
+          <button onClick={() => setViendoEspera(true)} className="flex items-center justify-center gap-1.5 rounded-lg border border-amber-400 px-2 py-2 text-xs font-semibold text-amber-600 dark:text-amber-400">
+            <PauseCircle className="h-4 w-4 shrink-0" />Espera{cuantasEnEspera > 0 && ` (${cuantasEnEspera})`}
+          </button>
+        </div>
+
+        <div className="pos-carrito-titulo hidden items-center justify-between gap-2">
+          <h2 className="flex items-center gap-2 text-sm font-semibold"><ShoppingCart className="h-4 w-4" />Carrito <span className="text-gray-500">({items.length})</span></h2>
+          {items.length > 0 && <button onClick={() => carrito.limpiar()} className="text-xs text-red-600 dark:text-red-400">Cancelar venta</button>}
+        </div>
+
         {/* Carrito */}
-        <div className="flex-1 overflow-y-auto rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
+        <div className="pos-carrito max-h-[60dvh] overflow-auto rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
           {items.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center gap-2 text-gray-400">
+            <div className="pos-carrito-vacio flex min-h-64 flex-col items-center justify-center gap-2 p-4 text-center text-gray-400">
               <ShoppingCart className="h-12 w-12" />
               <p>Carrito vacío</p>
               <p className="text-xs">Escanee o busque un producto para empezar</p>
             </div>
           ) : (
-            <table className="w-full">
-              <thead className="sticky top-0 bg-gray-50 text-xs uppercase text-gray-500 dark:bg-gray-700/50">
+            <table className="pos-tabla w-full">
+              <thead className="sticky top-0 bg-gray-50 text-xs uppercase text-gray-500 dark:bg-gray-700">
                 <tr>
                   <th className="p-3 text-left">Producto</th>
                   <th className="p-3 text-center">Cant.</th>
@@ -293,13 +311,14 @@ export default function PosPage() {
               <tbody>
                 {items.map((i) => (
                   <tr key={i.productoId} className="border-t border-gray-100 dark:border-gray-700">
-                    <td className="p-3">
+                    <td className="pos-producto break-words p-3">
                       <p className="font-medium">{i.nombre}</p>
                       <p className="text-xs text-gray-400">{i.sku}</p>
                     </td>
-                    <td className="p-3">
+                    <td data-etiqueta="Cantidad" className="pos-cantidad p-3">
                       <div className="flex items-center justify-center gap-1">
                         <button
+                          aria-label={`Disminuir cantidad de ${i.nombre}`}
                           onClick={() => carrito.cambiarCantidad(i.productoId, i.cantidad - 1)}
                           className="rounded bg-gray-100 p-1 hover:bg-gray-200 dark:bg-gray-700"
                         >
@@ -311,6 +330,7 @@ export default function PosPage() {
                           onChange={(n) => carrito.cambiarCantidad(i.productoId, n)}
                         />
                         <button
+                          aria-label={`Aumentar cantidad de ${i.nombre}`}
                           onClick={() => carrito.cambiarCantidad(i.productoId, i.stock > 0 ? Math.min(i.cantidad + 1, i.stock) : i.cantidad + 1)}
                           className="rounded bg-gray-100 p-1 hover:bg-gray-200 dark:bg-gray-700"
                         >
@@ -318,7 +338,7 @@ export default function PosPage() {
                         </button>
                       </div>
                     </td>
-                    <td className="p-3 text-right tabular-nums">
+                    <td data-etiqueta="Precio $ / Bs" className="pos-precio p-3 text-right tabular-nums">
                       <div>{formatearUSD(i.precioUnitario)}</div>
                       {/* Precio unitario: escala 4, NO se redondea a centavos
                           (un producto de $ 0,0345 se volvería $ 0,03). */}
@@ -333,7 +353,7 @@ export default function PosPage() {
                         </button>
                       )}
                     </td>
-                    <td className="p-3 text-right font-semibold tabular-nums">
+                    <td data-etiqueta="Total $ / Bs" className="pos-total-linea p-3 text-right font-semibold tabular-nums">
                       {/* El Bs sale del USD ya redondeado, igual que en el ticket.
                           Estos renglones SI suman el TOTAL de la derecha: los tres
                           usan totalLineaUsd(), el mismo calculo del backend. */}
@@ -342,8 +362,9 @@ export default function PosPage() {
                         {formatearBs(usdABs(totalLineaUsd(i), tasaNum))}
                       </span>
                     </td>
-                    <td className="p-3">
+                    <td className="pos-quitar p-3">
                       <button
+                        aria-label={`Quitar ${i.nombre} del carrito`}
                         onClick={() => carrito.quitar(i.productoId)}
                         className="text-gray-400 hover:text-red-500"
                       >
@@ -358,8 +379,27 @@ export default function PosPage() {
         </div>
       </div>
 
+      <div className="pos-movil-cobro hidden shrink-0 rounded-xl border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-800">
+        <details className="mb-2 text-xs text-gray-500 dark:text-gray-400">
+          <summary className="cursor-pointer">{formatearCantidad(carrito.totalItems())} artículos · Ver detalle</summary>
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+            <span>IVA incluido: {formatearUSD(impuestoTotal)}</span>
+            {hayMayor && <button onClick={() => carrito.aplicarMayorTodo(!todoMayor)} className="rounded border border-amber-400 px-2 py-1 text-amber-600 dark:text-amber-400">{todoMayor ? 'Mayor activado' : 'Aplicar precio al mayor'}</button>}
+          </div>
+        </details>
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0 break-words">
+            <p className="text-[10px] uppercase text-gray-500">Total</p>
+            <p className="text-xl font-bold tabular-nums">{formatearUSD(totalUsd)}</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400">{formatearBs(usdABs(totalUsd, tasaNum))}</p>
+          </div>
+          <button onClick={() => setCobrando(true)} disabled={items.length === 0}
+            className="shrink-0 rounded-xl bg-green-600 px-6 py-3 text-sm font-bold text-white hover:bg-green-700 disabled:opacity-40">COBRAR</button>
+        </div>
+      </div>
+
       {/* Columna derecha: totales + cobrar */}
-      <div className="flex flex-col gap-4">
+      <div className="pos-resumen flex min-w-0 flex-col gap-4">
         <button type="button" onClick={() => setCalculandoPeso(true)}
           className="flex items-center justify-center gap-2 rounded-xl bg-purple-700 px-4 py-3 text-sm font-semibold text-white hover:bg-purple-800">
           <Calculator className="h-5 w-5" aria-hidden="true" />
@@ -367,9 +407,9 @@ export default function PosPage() {
         </button>
         <div className="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
           <button onClick={() => setEligiendoCliente(true)}
-            className="mb-3 flex w-full items-center justify-between rounded-lg border border-dashed border-gray-300 px-3 py-2 text-sm hover:border-amber-400 hover:bg-amber-50 dark:border-gray-600 dark:hover:bg-amber-900/20">
-            <span className="text-gray-500">Cliente (F3)</span>
-            <span className="font-medium">{carrito.clienteNombre}</span>
+            className="mb-3 flex w-full items-center justify-between gap-3 rounded-lg border border-dashed border-gray-300 px-3 py-2 text-sm hover:border-amber-400 hover:bg-amber-50 dark:border-gray-600 dark:hover:bg-amber-900/20">
+            <span className="shrink-0 text-gray-500">Cliente (F3)</span>
+            <span className="min-w-0 break-words text-right font-medium">{carrito.clienteNombre}</span>
           </button>
 
           {items.length > 0 && (
@@ -394,7 +434,7 @@ export default function PosPage() {
             </div>
           </div>
           <div className="mt-3 border-t border-gray-200 pt-3 dark:border-gray-700">
-            <div className="flex items-end justify-between">
+            <div className="flex flex-wrap items-end justify-between gap-2">
               <span className="text-sm text-gray-500">TOTAL</span>
               <div className="text-right">
                 <p className="text-3xl font-bold tabular-nums">{formatearUSD(totalUsd)}</p>

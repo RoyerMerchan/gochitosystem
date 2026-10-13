@@ -162,9 +162,9 @@ export function ModalEspera({ abierto, onCerrar }: Props) {
               {filas.map((f) => (
                 <div
                   key={f.id}
-                  className="flex items-center gap-3 rounded-lg border border-gray-100 p-3 dark:border-gray-700"
+                  className="flex flex-wrap items-center gap-3 rounded-lg border border-gray-100 p-3 dark:border-gray-700"
                 >
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 basis-full sm:flex-1 sm:basis-0">
                     <p className="truncate font-medium">{f.nombre}</p>
                     <p className="truncate text-xs text-gray-400">
                       {f.renglones} renglón(es) · {f.cajero}
@@ -174,7 +174,7 @@ export function ModalEspera({ abierto, onCerrar }: Props) {
                       <Clock className="h-3 w-3" /> {formatearFechaHora(f.creado_en)}
                     </p>
                   </div>
-                  <span className="whitespace-nowrap font-semibold tabular-nums">
+                  <span className="mr-auto whitespace-nowrap font-semibold tabular-nums sm:mr-0">
                     {formatearUSD(f.total_usd)}
                   </span>
                   <button

@@ -118,6 +118,93 @@
 }
 
 @layer components {
+  /* El POS responde al espacio disponible después de descontar el sidebar. */
+  .app-contenido {
+    container: app-contenido / inline-size;
+  }
+
+  .pos-carrito {
+    container: pos-carrito / inline-size;
+  }
+
+  .pos-tabla {
+    table-layout: fixed;
+    overflow-wrap: anywhere;
+  }
+
+  .pos-tabla th:first-child { width: 30%; }
+  .pos-tabla th:nth-child(2) { width: 24%; }
+  .pos-tabla th:last-child { width: 8%; }
+
+  /* En teléfono el carrito ocupa el espacio restante y solo su lista desplaza. */
+  @media (max-width: 767px) {
+    .app-contenido:has(.pos-layout) { overflow: hidden; padding: 0.75rem; }
+    .app-contenido .pos-layout {
+      display: flex;
+      height: 100%;
+      min-height: 0;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+    .pos-layout .pos-productos {
+      flex: 1;
+      min-height: 0;
+      width: 100%;
+      gap: 0.75rem;
+    }
+    .pos-layout .pos-movil-herramientas { display: grid; flex-shrink: 0; }
+    .pos-layout .pos-carrito-titulo { display: flex; flex-shrink: 0; }
+    .pos-layout .pos-movil-cobro { display: block; width: 100%; }
+    .pos-layout .pos-resumen { display: none; }
+    .pos-layout .pos-resultados { max-height: 25dvh; flex-shrink: 0; }
+    .pos-layout .pos-carrito { flex: 1; min-height: 0; max-height: none; }
+    .pos-layout .pos-carrito-vacio { height: 100%; min-height: 0; }
+  }
+
+  @container app-contenido (min-width: 1024px) {
+    .app-contenido .pos-layout {
+      grid-template-columns: minmax(0, 1fr) 360px;
+    }
+  }
+
+  /* Tarjetas por producto: todos los controles caben sin scroll horizontal. */
+  @container pos-carrito (max-width: 639px) {
+    .pos-tabla, .pos-tabla tbody {
+      display: block;
+      width: 100%;
+    }
+    .pos-tabla thead { display: none; }
+    .pos-tabla tr {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      padding: 0.75rem;
+      gap: 0.75rem;
+    }
+    .pos-tabla td {
+      min-width: 0;
+      padding: 0;
+      text-align: left;
+    }
+    .pos-tabla td[data-etiqueta]::before {
+      content: attr(data-etiqueta);
+      display: block;
+      margin-bottom: 0.25rem;
+      font-size: 0.75rem;
+      font-weight: 400;
+      color: hsl(var(--color-texto-suave));
+    }
+    .pos-tabla .pos-producto { grid-column: 1 / -1; grid-row: 1; padding-right: 2.5rem; }
+    .pos-tabla .pos-cantidad { grid-column: 1; grid-row: 2; align-self: center; }
+    .pos-tabla .pos-cantidad > div { justify-content: flex-start; }
+    .pos-tabla .pos-cantidad button { padding: 0.5rem; }
+    .pos-tabla .pos-cantidad input { width: 3rem; min-height: 2rem; }
+    .pos-tabla .pos-total-linea { grid-column: 2; grid-row: 2; text-align: right; }
+    .pos-tabla .pos-precio { grid-column: 1 / -1; grid-row: 3; display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; font-size: 0.75rem; }
+    .pos-tabla .pos-precio::before { margin-bottom: 0; }
+    .pos-tabla .pos-quitar { grid-column: 2; grid-row: 1; justify-self: end; align-self: start; text-align: right; }
+    .pos-tabla .pos-quitar button { padding: 0.5rem; }
+  }
+
   /* Barra de desplazamiento discreta y coherente con el tema. */
   .barra-fina {
     scrollbar-width: thin;

@@ -27,24 +27,24 @@ export function Modal({ abierto, onCerrar, titulo, children, pie, ancho = 'md' }
   if (!abierto) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto p-2 sm:p-4" role="dialog" aria-modal="true" aria-label={titulo}>
       <div className="absolute inset-0 bg-black/50" onClick={onCerrar} />
       <div
         className={cn(
-          'relative z-10 flex max-h-[90vh] w-full flex-col rounded-xl bg-white shadow-2xl dark:bg-gray-800',
+          'relative z-10 flex max-h-[calc(100dvh-2rem)] min-w-0 w-full flex-col rounded-xl bg-white shadow-2xl dark:bg-gray-800',
           ANCHOS[ancho],
         )}
       >
         {titulo && (
-          <div className="flex items-center justify-between border-b border-gray-200 p-4 dark:border-gray-700">
-            <h3 className="text-lg font-semibold">{titulo}</h3>
-            <button onClick={onCerrar} className="text-gray-400 hover:text-gray-600">
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-gray-200 p-4 dark:border-gray-700">
+            <h3 className="min-w-0 break-words text-lg font-semibold">{titulo}</h3>
+            <button onClick={onCerrar} aria-label="Cerrar" className="shrink-0 text-gray-400 hover:text-gray-600">
               <X className="h-5 w-5" />
             </button>
           </div>
         )}
-        <div className="flex-1 overflow-y-auto p-4">{children}</div>
-        {pie && <div className="border-t border-gray-200 p-4 dark:border-gray-700">{pie}</div>}
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4">{children}</div>
+        {pie && <div className="shrink-0 border-t border-gray-200 p-4 dark:border-gray-700">{pie}</div>}
       </div>
     </div>
   );

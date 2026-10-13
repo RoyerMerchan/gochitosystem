@@ -66,7 +66,7 @@ export function ModalCliente({ abierto, onCerrar, onSeleccionar }: Props) {
     return (
       <Modal abierto={abierto} onCerrar={cerrar} titulo="Nuevo cliente" ancho="md"
         pie={
-          <div className="flex justify-between">
+          <div className="flex flex-wrap justify-between gap-2">
             <button onClick={() => setCreando(false)} className="flex items-center gap-1 rounded-lg border border-gray-300 px-4 py-2 text-sm dark:border-gray-600">
               <ArrowLeft className="h-4 w-4" /> Volver
             </button>
@@ -103,7 +103,7 @@ export function ModalCliente({ abierto, onCerrar, onSeleccionar }: Props) {
     <Modal abierto={abierto} onCerrar={cerrar} titulo="Seleccionar cliente" ancho="md">
       <div className="space-y-3">
         <div className="flex gap-2">
-          <div className="relative flex-1">
+          <div className="relative min-w-0 flex-1">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
             <input autoFocus value={busqueda} onChange={(e) => setBusqueda(e.target.value)}
               placeholder="Buscar por cédula/RIF o nombre…"
@@ -116,7 +116,7 @@ export function ModalCliente({ abierto, onCerrar, onSeleccionar }: Props) {
         </div>
 
         <button onClick={() => elegir(null, 'CONSUMIDOR FINAL')}
-          className="flex w-full items-center gap-3 rounded-lg border border-gray-200 p-3 text-left hover:border-amber-400 hover:bg-amber-50 dark:border-gray-600 dark:hover:bg-amber-900/20">
+          className="flex w-full flex-wrap items-center gap-3 rounded-lg border border-gray-200 p-3 text-left hover:border-amber-400 hover:bg-amber-50 dark:border-gray-600 dark:hover:bg-amber-900/20">
           <User className="h-5 w-5 text-gray-400" />
           <span className="font-medium">Consumidor final</span>
           <span className="ml-auto text-xs text-gray-400">venta rápida sin cliente</span>
@@ -131,13 +131,13 @@ export function ModalCliente({ abierto, onCerrar, onSeleccionar }: Props) {
             clientes.data!.datos.filter((c) => c.id !== 1).map((c) => (
               <button key={c.id} onClick={() => elegir(c.id, c.nombre)}
                 className="flex w-full items-center gap-3 rounded-lg border border-gray-100 p-3 text-left hover:border-amber-400 hover:bg-amber-50 dark:border-gray-700 dark:hover:bg-amber-900/20">
-                <UserCheck className="h-5 w-5 text-amber-500" />
-                <div>
+                <UserCheck className="h-5 w-5 shrink-0 text-amber-500" />
+                <div className="min-w-0 flex-1 break-words">
                   <p className="font-medium">{c.nombre}</p>
                   <p className="text-xs text-gray-400">{c.documento ?? 'sin documento'}</p>
                 </div>
                 {Number(c.deuda_usd) > 0 && (
-                  <span className="ml-auto text-right text-xs font-medium text-red-500">
+                  <span className="ml-auto shrink-0 text-right text-xs font-medium text-red-500">
                     debe {formatearUSD(c.deuda_usd)}
                     <span className="block font-normal text-gray-400">
                       {c.documentos_deuda} {Number(c.documentos_deuda) === 1 ? 'factura' : 'facturas'}

@@ -95,7 +95,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
   };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-50 dark:bg-gray-900">
+    <div className="flex h-dvh overflow-hidden bg-gray-50 dark:bg-gray-900">
       {/* Fondo oscuro para cerrar tocando fuera; solo en teléfono. */}
       {abierto && (
         <div onClick={() => setAbierto(false)} className="fixed inset-0 z-30 bg-black/50 md:hidden" />
@@ -104,7 +104,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
       {/* Sidebar */}
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-gray-200 bg-white',
+          'fixed inset-y-0 left-0 z-40 flex w-64 shrink-0 flex-col border-r border-gray-200 bg-white',
           'transition-transform dark:border-gray-700 dark:bg-gray-800',
           abierto ? 'translate-x-0' : '-translate-x-full',
           // De md en adelante vuelve al flujo: sin overlay, colapsa por ancho.
@@ -161,8 +161,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
       </aside>
 
       {/* Contenido */}
-      <div className="flex flex-1 flex-col overflow-hidden">
-        <header className="flex items-center justify-between border-b border-gray-200 bg-white px-4 py-3 dark:border-gray-700 dark:bg-gray-800">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-gray-200 bg-white px-3 py-3 sm:px-4 dark:border-gray-700 dark:bg-gray-800">
           <button
             onClick={() => setAbierto((v) => !v)}
             className="rounded-lg p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700"
@@ -170,7 +170,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
             <Menu className="h-5 w-5" />
           </button>
 
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-1 sm:gap-3">
             <TasaBadge />
             <ToggleTema />
             <BotonInstalarApp />
@@ -178,8 +178,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
               <div className="flex h-8 w-8 items-center justify-center rounded-full bg-amber-500 text-xs font-semibold text-white">
                 {iniciales(usuario?.nombreCompleto)}
               </div>
-              <div className="hidden leading-tight sm:block">
-                <p className="text-sm font-medium">{usuario?.nombreCompleto}</p>
+              <div className="hidden min-w-0 leading-tight sm:block">
+                <p className="max-w-40 truncate text-sm font-medium">{usuario?.nombreCompleto}</p>
                 <p className="text-[11px] text-gray-500">{usuario?.rolCodigo}</p>
               </div>
             </Link>
@@ -193,7 +193,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-4 md:p-6">{children}</main>
+        <main className="app-contenido min-h-0 min-w-0 flex-1 overflow-y-auto p-4 md:p-6">{children}</main>
       </div>
     </div>
   );

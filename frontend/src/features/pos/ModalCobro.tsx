@@ -166,8 +166,8 @@ export function ModalCobro({
       titulo="Cobrar"
       ancho="lg"
       pie={
-        <div className="flex items-center justify-between gap-3">
-          <div className="text-sm">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0 break-words text-sm">
             {faltante > 0.005 ? (
               <span className="font-medium text-amber-600">
                 Faltan {formatearUSD(faltante)} · {formatearBs(faltanteBs)}
@@ -194,7 +194,7 @@ export function ModalCobro({
           <button
             onClick={confirmar}
             disabled={!puedeConfirmar || procesando}
-            className="rounded-lg bg-green-600 px-6 py-2.5 font-semibold text-white hover:bg-green-700 disabled:opacity-40"
+            className="w-full shrink-0 rounded-lg bg-green-600 px-4 py-2.5 font-semibold text-white hover:bg-green-700 disabled:opacity-40 sm:w-auto"
           >
             {procesando ? 'Procesando…' : 'Confirmar venta (F9)'}
           </button>
@@ -249,7 +249,7 @@ export function ModalCobro({
                 type="text"
                 value={l.referencia}
                 onChange={(e) => actualizar(idx, 'referencia', e.target.value)}
-                className="flex-1 rounded border border-gray-300 px-2 py-1 text-sm dark:border-gray-600 dark:bg-gray-700"
+                className="min-w-0 basis-full rounded border border-gray-300 px-2 py-1 text-sm dark:border-gray-600 dark:bg-gray-700 sm:flex-1 sm:basis-32"
                 placeholder="Referencia"
               />
             )}
