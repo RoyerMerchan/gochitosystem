@@ -9,6 +9,9 @@ export interface ItemCarrito {
   sku: string;
   nombre: string;
   precioUnitario: number; // USD (el que se cobra; detal o mayor)
+  precioUnitarioBs?: number;
+  precioDetalBs?: number;
+  precioMayoristaBs?: number;
   precioDetal: number; // USD precio normal
   precioMayorista: number | null; // USD precio al mayor (si el producto lo tiene)
   esMayor: boolean; // true si se esta cobrando al mayor
@@ -38,6 +41,7 @@ interface EstadoCarrito {
   limpiar: () => void;
 
   totalUsd: () => number;
+  actualizarTasa: (tasa: number) => void;
   totalItems: () => number;
 }
 
@@ -64,6 +68,9 @@ export const useCarrito = create<EstadoCarrito>()(
             sku: p.sku,
             nombre: p.nombre,
             precioUnitario: Number(p.precio_venta),
+            precioUnitarioBs: p.moneda_precio === 'VES' ? Number(p.precio_base) : undefined,
+            precioDetalBs: p.moneda_precio === 'VES' ? Number(p.precio_base) : undefined,
+            precioMayoristaBs: p.moneda_precio === 'VES' && p.precio_mayorista_base != null ? Number(p.precio_mayorista_base) : undefined,
             precioDetal: Number(p.precio_venta),
             precioMayorista: mayor,
             esMayor: false,
@@ -88,7 +95,7 @@ export const useCarrito = create<EstadoCarrito>()(
       cambiarPrecio: (id, precio) =>
         set((s) => ({
           items: s.items.map((i) =>
-            i.productoId === id ? { ...i, precioUnitario: Math.max(0, precio), esMayor: false } : i,
+            i.productoId === id ? { ...i, precioUnitario: Math.max(0, precio), precioUnitarioBs: undefined, esMayor: false } : i,
           ),
         })),
 
@@ -105,7 +112,8 @@ export const useCarrito = create<EstadoCarrito>()(
           items: s.items.map((i) => {
             if (i.productoId !== id || i.precioMayorista == null) return i;
             const esMayor = !i.esMayor;
-            return { ...i, esMayor, precioUnitario: esMayor ? i.precioMayorista : i.precioDetal };
+            return { ...i, esMayor, precioUnitario: esMayor ? i.precioMayorista : i.precioDetal,
+              precioUnitarioBs: esMayor ? i.precioMayoristaBs : i.precioDetalBs };
           }),
         })),
 
@@ -115,7 +123,8 @@ export const useCarrito = create<EstadoCarrito>()(
           items: s.items.map((i) =>
             i.precioMayorista == null
               ? i
-              : { ...i, esMayor: activar, precioUnitario: activar ? i.precioMayorista : i.precioDetal },
+              : { ...i, esMayor: activar, precioUnitario: activar ? i.precioMayorista : i.precioDetal,
+                precioUnitarioBs: activar ? i.precioMayoristaBs : i.precioDetalBs },
           ),
         })),
 
@@ -144,6 +153,15 @@ export const useCarrito = create<EstadoCarrito>()(
        * un credito fantasma de $ 0,01.
        */
       totalUsd: () => totalDocumentoUsd(get().items),
+      actualizarTasa: (tasa) => {
+        if (tasa <= 0) return;
+        const convertir = (bs: number) => Math.round(bs / tasa * 10000) / 10000;
+        set((s) => ({ items: s.items.map((i) => ({ ...i,
+          precioUnitario: i.precioUnitarioBs === undefined ? i.precioUnitario : convertir(i.precioUnitarioBs),
+          precioDetal: i.precioDetalBs === undefined ? i.precioDetal : convertir(i.precioDetalBs),
+          precioMayorista: i.precioMayoristaBs === undefined ? i.precioMayorista : convertir(i.precioMayoristaBs),
+        })) }));
+      },
 
       totalItems: () => get().items.reduce((acc, i) => acc + i.cantidad, 0),
     }),

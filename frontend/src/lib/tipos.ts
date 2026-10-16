@@ -81,6 +81,9 @@ export interface Producto {
   impuesto_id: number;
   impuesto_tasa: string;
   precio_venta: string;
+  moneda_precio?: 'USD' | 'VES';
+  precio_base?: string;
+  precio_mayorista_base?: string | null;
   precio_venta_bs?: string;
   precio_venta_mayorista: string | null;
   costo_promedio: string;

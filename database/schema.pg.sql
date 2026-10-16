@@ -571,6 +571,7 @@ CREATE TABLE productos (
   proveedor_preferido_id    BIGINT,
   tipo                      tipo_producto NOT NULL DEFAULT 'SIMPLE',
   precio_venta              DECIMAL(14,4) NOT NULL DEFAULT 0 CHECK (precio_venta >= 0),
+  moneda_precio             VARCHAR(3) NOT NULL DEFAULT 'USD' CHECK (moneda_precio IN ('USD', 'VES')),
   precio_venta_mayorista    DECIMAL(14,4) CHECK (precio_venta_mayorista >= 0),
   costo_promedio            DECIMAL(14,4) NOT NULL DEFAULT 0 CHECK (costo_promedio >= 0),
   ultimo_costo              DECIMAL(14,4) NOT NULL DEFAULT 0 CHECK (ultimo_costo >= 0),
@@ -1524,7 +1525,7 @@ COMMENT ON TABLE metodos_pago IS 'Metodos de pago con su moneda';
 COMMENT ON TABLE motivos_ajuste IS 'Motivos de ajuste de inventario';
 COMMENT ON TABLE cajas IS 'Cajas por sucursal';
 COMMENT ON TABLE turnos_caja IS 'Turnos de caja, arqueo separado USD/Bs';
-COMMENT ON TABLE productos IS 'Productos; precios y costos en USD';
+COMMENT ON TABLE productos IS 'Productos; precios en moneda_precio (USD o VES), costos en USD';
 COMMENT ON TABLE producto_codigos IS 'Codigos de barras por producto (unicidad global)';
 COMMENT ON TABLE producto_precios IS 'Historial de precios de venta';
 COMMENT ON TABLE producto_stock IS 'Existencia y costo promedio por producto y sucursal';

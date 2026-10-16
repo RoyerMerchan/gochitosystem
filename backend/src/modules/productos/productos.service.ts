@@ -1,11 +1,12 @@
 /**
- * Productos. Precios y costos EN USD; en las respuestas se agrega el equivalente
- * en Bs a la tasa vigente para que el POS lo muestre sin recalcular en el cliente.
+ * Productos. Precios nativos en USD o VES, costos en USD. Las respuestas incluyen
+ * el importe original y los equivalentes vigentes que consume el POS.
  */
-import { NoEncontrado, Conflicto } from '../../errores/AppError';
+import { NoEncontrado, Conflicto, ReglaNegocio } from '../../errores/AppError';
 import { query, queryOne, ejecutar, insertar, withTransaction, type Ejecutor } from '../../database/pool';
 import { existeColumna, existeTabla } from '../../database/esquema';
-import { usdABs, bsASql } from '../../utils/moneda';
+import { usdABs, bsASql, aTasaCambio } from '../../utils/moneda';
+import { precioEnUsd } from '../../utils/precioProducto';
 import { aCentavos } from '../../utils/dinero';
 import type { Id, DecimalSql } from '../../tipos/comunes';
 
@@ -19,6 +20,9 @@ export interface ProductoListado {
   impuesto_id: Id;
   impuesto_tasa: DecimalSql;
   precio_venta: DecimalSql;
+  moneda_precio: 'USD' | 'VES';
+  precio_base?: DecimalSql;
+  precio_mayorista_base?: DecimalSql | null;
   precio_venta_bs?: DecimalSql;
   precio_venta_mayorista: DecimalSql | null;
   costo_promedio: DecimalSql;
@@ -48,16 +52,24 @@ interface FiltrosProductos {
 }
 
 /** Agrega el precio en Bs a cada fila usando la tasa dada (string decimal). */
-function conEquivalenteBs<T extends { precio_venta: DecimalSql }>(
+function conEquivalenteBs<T extends { precio_venta: DecimalSql; precio_venta_mayorista: DecimalSql | null; moneda_precio: 'USD' | 'VES' }>(
   filas: T[],
   tasa: string | null,
 ): T[] {
-  if (!tasa) return filas;
-  const tasaEsc = BigInt(Math.round(Number(tasa) * 1_000_000));
-  return filas.map((f) => ({
-    ...f,
-    precio_venta_bs: bsASql(usdABs(aCentavos(f.precio_venta), tasaEsc)),
-  }));
+  return filas.map((f) => {
+    const esBs = f.moneda_precio === 'VES';
+    return {
+      ...f,
+      precio_base: f.precio_venta,
+      precio_mayorista_base: f.precio_venta_mayorista,
+      // Sin tasa se conserva el precio nativo, pero no se inventa un equivalente USD.
+      precio_venta: esBs ? (tasa ? precioEnUsd(f.precio_venta, 'VES', tasa) : '0') : f.precio_venta,
+      precio_venta_mayorista: esBs && f.precio_venta_mayorista != null
+        ? (tasa ? precioEnUsd(f.precio_venta_mayorista, 'VES', tasa) : null) : f.precio_venta_mayorista,
+      precio_venta_bs: esBs ? f.precio_venta
+        : tasa ? bsASql(usdABs(aCentavos(f.precio_venta), aTasaCambio(tasa))) : undefined,
+    };
+  });
 }
 
 /**
@@ -70,16 +82,17 @@ function conEquivalenteBs<T extends { precio_venta: DecimalSql }>(
  */
 async function selectBase(): Promise<string> {
   const hayConfirmado = await existeColumna('producto_stock', 'costo_confirmado');
+  const hayMoneda = await existeColumna('productos', 'moneda_precio');
   return SELECT_BASE.replace(
     '@COSTO_CONFIRMADO@',
     hayConfirmado ? 'COALESCE(ps.costo_confirmado, FALSE)' : 'TRUE',
-  );
+  ).replace('@MONEDA_PRECIO@', hayMoneda ? 'p.moneda_precio' : "'USD'");
 }
 
 const SELECT_BASE = `
   SELECT p.id, p.sku, p.nombre, p.categoria_id, c.nombre AS categoria_nombre,
          um.codigo AS unidad_codigo, p.impuesto_id, i.tasa AS impuesto_tasa,
-         p.precio_venta, p.precio_venta_mayorista, p.es_precio_incluye_impuesto,
+         p.precio_venta, p.precio_venta_mayorista, @MONEDA_PRECIO@ AS moneda_precio, p.es_precio_incluye_impuesto,
          p.es_pesable, p.es_favorito_pos, p.imagen_ruta, p.ultimo_costo,
          -- El costo que vale es el de la sucursal; el de productos es la copia global.
          COALESCE(ps.costo_promedio, p.costo_promedio) AS costo_promedio,
@@ -232,6 +245,7 @@ export interface EntradaProducto {
   unidadMedidaId: Id;
   impuestoId: Id;
   precioVenta: string;
+  monedaPrecio?: 'USD' | 'VES';
   precioMayorista?: string | null;
   costoInicial?: string;
   stockMinimo?: string;
@@ -243,6 +257,7 @@ export interface EntradaProducto {
 
 /** Crea un producto y su registro de stock (cantidad inicial 0). */
 export async function crear(e: EntradaProducto, sucursalId: number, usuarioId: Id): Promise<ProductoListado> {
+  const hayMoneda = await comprobarMonedaPrecio(e);
   return withTransaction(async (cx) => {
     let id: number;
     try {
@@ -250,12 +265,13 @@ export async function crear(e: EntradaProducto, sucursalId: number, usuarioId: I
         `INSERT INTO productos
           (sku, nombre, descripcion, categoria_id, unidad_medida_id, impuesto_id, precio_venta,
            precio_venta_mayorista, costo_promedio, ultimo_costo, es_precio_incluye_impuesto,
-           es_pesable, es_favorito_pos, creado_por)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           es_pesable, es_favorito_pos, creado_por${hayMoneda ? ', moneda_precio' : ''})
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${hayMoneda ? ', ?' : ''})`,
         [
           e.sku, e.nombre, e.descripcion ?? null, e.categoriaId, e.unidadMedidaId, e.impuestoId,
           e.precioVenta, e.precioMayorista || null, e.costoInicial ?? '0', e.costoInicial ?? '0',
           e.esPrecioIncluyeImpuesto ?? false, e.esPesable ?? false, e.esFavoritoPos ?? false, usuarioId,
+          ...(hayMoneda ? [e.monedaPrecio ?? 'USD'] : []),
         ],
         cx,
       );
@@ -288,6 +304,7 @@ export async function crear(e: EntradaProducto, sucursalId: number, usuarioId: I
 
 /** Actualiza los datos de un producto (nunca el costo, que lo mueven las compras). */
 export async function actualizar(id: Id, e: EntradaProducto, sucursalId: number): Promise<ProductoListado> {
+  const hayMoneda = await comprobarMonedaPrecio(e);
   await withTransaction(async (cx) => {
     const existe = await queryOne<{ id: number }>(
       `SELECT id FROM productos WHERE id = ? AND eliminado_en IS NULL`, [id], cx,
@@ -298,11 +315,12 @@ export async function actualizar(id: Id, e: EntradaProducto, sucursalId: number)
       await ejecutar(
         `UPDATE productos SET sku=?, nombre=?, descripcion=?, categoria_id=?, unidad_medida_id=?,
                 impuesto_id=?, precio_venta=?, precio_venta_mayorista=?, es_precio_incluye_impuesto=?,
-                es_pesable=?, es_favorito_pos=?
+                es_pesable=?, es_favorito_pos=?${hayMoneda ? ', moneda_precio=?' : ''}
           WHERE id=?`,
         [
           e.sku, e.nombre, e.descripcion ?? null, e.categoriaId, e.unidadMedidaId, e.impuestoId,
-          e.precioVenta, e.precioMayorista || null, e.esPrecioIncluyeImpuesto ?? false, e.esPesable ?? false, e.esFavoritoPos ?? false, id,
+          e.precioVenta, e.precioMayorista || null, e.esPrecioIncluyeImpuesto ?? false, e.esPesable ?? false, e.esFavoritoPos ?? false,
+          ...(hayMoneda ? [e.monedaPrecio ?? 'USD'] : []), id,
         ],
         cx,
       );
@@ -323,6 +341,16 @@ export async function actualizar(id: Id, e: EntradaProducto, sucursalId: number)
   });
 
   return obtenerPorId(id, sucursalId, null);
+}
+
+async function comprobarMonedaPrecio(e: EntradaProducto): Promise<boolean> {
+  const disponible = await existeColumna('productos', 'moneda_precio');
+  if (!disponible && e.monedaPrecio === 'VES') {
+    throw new ReglaNegocio('REGLA_NEGOCIO', {
+      mensaje: 'Para guardar precios fijos en Bs se debe aplicar la migración 0012 de la base de datos.',
+    });
+  }
+  return disponible;
 }
 
 /**

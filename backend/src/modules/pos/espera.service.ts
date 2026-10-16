@@ -29,6 +29,9 @@ export interface RenglonEspera {
   sku: string;
   nombre: string;
   precioUnitario: number;
+  precioUnitarioBs?: number;
+  precioDetalBs?: number;
+  precioMayoristaBs?: number;
   precioDetal: number;
   precioMayorista: number | null;
   esMayor: boolean;
@@ -228,6 +231,10 @@ export async function retomar(id: Id, sucursalId: Id): Promise<EsperaRetomada> {
       nombre: p.nombre,
       cantidad,
       precioUnitario: precioEraManual ? r.precioUnitario : precioLista,
+      precioUnitarioBs: !precioEraManual && p.moneda_precio === 'VES'
+        ? Number(esMayor ? p.precio_mayorista_base : p.precio_base) : undefined,
+      precioDetalBs: p.moneda_precio === 'VES' ? Number(p.precio_base) : undefined,
+      precioMayoristaBs: p.moneda_precio === 'VES' && p.precio_mayorista_base != null ? Number(p.precio_mayorista_base) : undefined,
       precioDetal,
       precioMayorista,
       esMayor,

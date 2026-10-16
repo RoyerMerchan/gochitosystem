@@ -29,6 +29,7 @@ const esquemaProducto = z.object({
   unidadMedidaId: z.coerce.number().int().positive('Seleccione una unidad de medida'),
   impuestoId: z.coerce.number().int().positive('Seleccione un impuesto'),
   precioVenta: decimal,
+  monedaPrecio: z.enum(['USD', 'VES']).default('USD'),
   precioMayorista: z.union([z.string(), z.number()]).transform(String)
     .refine((v) => v === '' || /^\d+(\.\d+)?$/.test(v), 'Numero invalido')
     .transform((v) => (v === '' ? null : v))
@@ -125,14 +126,19 @@ router.get('/:id/kardex', requierePermiso('inventario.ver'),
 router.post('/', requierePermiso('productos.crear'), validar({ body: esquemaProducto }), async (req, res, next) => {
   try {
     const u = usuarioActual(req);
-    enviarCreado(res, await productos.crear(datosBody(req), u.sucursalId, u.id));
+    const creado = await productos.crear(datosBody(req), u.sucursalId, u.id);
+    const tasa = await tasaDeFecha();
+    enviarCreado(res, await productos.obtenerPorId(creado.id, u.sucursalId, tasa?.tasa ?? null));
   } catch (e) { next(e); }
 });
 
 router.put('/:id', requierePermiso('productos.editar'), validar({ params: esquemaParamsId, body: esquemaProducto }), async (req, res, next) => {
   try {
     const u = usuarioActual(req);
-    enviarOk(res, await productos.actualizar(datosParams<{ id: number }>(req).id, datosBody(req), u.sucursalId));
+    const id = datosParams<{ id: number }>(req).id;
+    await productos.actualizar(id, datosBody(req), u.sucursalId);
+    const tasa = await tasaDeFecha();
+    enviarOk(res, await productos.obtenerPorId(id, u.sucursalId, tasa?.tasa ?? null));
   } catch (e) { next(e); }
 });
 

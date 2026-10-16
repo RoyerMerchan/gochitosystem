@@ -6,6 +6,8 @@ export interface RenglonVentaEntrada {
   readonly cantidad: string;
   /** Precio de venta unitario en USD. Si se omite, se toma el del producto. */
   readonly precioUnitario?: string;
+  /** Precio nativo fijo en Bs, cuando corresponde. */
+  readonly precioUnitarioBs?: string;
   /** Descuento unitario en USD sobre este renglon. */
   readonly descuentoUnitario?: string;
 }

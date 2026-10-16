@@ -23,6 +23,7 @@ import {
   type Ejecutor,
 } from '../../database/pool';
 import { existeColumna } from '../../database/esquema';
+import { precioEnUsd, totalPrecioBs } from '../../utils/precioProducto';
 import {
   aCentavos,
   aUnitario,
@@ -42,6 +43,7 @@ import {
   aTasaCambio,
   usdABs,
   bsASql,
+  bsAUsd,
   montoMonedaAUsd,
   montoMonedaASql,
 } from '../../utils/moneda';
@@ -71,6 +73,7 @@ interface FilaProductoVenta {
   impuesto_id: number;
   impuesto_tasa: string;
   precio_venta: string;
+  moneda_precio: 'USD' | 'VES';
   es_precio_incluye_impuesto: boolean;
   es_maneja_inventario: boolean;
   esta_activo: boolean;
@@ -107,6 +110,7 @@ interface RenglonCalculado {
   costoTotal: bigint; // escala 2
   utilidadTotal: bigint; // escala 2
   totalLinea: bigint; // escala 2
+  totalLineaBs: bigint | null;
 }
 
 export interface ResultadoVenta {
@@ -151,7 +155,7 @@ export async function registrarVenta(
     );
 
     // --- 4. Bloqueo de stock y snapshot de costo por renglon -----------------
-    const calculados = await calcularRenglones(cx, entrada, usuario.sucursalId);
+    const calculados = await calcularRenglones(cx, entrada, usuario.sucursalId, tasaHoy.tasa);
 
     // --- 5. Totales del documento --------------------------------------------
     const subtotalBruto = sumar(
@@ -165,23 +169,29 @@ export async function registrarVenta(
       calculados.map((r) => multiplicarPorCantidad(r.descuentoUnit, r.cantidad)),
     );
     const totalUsd = baseTotal + impuestoTotal; // escala 2
-    const totalBs = usdABs(totalUsd, tasaEscalada);
+    const hayBs = calculados.some((r) => r.totalLineaBs !== null);
+    const totalBs = hayBs
+      ? sumar(calculados.map((r) => r.totalLineaBs ?? 0n))
+        + usdABs(sumar(calculados.filter((r) => r.totalLineaBs === null).map((r) => r.totalLinea)), tasaEscalada)
+      : usdABs(totalUsd, tasaEscalada);
+    const totalCobroUsd = hayBs ? bsAUsd(totalBs, tasaEscalada) : totalUsd;
 
     // --- 6. Pagos (mixtos entre monedas) -------------------------------------
-    const { pagosCalculados, creditoUsd, vueltoUsd, redondeo } = await calcularPagos(
+    const { pagosCalculados, creditoUsd, vueltoUsd, redondeo: redondeoPago } = await calcularPagos(
       cx,
       entrada,
-      totalUsd,
+      totalCobroUsd,
       tasaEscalada,
     );
+    const redondeo = redondeoPago + totalCobroUsd - totalUsd;
 
     // Credito: exige cliente identificado con cupo suficiente.
     if (creditoUsd > 0n) {
       await validarCredito(cx, entrada.clienteId ?? null, creditoUsd);
     }
-    // Lo cobrado y el credito siempre cuadran contra el total; el centavo que la
-    // conversion de tasa dejo fuera queda documentado en ventas.redondeo.
-    const pagadoAplicado = totalUsd - creditoUsd;
+    // Se aplica el total efectivo del cobro. La diferencia frente a la suma de
+    // líneas USD queda en redondeo, también cuando todo se vende a crédito.
+    const pagadoAplicado = totalCobroUsd - creditoUsd;
 
     // --- 7. Insertar la venta -------------------------------------------------
     const cantidadItems = sumar(calculados.map((r) => r.cantidad));
@@ -294,6 +304,7 @@ async function calcularRenglones(
   cx: Ejecutor,
   entrada: VentaEntrada,
   sucursalId: number,
+  tasa: string,
 ): Promise<RenglonCalculado[]> {
   // Prorrateo del descuento de documento sobre el bruto neto de cada renglon.
   const brutos: bigint[] = [];
@@ -306,9 +317,10 @@ async function calcularRenglones(
    * entre si, cosa que el bucle anterior no garantizaba.
    */
   const idsProducto = [...new Set(entrada.renglones.map((r) => String(r.productoId)))];
+  const hayMoneda = await existeColumna('productos', 'moneda_precio', cx);
   const encontrados = await query<FilaProductoVenta>(
     `SELECT p.id, p.nombre, p.categoria_id, p.unidad_medida_id, p.impuesto_id,
-            i.tasa AS impuesto_tasa, p.precio_venta, p.es_precio_incluye_impuesto,
+            i.tasa AS impuesto_tasa, p.precio_venta, ${hayMoneda ? 'p.moneda_precio' : "'USD'"} AS moneda_precio, p.es_precio_incluye_impuesto,
             p.es_maneja_inventario, p.esta_activo,
             ps.cantidad, ps.costo_promedio
        FROM productos p
@@ -332,7 +344,9 @@ async function calcularRenglones(
 
     const cantidad = aCantidad(r.cantidad);
     if (cantidad <= 0n) throw new ReglaNegocio('CANTIDAD_INVALIDA');
-    const precioUnit = aUnitario(r.precioUnitario ?? fila.precio_venta);
+    const precioUnit = aUnitario(r.precioUnitarioBs !== undefined
+      ? precioEnUsd(r.precioUnitarioBs, 'VES', tasa)
+      : r.precioUnitario ?? precioEnUsd(fila.precio_venta, fila.moneda_precio, tasa));
     const descUnit = aUnitario(r.descuentoUnitario ?? '0');
     const brutoNeto =
       multiplicarPorCantidad(precioUnit, cantidad) - multiplicarPorCantidad(descUnit, cantidad);
@@ -345,7 +359,9 @@ async function calcularRenglones(
   return entrada.renglones.map((r, idx) => {
     const fila = filas[idx]!;
     const cantidad = aCantidad(r.cantidad);
-    const precioUnit = aUnitario(r.precioUnitario ?? fila.precio_venta);
+    const precioBs = r.precioUnitarioBs ?? (r.precioUnitario === undefined && fila.moneda_precio === 'VES' ? fila.precio_venta : null);
+    const precioUnit = aUnitario(precioBs !== null ? precioEnUsd(precioBs, 'VES', tasa)
+      : r.precioUnitario ?? precioEnUsd(fila.precio_venta, fila.moneda_precio, tasa));
     let descUnit = aUnitario(r.descuentoUnitario ?? '0');
 
     // Suma el prorrateo del descuento de documento al descuento unitario.
@@ -397,6 +413,8 @@ async function calcularRenglones(
       costoTotal,
       utilidadTotal,
       totalLinea,
+      totalLineaBs: precioBs === null ? null
+        : totalPrecioBs(aUnitario(precioBs), cantidad, descUnit, aTasaCambio(tasa), tasaMilesimas, esIncluye),
     };
   });
 }

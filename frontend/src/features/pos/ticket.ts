@@ -9,6 +9,8 @@ export interface ItemTicket {
   nombre: string;
   cantidad: number;
   precioUnitario: number;
+  precioUnitarioBs?: number;
+  totalBs?: number;
   total: number;
 }
 
@@ -47,8 +49,8 @@ export function imprimirTicket(d: DatosTicket): void {
         <td class="r">${formatearUSD(redondearCentavos(i.total))}</td>
       </tr>
       <tr class="det">
-        <td>${formatearBs(i.precioUnitario * d.tasa)} c/u</td>
-        <td class="r">${formatearBs(usdABs(i.total, d.tasa))}</td>
+        <td>${formatearBs(i.precioUnitarioBs ?? i.precioUnitario * d.tasa)} c/u</td>
+        <td class="r">${formatearBs(i.totalBs ?? usdABs(i.total, d.tasa))}</td>
       </tr>`,
     )
     .join('');

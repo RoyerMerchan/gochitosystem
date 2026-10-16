@@ -34,6 +34,7 @@ const esquemaVenta = z.object({
         productoId: z.coerce.number().int().positive(),
         cantidad: decimal.refine((v) => Number(v) > 0, 'La cantidad debe ser mayor que cero'),
         precioUnitario: decimal.optional(),
+        precioUnitarioBs: decimal.optional(),
         descuentoUnitario: decimal.optional(),
       }),
     )
@@ -95,6 +96,9 @@ const esquemaEspera = z.object({
     sku: z.string(),
     nombre: z.string(),
     precioUnitario: z.number(),
+    precioUnitarioBs: z.number().nonnegative().optional(),
+    precioDetalBs: z.number().nonnegative().optional(),
+    precioMayoristaBs: z.number().nonnegative().optional(),
     precioDetal: z.number(),
     precioMayorista: z.number().nullable(),
     esMayor: z.boolean(),

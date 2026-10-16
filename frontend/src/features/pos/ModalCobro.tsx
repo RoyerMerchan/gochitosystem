@@ -30,6 +30,7 @@ export interface CondicionesCredito {
 interface Props {
   abierto: boolean;
   totalUsd: number;
+  totalBs?: number;
   tasa: number;
   /** Plazo que se propone al fiar (configuracion del negocio). */
   diasPlazoDefecto: number;
@@ -57,7 +58,7 @@ function lineaEnUsd(l: LineaPago, tasa: number): number {
 }
 
 export function ModalCobro({
-  abierto, totalUsd, tasa, diasPlazoDefecto, moraPctDefecto, moraCadaDias,
+  abierto, totalUsd, totalBs, tasa, diasPlazoDefecto, moraPctDefecto, moraCadaDias,
   onCerrar, onConfirmar, procesando,
 }: Props) {
   const [lineas, setLineas] = useState<LineaPago[]>([]);
@@ -91,8 +92,9 @@ export function ModalCobro({
     [lineas, tasa],
   );
   const cubierto = pagadoUsd + creditoUsd;
-  const faltante = Math.max(0, totalUsd - cubierto);
-  const vuelto = Math.max(0, pagadoUsd - (totalUsd - creditoUsd));
+  const totalCobro = totalBs !== undefined && tasa > 0 ? totalBs / tasa : totalUsd;
+  const faltante = Math.max(0, totalCobro - cubierto);
+  const vuelto = Math.max(0, pagadoUsd - (totalCobro - creditoUsd));
   /** El mismo vuelto en bolívares: el cajero paga con lo que tenga en la gaveta. */
   const vueltoBs = usdABs(vuelto, tasa);
   const hayVuelto = vuelto > 0.005;
@@ -103,7 +105,7 @@ export function ModalCobro({
    */
   const creditoBs = usdABs(creditoUsd, tasa);
   const hayCredito = creditoUsd > 0.005;
-  const faltanteBs = usdABs(faltante, tasa);
+  const faltanteBs = totalBs === undefined ? usdABs(faltante, tasa) : redondearCentavos(faltante * tasa);
   /*
     Condiciones del fiado, en vivo. El cajero tiene al cliente delante: puede
     decirle la fecha exacta de pago y cuanto le cuesta pasarse de ella ANTES de
@@ -124,7 +126,7 @@ export function ModalCobro({
     // Por defecto, el monto sugerido cubre el faltante en la moneda del metodo.
     // Los Bs salen del faltante ya redondeado a centavos: es la plata que el
     // cajero va a cobrar de verdad y tiene que coincidir con el ticket.
-    const faltanteMoneda = metodo.moneda === 'USD' ? redondearCentavos(faltante) : usdABs(faltante, tasa);
+    const faltanteMoneda = metodo.moneda === 'USD' ? redondearCentavos(faltante) : faltanteBs;
     setLineas((ls) => [
       ...ls,
       { metodo, monto: faltanteMoneda > 0 ? faltanteMoneda.toFixed(2) : '', referencia: '' },
@@ -205,7 +207,7 @@ export function ModalCobro({
       <div className="mb-4 rounded-lg bg-gray-50 p-4 text-center dark:bg-gray-700/50">
         <p className="text-xs uppercase tracking-wide text-gray-500">Total a cobrar</p>
         <p className="text-3xl font-bold tabular-nums">{formatearUSD(totalUsd)}</p>
-        <p className="text-sm text-gray-500">{formatearBs(usdABs(totalUsd, tasa))} · tasa {tasa.toFixed(2)}</p>
+        <p className="text-sm text-gray-500">{formatearBs(totalBs ?? usdABs(totalUsd, tasa))} · tasa {tasa.toFixed(2)}</p>
       </div>
 
       {/* Botones de metodo */}

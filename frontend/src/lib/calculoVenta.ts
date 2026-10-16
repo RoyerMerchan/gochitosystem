@@ -16,10 +16,11 @@
  * "el cliente no tiene credito habilitado" si el cliente no maneja credito).
  * Los renglones en pantalla tampoco sumaban el total mostrado.
  */
-import { redondearCentavos } from './formato';
+import { redondearCentavos, usdABs } from './formato';
 
 export interface RenglonCalculable {
   precioUnitario: number;
+  precioUnitarioBs?: number;
   descuentoUnitario: number;
   cantidad: number;
   /** Tasa de impuesto en puntos porcentuales (16 = 16 %). */
@@ -67,6 +68,23 @@ export function totalLineaUsd(r: RenglonCalculable): number {
 /** Total del documento: suma de renglones YA redondeados, igual que el backend. */
 export function totalDocumentoUsd(renglones: readonly RenglonCalculable[]): number {
   return redondearCentavos(renglones.reduce((acc, r) => acc + totalLineaUsd(r), 0));
+}
+
+/** Precio fijo en Bs: cantidades e impuesto se calculan antes de convertir a USD. */
+export function totalLineaBs(r: RenglonCalculable, tasa: number): number {
+  if (r.precioUnitarioBs === undefined) return usdABs(totalLineaUsd(r), tasa);
+  const bruto = redondearCentavos(r.precioUnitarioBs * r.cantidad);
+  const descuento = usdABs(redondearCentavos(r.descuentoUnitario * r.cantidad), tasa);
+  const neto = Math.max(0, redondearCentavos(bruto - descuento));
+  return r.esPrecioIncluyeImpuesto === false
+    ? redondearCentavos(neto + redondearCentavos(neto * (r.impuestoTasa || 0) / 100)) : neto;
+}
+
+export function totalDocumentoBs(renglones: readonly RenglonCalculable[], tasa: number): number {
+  const fijos = renglones.filter((r) => r.precioUnitarioBs !== undefined);
+  const dolares = renglones.filter((r) => r.precioUnitarioBs === undefined);
+  return redondearCentavos(fijos.reduce((s, r) => s + totalLineaBs(r, tasa), 0)
+    + usdABs(totalDocumentoUsd(dolares), tasa));
 }
 
 /** Impuesto total del documento (suma de los impuestos por renglon). */

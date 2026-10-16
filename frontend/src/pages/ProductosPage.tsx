@@ -19,7 +19,7 @@ interface Imp { id: number; nombre: string; tasa: string; }
 
 const VACIO = {
   sku: '', nombre: '', descripcion: '', categoriaId: 0, unidadMedidaId: 0, impuestoId: 0,
-  precioVenta: '', precioMayorista: '', costoInicial: '0', stockMinimo: '0', esPesable: false, esFavoritoPos: true, codigoBarras: '',
+  monedaPrecio: 'USD' as 'USD' | 'VES', precioVenta: '', precioMayorista: '', costoInicial: '0', stockMinimo: '0', esPesable: false, esFavoritoPos: true, codigoBarras: '',
 };
 
 export default function ProductosPage() {
@@ -97,7 +97,8 @@ export default function ProductosPage() {
       sku: p.sku, nombre: p.nombre, descripcion: '', categoriaId: Number(p.categoria_id),
       // La unidad no viene en el listado; se deja la primera si no se sabe.
       unidadMedidaId: uniPorDefecto(), impuestoId: Number(p.impuesto_id),
-      precioVenta: p.precio_venta, precioMayorista: p.precio_venta_mayorista ?? '',
+      monedaPrecio: p.moneda_precio ?? 'USD',
+      precioVenta: p.precio_base ?? p.precio_venta, precioMayorista: p.precio_mayorista_base ?? p.precio_venta_mayorista ?? '',
       costoInicial: p.costo_promedio, stockMinimo: p.stock_minimo,
       esPesable: Boolean(p.es_pesable), esFavoritoPos: Boolean(p.es_favorito_pos),
       // Se precarga el que ya tiene: si se abriera vacío, guardar sin tocarlo se lo borraría.
@@ -135,7 +136,7 @@ export default function ProductosPage() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div><h1 className="text-2xl font-bold">Productos</h1><p className="text-sm text-gray-500">{productos.data?.meta.total ?? 0} productos · precios en USD</p></div>
+        <div><h1 className="text-2xl font-bold">Productos</h1><p className="text-sm text-gray-500">{productos.data?.meta.total ?? 0} productos · precios en USD o Bs</p></div>
         <div className="flex items-center gap-2">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
@@ -167,7 +168,7 @@ export default function ProductosPage() {
                           <span className="mt-0.5 block text-[10px] text-gray-400">{p.codigo_barras}</span>
                         )}
                       </td>
-                      <td className="p-3 font-medium">{p.nombre}</td>
+                      <td className="p-3 font-medium">{p.nombre}{p.moneda_precio === 'VES' && <span className="block text-xs font-normal text-amber-600">Precio fijo en Bs</span>}</td>
                       <td className="p-3 text-gray-500">{p.categoria_nombre}</td>
                       <td className="p-3 text-right tabular-nums">{formatearUSD(p.precio_venta)}</td>
                       <td className="p-3 text-right tabular-nums text-gray-500">{formatearBs(p.precio_venta_bs)}</td>
@@ -199,8 +200,10 @@ export default function ProductosPage() {
           <Campo label="Categoría"><select value={form.categoriaId} onChange={(e) => setForm({ ...form, categoriaId: Number(e.target.value) })} className={INP}>{(cats.data ?? []).map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}</select></Campo>
           <Campo label="Unidad"><select value={form.unidadMedidaId} onChange={(e) => setForm({ ...form, unidadMedidaId: Number(e.target.value) })} className={INP}>{(unis.data ?? []).map((u) => <option key={u.id} value={u.id}>{u.nombre}</option>)}</select></Campo>
           <Campo label="Impuesto"><select value={form.impuestoId} onChange={(e) => setForm({ ...form, impuestoId: Number(e.target.value) })} className={INP}>{(imps.data ?? []).map((i) => <option key={i.id} value={i.id}>{i.nombre}</option>)}</select></Campo>
-          <Campo label="Precio de venta (USD) *"><input type="number" step="0.01" value={form.precioVenta} onChange={(e) => setForm({ ...form, precioVenta: e.target.value })} className={INP} /></Campo>
-          <Campo label="Precio al mayor (USD) — opcional"><input type="number" step="0.01" value={form.precioMayorista} onChange={(e) => setForm({ ...form, precioMayorista: e.target.value })} className={INP} placeholder="Sin precio al mayor" /></Campo>
+          <Campo label="Moneda del precio"><select value={form.monedaPrecio} onChange={(e) => setForm({ ...form, monedaPrecio: e.target.value as 'USD' | 'VES' })} className={INP}><option value="USD">Dólares ($)</option><option value="VES">Bolívares (Bs) — precio fijo</option></select></Campo>
+          <p className="col-span-2 text-xs text-gray-500">{form.monedaPrecio === 'VES' ? 'El precio se mantiene fijo en Bs aunque cambie la tasa. El equivalente en dólares se calcula con la tasa vigente.' : 'El precio se mantiene en dólares. El equivalente en Bs cambia con la tasa vigente.'}</p>
+          <Campo label={`Precio de venta (${form.monedaPrecio === 'VES' ? 'Bs' : 'USD'}) *`}><input type="number" min="0" step="0.01" value={form.precioVenta} onChange={(e) => setForm({ ...form, precioVenta: e.target.value })} className={INP} /></Campo>
+          <Campo label={`Precio al mayor (${form.monedaPrecio === 'VES' ? 'Bs' : 'USD'}) — opcional`}><input type="number" min="0" step="0.01" value={form.precioMayorista} onChange={(e) => setForm({ ...form, precioMayorista: e.target.value })} className={INP} placeholder="Sin precio al mayor" /></Campo>
           {/*
             El costo se puede corregir también editando. Antes solo se pedía al
             crear y un error de tecleo no había cómo arreglarlo: la única salida

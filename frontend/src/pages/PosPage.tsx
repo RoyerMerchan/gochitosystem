@@ -21,7 +21,7 @@ import { useTasaStore } from '@/store/tasaStore';
 import { useAuthStore } from '@/store/authStore';
 import { toast } from '@/store/toastStore';
 import { formatearUSD, formatearBs, formatearCantidad, usdABs } from '@/lib/formato';
-import { totalLineaUsd, impuestoDocumentoUsd } from '@/lib/calculoVenta';
+import { totalLineaUsd, totalLineaBs, totalDocumentoBs, impuestoDocumentoUsd } from '@/lib/calculoVenta';
 import { useDebounce } from '@/hooks/useDebounce';
 import type { Producto } from '@/lib/tipos';
 
@@ -77,6 +77,9 @@ export default function PosPage() {
 
   const totalUsd = carrito.totalUsd();
   const items = carrito.items;
+  const totalBs = totalDocumentoBs(items, tasaNum);
+  const hayPrecioBs = items.some((i) => i.precioUnitarioBs !== undefined);
+  useEffect(() => { useCarrito.getState().actualizarTasa(tasaNum); }, [tasaNum]);
   const conMayor = items.filter((i) => i.precioMayorista != null);
   const hayMayor = conMayor.length > 0;
   const todoMayor = hayMayor && conMayor.every((i) => i.esMayor);
@@ -150,6 +153,8 @@ export default function PosPage() {
       nombre: i.nombre,
       cantidad: i.cantidad,
       precioUnitario: i.precioUnitario,
+      precioUnitarioBs: i.precioUnitarioBs,
+      totalBs: totalLineaBs(i, tasaNum),
       total: totalLineaUsd(i),
     }));
     const clienteNombre = carrito.clienteNombre;
@@ -160,6 +165,7 @@ export default function PosPage() {
           productoId: i.productoId,
           cantidad: String(i.cantidad),
           precioUnitario: String(i.precioUnitario),
+          precioUnitarioBs: i.precioUnitarioBs === undefined ? undefined : String(i.precioUnitarioBs),
           descuentoUnitario: i.descuentoUnitario ? String(i.descuentoUnitario) : undefined,
         })),
         pagos,
@@ -342,7 +348,7 @@ export default function PosPage() {
                       <div>{formatearUSD(i.precioUnitario)}</div>
                       {/* Precio unitario: escala 4, NO se redondea a centavos
                           (un producto de $ 0,0345 se volvería $ 0,03). */}
-                      <div className="text-xs text-gray-400">{formatearBs(i.precioUnitario * tasaNum)}</div>
+                      <div className="text-xs text-gray-400">{formatearBs(i.precioUnitarioBs ?? i.precioUnitario * tasaNum)}</div>
                       {i.precioMayorista != null && (
                         <button
                           onClick={() => carrito.alternarMayor(i.productoId)}
@@ -359,7 +365,7 @@ export default function PosPage() {
                           usan totalLineaUsd(), el mismo calculo del backend. */}
                       {formatearUSD(totalLineaUsd(i))}
                       <span className="block text-xs font-normal text-gray-400">
-                        {formatearBs(usdABs(totalLineaUsd(i), tasaNum))}
+                        {formatearBs(totalLineaBs(i, tasaNum))}
                       </span>
                     </td>
                     <td className="pos-quitar p-3">
@@ -391,7 +397,7 @@ export default function PosPage() {
           <div className="min-w-0 break-words">
             <p className="text-[10px] uppercase text-gray-500">Total</p>
             <p className="text-xl font-bold tabular-nums">{formatearUSD(totalUsd)}</p>
-            <p className="text-xs text-gray-500 dark:text-gray-400">{formatearBs(usdABs(totalUsd, tasaNum))}</p>
+            <p className="text-xs text-gray-500 dark:text-gray-400">{formatearBs(totalBs)}</p>
           </div>
           <button onClick={() => setCobrando(true)} disabled={items.length === 0}
             className="shrink-0 rounded-xl bg-green-600 px-6 py-3 text-sm font-bold text-white hover:bg-green-700 disabled:opacity-40">COBRAR</button>
@@ -438,7 +444,7 @@ export default function PosPage() {
               <span className="text-sm text-gray-500">TOTAL</span>
               <div className="text-right">
                 <p className="text-3xl font-bold tabular-nums">{formatearUSD(totalUsd)}</p>
-                <p className="text-sm text-gray-500">{formatearBs(usdABs(totalUsd, tasaNum))}</p>
+                <p className="text-sm text-gray-500">{formatearBs(totalBs)}</p>
               </div>
             </div>
           </div>
@@ -480,6 +486,7 @@ export default function PosPage() {
       <ModalCobro
         abierto={cobrando}
         totalUsd={totalUsd}
+        totalBs={hayPrecioBs ? totalBs : undefined}
         tasa={tasaNum}
         diasPlazoDefecto={Number(cfgCredito.data?.dias_plazo_credito_defecto ?? 30)}
         moraPctDefecto={Number(cfgCredito.data?.mora_pct_defecto ?? 0)}
